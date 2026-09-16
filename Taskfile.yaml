@@ -235,8 +235,9 @@ tasks:
         tag="{{.TAG}}"
         # A version build arg outranks the descriptor in the frontend, so
         # the tag follows it rather than the file — and a build pinned
-        # that way refreshes nothing.
-        [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/hack/kit-version.sh override "{{.BUILD_ARGS}}")
+        # that way refreshes nothing. Both argument sources are read, in
+        # the order the build line puts them.
+        [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/hack/kit-version.sh override "{{.BUILD_ARGS}}" "{{.CLI_ARGS}}")
         [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/hack/kit-version.sh update {{.KIT}})
         docker buildx build . -f "$(test -f {{.KIT}}.yaml && echo {{.KIT}}.yaml || echo {{.KIT}}.dockerfile)" \
           {{.BUILD_ARGS}} -t {{.KIT}}-kit:"$tag" {{.CLI_ARGS}}
@@ -303,8 +304,9 @@ tasks:
         tag="{{.TAG}}"
         # A version build arg outranks the descriptor in the frontend, so
         # the tag follows it rather than the file — and a build pinned
-        # that way refreshes nothing.
-        [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/hack/kit-version.sh override "{{.BUILD_ARGS}}")
+        # that way refreshes nothing. Both argument sources are read, in
+        # the order the build line puts them.
+        [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/hack/kit-version.sh override "{{.BUILD_ARGS}}" "{{.CLI_ARGS}}")
         [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/hack/kit-version.sh update {{.KIT}})
         docker buildx build . -f "$(test -f {{.KIT}}.yaml && echo {{.KIT}}.yaml || echo {{.KIT}}.dockerfile)" \
           {{.SECRETS}} {{.BUILD_ARGS}} \
