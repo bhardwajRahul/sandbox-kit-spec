@@ -63,7 +63,8 @@ jobs:
         env:
           DOCKERHUB_OIDC_CONNECTIONID: ${{ vars.DOCKERHUB_OIDC_CONNECTIONID }}
           # Default is 300s; multi-arch QEMU builds often exceed that before push.
-          DOCKERHUB_OIDC_EXPIREIN: "7200"
+          # login-action@v4.6.0 caps this at 3600 (1h).
+          DOCKERHUB_OIDC_EXPIREIN: "3600"
         with:
           username: ${{ vars.DOCKERHUB_ORGANIZATION }}
 
