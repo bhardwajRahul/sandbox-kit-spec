@@ -15,9 +15,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/docker/sandbox-kit-spec/tck/adapter"
-	tckkit "github.com/docker/sandbox-kit-spec/tck/kit"
-	tcksandbox "github.com/docker/sandbox-kit-spec/tck/sandbox"
+	"github.com/docker/sandbox-kit-spec/v3/tck/adapter"
+	tckkit "github.com/docker/sandbox-kit-spec/v3/tck/kit"
+	tcksandbox "github.com/docker/sandbox-kit-spec/v3/tck/sandbox"
 )
 
 // Set by GoReleaser via -ldflags "-X main.version=…".

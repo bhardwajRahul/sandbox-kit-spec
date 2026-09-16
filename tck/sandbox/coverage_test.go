@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	tckkit "github.com/docker/sandbox-kit-spec/tck/kit"
+	tckkit "github.com/docker/sandbox-kit-spec/v3/tck/kit"
 )
 
 // normative matches a requirement statement in the specification. The

@@ -13,7 +13,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/docker/sandbox-kit-spec/spec"
+	"github.com/docker/sandbox-kit-spec/v3/spec"
 )
 
 // Unit is one kit in the set: its published descriptor plus the identity it

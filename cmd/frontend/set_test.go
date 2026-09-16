@@ -7,8 +7,8 @@ import (
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/sandbox-kit-spec/resolve"
-	"github.com/docker/sandbox-kit-spec/spec"
+	"github.com/docker/sandbox-kit-spec/v3/resolve"
+	"github.com/docker/sandbox-kit-spec/v3/spec"
 )
 
 func resolved(reference, kind string, config ocispecs.ImageConfig) resolvedKit {

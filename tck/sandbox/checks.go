@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/docker/sandbox-kit-spec/tck/adapter"
-	"github.com/docker/sandbox-kit-spec/tck/report"
+	"github.com/docker/sandbox-kit-spec/v3/tck/adapter"
+	"github.com/docker/sandbox-kit-spec/v3/tck/report"
 )
 
 // Capability types the checks are written against.

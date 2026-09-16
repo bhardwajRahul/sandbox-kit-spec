@@ -1,4 +1,4 @@
-module github.com/docker/sandbox-kit-spec
+module github.com/docker/sandbox-kit-spec/v3
 
 go 1.26.8
 

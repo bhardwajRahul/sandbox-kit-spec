@@ -9,8 +9,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/sandbox-kit-spec/resolve"
-	"github.com/docker/sandbox-kit-spec/spec"
+	"github.com/docker/sandbox-kit-spec/v3/resolve"
+	"github.com/docker/sandbox-kit-spec/v3/spec"
 )
 
 // A set example names published kits, so it cannot be built here the

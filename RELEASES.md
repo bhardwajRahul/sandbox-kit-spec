@@ -2,15 +2,15 @@
 
 Several version axes move independently in this repository; confusing them
 is the main hazard. This page says what each one means and what forces it
-to change. Schema-3 frontend releases (`v3.*` tags) share the git tag
-namespace with module tags but are not Go module versions.
+to change. Schema-3 frontend releases and the Go module major share the
+`v3.*` git tag namespace: the module path is
+`github.com/docker/sandbox-kit-spec/v3`.
 
 ## Version axes
 
 | Axis | Where it lives | Moves when |
 |---|---|---|
-| Module tag | git tags `v0.X.Y` (until `v1.0.0`) | Any release of the Go packages (`spec`, `resolve`, `assemble`, `tck`) |
-| Schema / frontend release | git tags `v3.X.Y` (+ Hub `docker/sandbox-kit:3.X.Y`) | A publish of the schema-3 BuildKit frontend and `kit-tck` binaries |
+| Module / schema-3 release | git tags `v3.X.Y` (+ Hub `docker/sandbox-kit:3.X.Y`) | A publish of the Go packages (`spec`, `resolve`, `assemble`, `tck`), the schema-3 BuildKit frontend, and `kit-tck` binaries |
 | Schema version | `spec.SchemaVersion`, the descriptor's `schemaVersion: "3"` | The descriptor grammar changes shape incompatibly |
 | Capability version | the `@N` in `com.docker.sandbox/<name>@N` | That capability's config schema changes after it has shipped |
 | Frontend floating tag | `docker/sandbox-kit:3` | Tracks the highest stable schema-3 frontend release |
@@ -19,19 +19,21 @@ A kit's own `version:` and its `provides` entries are a further axis, but
 they belong to kit authors rather than to this repository;
 [SPEC-v3 §5.2](docs/spec/SPEC-v3.md#52-versions) governs them.
 
-`v3.*` git tags are **not** Go module majors. The module path is
-`github.com/docker/sandbox-kit-spec` without a `/v3` suffix; module
-consumers must use `v0.*` / `v1.*` tags (or a commit). A `v3.*` tag
-publishes the frontend image and attaches `kit-tck` release assets — it
-does not change how `go get` resolves this module.
+`v3.*` git tags **are** Go module versions for
+`github.com/docker/sandbox-kit-spec/v3`. Consumers import packages as
+`github.com/docker/sandbox-kit-spec/v3/spec` (and siblings) and resolve
+them with `go get github.com/docker/sandbox-kit-spec/v3@v3.X.Y`. The same
+tag also publishes the frontend image and attaches `kit-tck` release
+assets.
 
 ## Module tags
 
-Tag the module when the Go packages should be consumable at a new
-version: `git tag -s v0.X.Y && git push origin v0.X.Y`. Tags are
-annotated and signed. Until `v1.0.0` the minor position absorbs breaking
-changes, as Go's own pre-1.0 convention allows. Do not retag the module
-as `v3.*` without also changing the module path to `…/v3`.
+Tag when the Go packages (and the matching frontend / `kit-tck` release)
+should be consumable at a new version:
+`git tag -a v3.X.Y && git push origin v3.X.Y`. Prefer annotated tags.
+Pre-release suffixes (`v3.0.0-m.2`, `v3.0.0-rc.1`) are valid module
+versions and trigger the release workflow without moving floating Hub
+`:3`.
 
 ## Schema version
 

@@ -10,8 +10,8 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/sandbox-kit-spec/spec"
-	"github.com/docker/sandbox-kit-spec/tck/report"
+	"github.com/docker/sandbox-kit-spec/v3/spec"
+	"github.com/docker/sandbox-kit-spec/v3/tck/report"
 )
 
 // fake is an artifact assembled in memory, so each check can be shown to

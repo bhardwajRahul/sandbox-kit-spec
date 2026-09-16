@@ -20,9 +20,9 @@ import (
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
-	"github.com/docker/sandbox-kit-spec/resolve"
-	"github.com/docker/sandbox-kit-spec/spec"
-	"github.com/docker/sandbox-kit-spec/tck/report"
+	"github.com/docker/sandbox-kit-spec/v3/resolve"
+	"github.com/docker/sandbox-kit-spec/v3/spec"
+	"github.com/docker/sandbox-kit-spec/v3/tck/report"
 )
 
 // StagedKitRoot is where every kit stages its own sources.

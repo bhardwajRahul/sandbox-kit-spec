@@ -3,9 +3,7 @@ name: release
 on:
   push:
     tags:
-      # Schema/frontend release line (Hub docker/sandbox-kit:3.y.z + kit-tck
-      # binaries). Not a Go module major — see RELEASES.md. Module consumers
-      # keep using v0.* / v1.* tags.
+      # Schema-3 frontend + Go module major (path …/v3). See RELEASES.md.
       - "v3.*"
 
 # Publishes kit-tck via GoReleaser and the BuildKit frontend image to Hub.

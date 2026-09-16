@@ -14,8 +14,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/sandbox-kit-spec/spec"
-	tckkit "github.com/docker/sandbox-kit-spec/tck/kit"
+	"github.com/docker/sandbox-kit-spec/v3/spec"
+	tckkit "github.com/docker/sandbox-kit-spec/v3/tck/kit"
 )
 
 // The set path is the one part of the frontend that unit tests cannot

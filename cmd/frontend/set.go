@@ -18,10 +18,10 @@ import (
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"gopkg.in/yaml.v3"
 
-	"github.com/docker/sandbox-kit-spec/assemble"
-	"github.com/docker/sandbox-kit-spec/resolve"
-	"github.com/docker/sandbox-kit-spec/spec"
-	tckkit "github.com/docker/sandbox-kit-spec/tck/kit"
+	"github.com/docker/sandbox-kit-spec/v3/assemble"
+	"github.com/docker/sandbox-kit-spec/v3/resolve"
+	"github.com/docker/sandbox-kit-spec/v3/spec"
+	tckkit "github.com/docker/sandbox-kit-spec/v3/tck/kit"
 )
 
 // setContextName is the staged basename of a merged kit's agent context:
