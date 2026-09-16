@@ -163,12 +163,9 @@ brew install docker/tap/sbx@rc
 sbx login
 ```
 
-Build the kit frontend once so `# syntax=docker/sandbox-kit:3` resolves
-locally (or pull it once it is published to Docker Hub):
-
-```sh
-docker build -t docker/sandbox-kit:3 .
-```
+There is nothing to install for the frontend itself:
+[`docker/sandbox-kit:3`](https://hub.docker.com/r/docker/sandbox-kit) is
+on Docker Hub, and BuildKit pulls it when it reads the `# syntax=` line.
 
 Set your registry namespace once for the steps below, and log in:
 
@@ -316,14 +313,32 @@ docker buildx build . -f claude.yaml --platform linux/amd64,linux/arm64 --push \
   -t registry.example.com/claude-kit:2.1.0
 ```
 
-## Building the frontend image
+## The frontend image
+
+`# syntax=docker/sandbox-kit:3` resolves to
+[`docker/sandbox-kit`](https://hub.docker.com/r/docker/sandbox-kit) on
+Docker Hub, which BuildKit pulls and caches on the first build that names
+it.
+
+Every release also publishes its exact version — `docker/sandbox-kit:3.0.0-m.3`
+— which is what a build names when it must resolve the same frontend
+every time. The floating `3` moves only when a stable `3.X.Y` is
+released, never for a milestone, so until v3 has one the two tags can
+name different builds.
+
+Building it yourself is for working on the frontend, not for using it. An
+image under that tag in the local store is what a local build resolves,
+without a registry pull, which is what makes an unreleased change
+testable:
 
 ```sh
 docker build -t docker/sandbox-kit:3 .
 ```
 
-With the image present in the local store, local `# syntax=docker/sandbox-kit:3`
-builds resolve to it without a registry pull.
+While iterating, `task frontend:dev` builds under a fresh tag and prints
+the `# syntax=` line to paste, because BuildKit caches frontend
+resolution per reference and a reused tag can keep dispatching the
+previous binary. `task frontend:push` publishes, guarded.
 
 ## Conformance
 
