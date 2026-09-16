@@ -16,7 +16,11 @@ vars:
   # arg names. Build one on its own:
   # `task kit:build KIT=team BUILD_ARGS='--build-arg registry=docker.io/me'`.
   KITS: hello gh tool shell builder motd wordpress claude claude-mixin claude-acp codex codex-mixin codex-acp cursor cursor-mixin devin devin-mixin docker-agent docker-agent-mixin gemini gemini-mixin opencode opencode-mixin
-  TAG: dev
+  # Empty means "the kit's own version answers": build and push refresh an
+  # upstream-tracked descriptor from the vendor's latest release and tag
+  # with it, so an image tag can never name a version the kit did not
+  # install. Set TAG to pin one build instead.
+  TAG: ""
   # Extra flags for one kit's build, by the kit's own arg names — the
   # frontend validates them and hands the Dockerfile its declared
   # buildArg name: BUILD_ARGS='--build-arg version=2.99.0'.
@@ -183,60 +187,59 @@ tasks:
   versions:check:
     desc: >-
       Compare the example kits' version-arg defaults against upstream
-      latest releases. gh is not listed: its version authority is the
-      nixpkgs pin in examples/gh/gh.dockerfile, so a bump is editing the
-      pin (and the provides entry the pinned package dictates).
+      latest releases, changing nothing. Which kits track what lives in
+      hack/kit-version.sh, the same map build and push resolve a tag
+      through, so the report and the build cannot disagree about latest.
+    silent: true
+    cmds:
+      - hack/kit-version.sh check
+
+  versions:update:
+    desc: >-
+      Refresh every upstream-tracked kit's version-arg default to the
+      vendor's latest release: task versions:update (one kit:
+      KIT=claude). This edits descriptors — review the diff, since the
+      version an example pins is what its provide advertises.
     silent: true
     cmds:
       - |
-        # gh api is authenticated (no anonymous rate limit); curl is the
-        # fallback for hosts without the gh CLI.
-        latest_codex_tag=$( (gh api repos/openai/codex/releases/latest --jq .tag_name 2>/dev/null) || curl -fsSL https://api.github.com/repos/openai/codex/releases/latest | sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p' )
-        latest_codex=${latest_codex_tag#rust-v}
-        latest_claude=$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest)
-        report() { # kit have latest
-          if [ -z "$3" ]; then s="? (upstream check failed)";
-          elif [ "$2" = "$3" ]; then s=ok;
-          else s="OUTDATED (latest $3)"; fi
-          printf '%-12s %-10s %s\n' "$1" "$2" "$s"
-        }
-        for kit in claude claude-mixin; do
-          have=$(sed -n 's/.*default: "\([0-9.]*\)".*/\1/p' examples/$kit/$kit.yaml | head -1)
-          report "$kit" "$have" "$latest_claude"
+        set -euo pipefail
+        for kit in ${KIT:-$(hack/kit-version.sh kits)}; do
+          before=$(hack/kit-version.sh current "$kit")
+          after=$(hack/kit-version.sh update "$kit")
+          if [ "$before" = "$after" ]; then
+            printf '%-16s %s\n' "$kit" "$after"
+          else
+            printf '%-16s %s -> %s\n' "$kit" "$before" "$after"
+          fi
         done
-        for kit in codex codex-mixin; do
-          have=$(sed -n 's/.*default: "\([0-9.]*\)".*/\1/p' examples/$kit/$kit.yaml | head -1)
-          report "$kit" "$have" "$latest_codex"
-        done
-        latest_gemini=$(curl -fsSL https://registry.npmjs.org/@google%2Fgemini-cli/latest | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
-        have=$(sed -n 's/.*default: "\([0-9.]*\)".*/\1/p' examples/gemini-mixin/gemini-mixin.yaml | head -1)
-        report "gemini-mixin" "$have" "$latest_gemini"
-        latest_opencode=$(curl -fsSL https://registry.npmjs.org/opencode-ai/latest | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
-        for kit in opencode opencode-mixin; do
-          have=$(sed -n 's/.*default: "\([0-9.]*\)".*/\1/p' examples/$kit/$kit.yaml | head -1)
-          report "$kit" "$have" "$latest_opencode"
-        done
-        latest_acp=$(curl -fsSL https://registry.npmjs.org/@agentclientprotocol%2Fclaude-agent-acp/latest | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
-        have=$(sed -n 's/.*default: "\([0-9.]*\)".*/\1/p' examples/claude-acp/claude-acp.yaml | head -1)
-        report "claude-acp" "$have" "$latest_acp"
-        latest_codex_acp=$(curl -fsSL https://registry.npmjs.org/@agentclientprotocol%2Fcodex-acp/latest | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
-        have=$(sed -n 's/.*default: "\([0-9.]*\)".*/\1/p' examples/codex-acp/codex-acp.yaml | head -1)
-        report "codex-acp" "$have" "$latest_codex_acp"
+    env:
+      KIT: "{{.KIT}}"
 
   kit:build:
     desc: >-
       Build one example kit against the frontend its descriptor names:
-      task kit:build KIT=gh [TAG=2.98.0]. During frontend development use
-      kit:dev instead — the builder can pin a reused frontend tag like :3
-      to a stale image. A kit is its .yaml descriptor when one exists,
-      its comment-descriptor .dockerfile otherwise.
+      task kit:build KIT=claude [TAG=2.98.0]. Without TAG the kit's own
+      version answers, refreshed from upstream first where the kit tracks
+      a vendor release — the tag then names exactly what the build
+      installed. During frontend development use kit:dev instead — the
+      builder can pin a reused frontend tag like :3 to a stale image. A
+      kit is its .yaml descriptor when one exists, its comment-descriptor
+      .dockerfile otherwise.
     requires:
       vars: [KIT]
     dir: examples/{{.KIT}}
     cmds:
-      - >-
-        docker buildx build . -f "$(test -f {{.KIT}}.yaml && echo {{.KIT}}.yaml || echo {{.KIT}}.dockerfile)"
-        {{.BUILD_ARGS}} -t {{.KIT}}-kit:{{.TAG}} {{.CLI_ARGS}}
+      - |
+        set -euo pipefail
+        tag="{{.TAG}}"
+        # A version build arg outranks the descriptor in the frontend, so
+        # the tag follows it rather than the file — and a build pinned
+        # that way refreshes nothing.
+        [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/hack/kit-version.sh override "{{.BUILD_ARGS}}")
+        [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/hack/kit-version.sh update {{.KIT}})
+        docker buildx build . -f "$(test -f {{.KIT}}.yaml && echo {{.KIT}}.yaml || echo {{.KIT}}.dockerfile)" \
+          {{.BUILD_ARGS}} -t {{.KIT}}-kit:"$tag" {{.CLI_ARGS}}
 
   kit:dev:
     desc: >-
@@ -257,12 +260,19 @@ tasks:
       - docker build -q -t {{.FRONTEND_IMAGE}}:{{.DEV_TAG}} . >/dev/null
       - cp -r examples/{{.KIT}}/ {{.BUILD_DIR}}/
       # Only line 1 is rewritten: a comment-descriptor kit's SECOND syntax
-      # stanza names the content's frontend and must stay untouched.
-      - >-
-        F="$(test -f {{.BUILD_DIR}}/{{.KIT}}.yaml && echo {{.KIT}}.yaml || echo {{.KIT}}.dockerfile)" &&
-        sed -i '' '1s|^# syntax=.*|# syntax={{.FRONTEND_IMAGE}}:{{.DEV_TAG}}|' {{.BUILD_DIR}}/$F &&
-        docker buildx build {{.BUILD_DIR}} -f {{.BUILD_DIR}}/$F
-        {{.SECRETS}} {{.BUILD_ARGS}} -t {{.KIT}}-kit:{{.TAG}}
+      # stanza names the content's frontend and must stay untouched. The
+      # version is read, never refreshed: iterating on the frontend should
+      # not reach for the network, nor leave a bump in the tree behind a
+      # build.
+      - |
+        set -euo pipefail
+        F="$(test -f {{.BUILD_DIR}}/{{.KIT}}.yaml && echo {{.KIT}}.yaml || echo {{.KIT}}.dockerfile)"
+        tag="{{.TAG}}"
+        [ -n "$tag" ] || tag=$(hack/kit-version.sh override "{{.BUILD_ARGS}}")
+        [ -n "$tag" ] || tag=$(hack/kit-version.sh current {{.KIT}})
+        sed -i '' '1s|^# syntax=.*|# syntax={{.FRONTEND_IMAGE}}:{{.DEV_TAG}}|' {{.BUILD_DIR}}/"$F"
+        docker buildx build {{.BUILD_DIR}} -f {{.BUILD_DIR}}/"$F" \
+          {{.SECRETS}} {{.BUILD_ARGS}} -t {{.KIT}}-kit:"$tag"
       - docker rmi {{.FRONTEND_IMAGE}}:{{.DEV_TAG}} >/dev/null
 
   kits:dev:
@@ -275,9 +285,12 @@ tasks:
   kit:push:
     desc: >-
       Build and push one example kit:
-      task kit:push KIT=gh TAG=2.98.0 REGISTRY=docker.io/me
-      (the gh kit verifies release provenance when a token is supplied:
-      add SECRETS='--secret id=gh_token,env=GH_TOKEN')
+      task kit:push KIT=claude REGISTRY=docker.io/me [TAG=2.98.0]
+      Without TAG the kit publishes under its own version, refreshed from
+      upstream first where it tracks a vendor release, so the published
+      tag and the installed version are one fact. (The gh kit verifies
+      release provenance when a token is supplied: add
+      SECRETS='--secret id=gh_token,env=GH_TOKEN'.)
     requires:
       vars: [KIT]
     preconditions:
@@ -285,9 +298,17 @@ tasks:
         msg: "REGISTRY is required, e.g. REGISTRY=docker.io/me"
     dir: examples/{{.KIT}}
     cmds:
-      - >-
-        docker buildx build . -f "$(test -f {{.KIT}}.yaml && echo {{.KIT}}.yaml || echo {{.KIT}}.dockerfile)" {{.SECRETS}} {{.BUILD_ARGS}}
-        --push -t {{.REGISTRY}}/sbx-kit-{{.KIT}}:{{.TAG}} {{.PUBLISH_FLAGS}} {{.CLI_ARGS}}
+      - |
+        set -euo pipefail
+        tag="{{.TAG}}"
+        # A version build arg outranks the descriptor in the frontend, so
+        # the tag follows it rather than the file — and a build pinned
+        # that way refreshes nothing.
+        [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/hack/kit-version.sh override "{{.BUILD_ARGS}}")
+        [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/hack/kit-version.sh update {{.KIT}})
+        docker buildx build . -f "$(test -f {{.KIT}}.yaml && echo {{.KIT}}.yaml || echo {{.KIT}}.dockerfile)" \
+          {{.SECRETS}} {{.BUILD_ARGS}} \
+          --push -t {{.REGISTRY}}/sbx-kit-{{.KIT}}:"$tag" {{.PUBLISH_FLAGS}} {{.CLI_ARGS}}
 
   kits:build:
     desc: Build every example kit ({{.KITS}})
@@ -297,7 +318,9 @@ tasks:
         vars: { KIT: "{{.ITEM}}" }
 
   kits:push:
-    desc: "Build and push every example kit: task kits:push REGISTRY=docker.io/me TAG=1.0.0"
+    desc: >-
+      Build and push every example kit, each under its own version:
+      task kits:push REGISTRY=docker.io/me (TAG pins them all to one tag)
     cmds:
       - for: { var: KITS }
         task: kit:push

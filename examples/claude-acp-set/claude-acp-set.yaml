@@ -31,7 +31,7 @@ args:
 kits:
   # The base. One of them is a workload, so the merged kit is one too,
   # and its AGENTS.md profile becomes the merged kit's.
-  - ref: ${{ kit.args.registry }}/sbx-kit-shell:1.0.6
+  - ref: ${{ kit.args.registry }}/sbx-kit-shell:1.0.0
 
   # Claude Code itself: the binary at /usr/local/bin/claude, the
   # Anthropic egress and credential, and the session-state volumes. The
@@ -45,12 +45,12 @@ kits:
   # $HOME/.local/bin, and the adapter ships with its vendored fallback
   # binary omitted on purpose, so that pairing resolves and builds and
   # then finds no agent at run time.
-  - ref: ${{ kit.args.registry }}/sbx-kit-claude-mixin:1.0.6
+  - ref: ${{ kit.args.registry }}/sbx-kit-claude-mixin:2.1.273
 
   # The ACP adapter. Its requires: ["claude"] is answered by the kit
   # above — which is also what orders the two, whatever order they are
   # listed in here.
-  - ref: ${{ kit.args.registry }}/sbx-kit-claude-acp:1.0.6
+  - ref: ${{ kit.args.registry }}/sbx-kit-claude-acp:0.78.0
 
 # The set's own declarations merge on top of the three. This one adds
 # only a note: how to reach the adapter, which is the one thing none of
