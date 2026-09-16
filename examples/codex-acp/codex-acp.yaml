@@ -1,0 +1,68 @@
+# syntax=docker/sandbox-kit:3
+# The ACP (Agent Client Protocol) adapter for Codex as a MIXIN:
+# `codex-acp` speaks ACP on stdio so protocol clients (Zed and other
+# ACP-capable editors) can drive a Codex session inside the sandbox.
+# Everything environmental rides with the codex-mixin kit this one
+# requires — the OpenAI credential surface (~/.codex/auth.json,
+# config.toml), the api.openai.com and chatgpt.com egress, and the
+# config seeds — because the adapter drives that kit's codex binary
+# rather than talking to OpenAI itself. This kit contributes the
+# adapter, its Node runtime, and the one environment variable that binds
+# the two together.
+#
+# Codex needs an adapter because its CLI speaks no ACP of its own, the
+# way Claude Code does not. Agents whose own binary implements ACP
+# (cursor-agent, devin, gemini, opencode) need no kit here: their
+# workload and mixin kits already ship the binary a client drives.
+schemaVersion: "3"
+displayName: Codex ACP adapter
+author: "Docker, Inc."
+description: >-
+  The Agent Client Protocol adapter for Codex as a mixin — the codex-acp
+  stdio server with its Node runtime in an overlay, bound to the composed
+  codex binary. Layer it onto a base that composes the codex-mixin kit
+  and point an ACP client (such as Zed) at `codex-acp`.
+sourceUrl: https://github.com/agentclientprotocol/codex-acp
+licenses: [Apache-2.0]
+
+kind: mixin
+
+args:
+  version:
+    default: "1.12.0"
+    pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+    description: codex-acp release to install
+    buildArg: ACP_VERSION
+
+provides: ["codex-acp@${{ kit.args.version }}"]
+
+# The adapter execs the sandboxed codex binary, so a composition without
+# codex yields an adapter with no agent behind it. Requiring the
+# capability rather than naming the kit keeps any codex-carrying kit
+# eligible, and it is also what makes CODEX_PATH resolvable: the
+# codex-mixin kit installs /usr/local/bin/codex.
+#
+# The minimum is the adapter's own declared dependency range: codex-acp
+# 1.12.0 asks for @openai/codex ^0.154.0, and deleting the bundled copy
+# means the composed binary is the only one that has to satisfy it, so
+# the floor belongs here where resolution can refuse an older codex.
+#
+# Only the lower bound is expressible: v3 constraints are minimums by
+# design, so resolution never needs a backtracking solver (SPEC-v3 §5).
+# The gap is real rather than theoretical — on a 0.x dependency the caret
+# means >= 0.154.0 AND < 0.155.0, so the day codex ships 0.155.0 this
+# floor would admit a version the adapter does not claim to support.
+# Nothing in the grammar can refuse it, so the two pins move together:
+# `task versions:check` reports when codex outruns this adapter, and the
+# adapter is re-pinned and this floor raised in the same change.
+requires: ["codex >= 0.154.0"]
+
+# No network policy and no credential: the adapter opens no sockets of
+# its own. Its egress and auth are whatever the codex it execs already
+# has, which the codex-mixin kit declares. The package is installed at
+# build time, so unlike an `npx`-at-startup launcher this needs no
+# registry.npmjs.org access at runtime either.
+capabilities:
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      contentFile: ./codex-acp-context.md

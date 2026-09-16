@@ -1,0 +1,71 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+displayName: WordPress
+description: The classic compose wordpress service, restated as a workload kit
+sourceUrl: https://wordpress.org
+licenses: [GPL-2.0-or-later]
+
+kind: workload
+
+# compose `image: wordpress` becomes content: the official image is the
+# dockerfile's FROM, pinned by this arg and expanded into the provide.
+#
+# compose `environment:` becomes declared args. Private by default; env:
+# opts each one into the container environment. The password is
+# configuration the caller supplies at create, not a proxy-injectable
+# HTTP credential — the credential need type covers API traffic, not
+# database wire protocols.
+args:
+  version:
+    default: "6.8.2"
+    pattern: '^[0-9]+\.[0-9]+(\.[0-9]+)?$'
+    description: WordPress release to run
+    buildArg: WP_VERSION
+  dbHost:
+    required: true
+    env: WORDPRESS_DB_HOST
+    description: MySQL host the site connects to
+  dbUser:
+    default: wordpress
+    env: WORDPRESS_DB_USER
+  dbPassword:
+    required: true
+    env: WORDPRESS_DB_PASSWORD
+    description: MySQL password for dbUser
+  dbName:
+    default: wordpress
+    env: WORDPRESS_DB_NAME
+
+provides: ["wordpress@${{ kit.args.version }}"]
+
+capabilities:
+  # compose `ports: 8080:80`, minus the host half: the kit declares which
+  # container port is the service; which host port answers is the host's
+  # decision at create.
+  - type: com.docker.sandbox/port@1
+    description: The site
+    config: {name: http, container: 80}
+
+  # compose `volumes: wordpress:/var/www/html`
+  - type: com.docker.sandbox/volume@1
+    description: Site content and uploads survive recreation
+    config: {path: /var/www/html, size: 10g}
+
+  # No compose equivalent: a wordpress that can reach its own update and
+  # plugin endpoints and nothing else.
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          - api.wordpress.org:443
+          - downloads.wordpress.org:443
+
+  - type: com.docker.sandbox/resources@1
+    optional: true
+    config: {memory: 1g}
+
+# Two compose keys have no slot here, deliberately for now. `restart:
+# always` is a workload-lifecycle hint, and the restart policy is the
+# host's answer either way. The `db` companion service is the
+# multi-service topology question parked alongside it; until that lands,
+# dbHost points wherever the caller runs MySQL.

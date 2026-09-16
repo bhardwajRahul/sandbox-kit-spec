@@ -1,0 +1,57 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+displayName: GitHub CLI
+description: gh from nixpkgs, pinned by commit, as a self-contained overlay
+sourceUrl: https://github.com/cli/cli
+licenses: [MIT]
+
+kind: mixin
+
+# The nixpkgs commit in the companion Dockerfile is the version authority:
+# gh's version follows from it, a bump is editing the pin, and this kit has
+# no version arg at all.
+provides: ["gh@2.100.0"]
+
+capabilities:
+  - type: com.docker.sandbox/network-policy@2
+    config:
+      runtime:
+        allow:
+          # Git over HTTPS and release downloads: no method or path
+          # narrows usefully, and git is not HTTP the boundary can read,
+          # so this stays the bare host grant.
+          - github.com
+          # gh reaches most of the REST and GraphQL surface, so the bound
+          # worth stating here is the verb, not the path.
+          - hosts: [api.github.com]
+            methods: [GET, HEAD, POST, PATCH, PUT, DELETE]
+          - hosts: [uploads.github.com]
+            methods: [POST, PUT]
+        deny:
+          # Deletes under the repository tree — the repository itself
+          # among them — are the one thing the injected token should not
+          # reach. Deny wins, so this carves the verb back out of the
+          # entry above for these paths only.
+          - hosts: [api.github.com]
+            methods: [DELETE]
+            paths: [/repos/**]
+
+  - type: com.docker.sandbox/credential@1
+    description: GitHub API access for gh
+    optional: true
+    config:
+      service: github
+      phase: runtime
+      apiKey:
+        name: GH_TOKEN
+        proxyManaged: true
+        inject:
+          - {domain: api.github.com, header: Authorization, format: "Bearer %s"}
+          - {domain: uploads.github.com, header: Authorization, format: "Bearer %s"}
+          - {domain: github.com, header: Authorization, format: "Bearer %s"}
+
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      contentFile: ./gh-context.md
+
+dockerfile: gh.dockerfile

@@ -1,0 +1,117 @@
+# syntax=docker/sandbox-kit:3
+# The Cursor agent as a MIXIN: the agent tree in an overlay, with the same
+# credential, egress, and hooks as the cursor workload, minus what only
+# the environment-owning kit carries (the entrypoint — run `cursor-agent`
+# in the base's shell — and the base's apt mirrors). v2's environment
+# block has no v3 field; AGENT_CLI_CREDENTIAL_STORE rides the overlay as
+# /etc/profile.d, sourced by the base's login shell.
+schemaVersion: "3"
+displayName: Cursor (mixin)
+author: "Docker, Inc."
+description: >-
+  Cursor's agent CLI as a mixin — the agent in an overlay, with the
+  Cursor credential (API key or OAuth) and the hooks the agent needs.
+  Layer it onto a shell base and run `cursor-agent`.
+sourceUrl: https://cursor.com
+version: "0.1.0"
+
+kind: mixin
+
+provides: ["cursor"]
+
+dockerfile: ./cursor-mixin.dockerfile
+
+capabilities:
+  # Every domain the credential injects into, plus downloads.cursor.com
+  # (cursor-agent update; not covered by cursor.com). The base's apt mirrors stay
+  # with the base.
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          - api2.cursor.sh:443
+          - api3.cursor.sh:443
+          - repo42.cursor.sh:443
+          - cursor.com:443
+          - downloads.cursor.com:443
+
+  # Declaring both apiKey and oauth means "whichever the host has bound".
+  # MIGRATION NOTE: v2's oauth.skipIfEnv is gone — the mode decision
+  # belongs to the host's binding. Cursor has no credentialFile: it runs
+  # with AGENT_CLI_CREDENTIAL_STORE=memory, and the access-token sentinel
+  # reaches the agent through the environment at run time.
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: Cursor API access (API key or Cursor OAuth)
+    config:
+      service: cursor
+      phase: runtime
+      apiKey:
+        name: CURSOR_API_KEY
+        proxyManaged: true
+        inject:
+          - {domain: api2.cursor.sh, header: Authorization, format: "Bearer %s"}
+          - {domain: api3.cursor.sh, header: Authorization, format: "Bearer %s"}
+          - {domain: repo42.cursor.sh, header: Authorization, format: "Bearer %s"}
+          - {domain: cursor.com, header: Authorization, format: "Bearer %s"}
+      oauth:
+        tokenEndpoint: {host: api2.cursor.sh, path: /auth/poll}
+        # The hosts where the OAuth bearer is substituted; inject above
+        # speaks only for the API-key presentation.
+        resourceHosts:
+          - api2.cursor.sh
+          - api3.cursor.sh
+          - repo42.cursor.sh
+          - cursor.com
+        # The refresh sentinel is never rendered into the container; the
+        # proxy still needs it to mask real refresh tokens in responses
+        # and to recognize sentinel-bearing refresh requests.
+        sentinels:
+          accessToken: cursor-oat-proxy-managed
+          refreshToken: cursor-ort-proxy-managed
+        # Cursor's token response spells both fields camelCase; without
+        # the refresh mapping a runtime would look for refresh_token,
+        # find nothing, and pass the real refresh token through unmasked.
+        responseFields:
+          accessToken: accessToken
+          refreshToken: refreshToken
+
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      install:
+        - command: mkdir -p /home/agent/.cursor && chown agent:agent /home/agent/.cursor
+          user: "0"
+          description: Ensure .cursor is owned by agent before seeds run
+        # Pre-trust the workspace so the interactive TUI skips its trust
+        # prompt: cursor-agent records trust per workspace slug, derived
+        # from WORKSPACE_DIR, so this cannot be a static file. --yolo
+        # bypasses tool approvals but NOT this gate, and --trust only
+        # works headless.
+        - command: |
+            [ -n "$WORKSPACE_DIR" ] || { echo "WORKSPACE_DIR unset; skipping Cursor workspace pre-trust" >&2; exit 0; }
+            ws="$WORKSPACE_DIR"
+            slug=$(printf '%s' "$ws" | sed 's#^/##; s#/#-#g')
+            dir="/home/agent/.cursor/projects/$slug"
+            mkdir -p "$dir"
+            esc=$(printf '%s' "$ws" | sed 's/\\/\\\\/g; s/"/\\"/g')
+            [ -f "$dir/.workspace-trusted" ] || printf '{"trustedAt":"%s","workspacePath":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$esc" > "$dir/.workspace-trusted"
+          user: agent
+          env: [WORKSPACE_DIR]
+          description: Pre-trust the workspace for the interactive TUI
+      files:
+        # HTTP/1.1+SSE for agent connections, so traffic goes through the
+        # forward proxy. Seeded only when absent: the agent owns it after.
+        - path: /home/agent/.cursor/cli-config.json
+          content: '{"network": {"useHttp1ForAgent": true}}'
+          overwrite: false
+          description: Seed HTTP/1.1+SSE for agent connections
+
+  # Where cursor reads shared skills, so the host's store reaches it.
+  - type: com.docker.sandbox/agent-skills@1
+    optional: true
+    config:
+      path: /home/agent/.cursor/skills
+
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      contentFile: ./cursor-context.md

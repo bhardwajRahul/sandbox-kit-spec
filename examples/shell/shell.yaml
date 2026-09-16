@@ -1,0 +1,40 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+displayName: Shell
+author: "Docker, Inc."
+description: >-
+  A plain shell sandbox on the shell-docker template — bash, git, apt, and
+  a Docker engine. The base workload agent mixins layer onto; it ships no
+  agent and declares no credentials.
+sourceUrl: https://github.com/docker/sandbox-kit-spec
+
+kind: workload
+version: "1.0.0"
+provides: [shell]
+
+capabilities:
+  # Only the egress the base itself ships tooling for: apt (the template
+  # is Debian-based; archive/security carry amd64, ports carries arm64)
+  # and Docker's apt repo, which the *-docker templates pre-add. Agent
+  # services (Anthropic, OpenAI, …) deliberately do NOT appear here —
+  # the mixin that ships an agent's binary declares that agent's
+  # credential and egress, so the base grants nothing it cannot justify.
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          - archive.ubuntu.com
+          - security.ubuntu.com
+          - ports.ubuntu.com
+          - deb.debian.org
+          - download.docker.com
+
+  # The workload owns the context-file profile; composed mixins fan their
+  # guidance out beside it.
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      filename: AGENTS.md
+      content: |
+        This is a plain shell sandbox: bash, git, apt, and a Docker
+        engine. Install what you need with apt; composed kits list their
+        own capabilities below.

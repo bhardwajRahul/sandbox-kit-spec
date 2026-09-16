@@ -1,0 +1,304 @@
+version: "3"
+
+vars:
+  # The frontend image the `# syntax=` line of every descriptor names.
+  FRONTEND_IMAGE: docker/sandbox-kit
+  FRONTEND_TAG: "3"
+  # Registry prefix kit images are pushed under, e.g. docker.io/cdupuis.
+  # No default: pushing to someone else's namespace should never be one
+  # forgotten variable away.
+  REGISTRY: ""
+  # Example kits and the tag each pushes as (override per invocation:
+  # `task kit:push KIT=gh TAG=2.98.0 REGISTRY=docker.io/me`).
+  # `team` and `claude-acp-set` are deliberately absent: they are the set examples,
+  # and the kits they list are registry references, so they only build
+  # once those kits have been pushed to the namespace their `registry`
+  # arg names. Build one on its own:
+  # `task kit:build KIT=team BUILD_ARGS='--build-arg registry=docker.io/me'`.
+  KITS: hello gh tool shell builder motd wordpress claude claude-mixin claude-acp codex codex-mixin codex-acp cursor cursor-mixin devin devin-mixin docker-agent docker-agent-mixin gemini gemini-mixin opencode opencode-mixin
+  TAG: dev
+  # Extra flags for one kit's build, by the kit's own arg names — the
+  # frontend validates them and hands the Dockerfile its declared
+  # buildArg name: BUILD_ARGS='--build-arg version=2.99.0'.
+  BUILD_ARGS: ""
+  # SBOM generator image for buildx attestations (Docker Scout indexer,
+  # hardened build from the DHI catalog).
+  SBOM_GENERATOR: dhi.io/scout-sbom-indexer:1
+
+  # Flags every published artifact carries. Defined once: platforms,
+  # provenance and the SBOM generator drifting between the frontend and
+  # the kits, or between two push targets, is the kind of difference
+  # nobody notices until an artifact is missing an attestation.
+  PUBLISH_FLAGS: "--sbom=generator={{.SBOM_GENERATOR}} --provenance=true --platform=linux/amd64,linux/arm64"
+
+tasks:
+  default:
+    silent: true
+    cmds:
+      - task --list
+
+  test:
+    desc: Run all Go tests
+    cmds:
+      - go test ./...
+
+  test:unit:
+    desc: >-
+      Every Go test except the sandbox conformance suite, which drives a
+      fake runtime through hundreds of sandbox lifecycles and takes
+      minutes. This is the fast signal.
+    cmds:
+      # Discovery is judged before filtering: piping go list into grep
+      # reports the grep's status, and even capturing the list is not
+      # enough, since a failed assignment does not end the block. A
+      # broken listing must fail the run, not narrow it.
+      - |
+        set -e
+        packages=$(go list ./...)
+        go test $(printf '%s\n' "$packages" | grep -v /tck/sandbox)
+
+  test:tck:
+    desc: The sandbox conformance suite, judged against the fake adapter
+    cmds:
+      - go test ./tck/sandbox/...
+
+  test:e2e:
+    desc: >-
+      Run the end-to-end set build: publishes two kits to a throwaway
+      registry and builds a set over them, which is the one path unit
+      tests cannot reach (it needs a gateway client and a registry to
+      pull from). Needs Docker with buildx; `task test` skips it.
+    cmds:
+      - KIT_E2E=1 go test ./cmd/frontend/ -run TestSetBuildsEndToEnd -v -count=1 -timeout 15m
+
+  lint:
+    desc: golangci-lint and markdownlint, as CI runs them
+    cmds:
+      - task: lint:go
+      - task: lint:md
+
+  lint:go:
+    desc: golangci-lint with the repository's .golangci.yml
+    cmds:
+      - golangci-lint run
+
+  lint:md:
+    desc: >-
+      markdownlint over the file set .markdownlint-cli2.yaml names. The
+      image is pinned by digest (v0.23.2) rather than tag, so a local run
+      and CI judge alike and a moved tag cannot change the verdict. CI
+      runs this same target.
+    cmds:
+      - docker run --rm -v "$(pwd)":/workdir davidanson/markdownlint-cli2@sha256:839558fd0d36c46da0e01ea84fd1d20a2822b5a8a60c16dc9708f0bb7c9e903b
+
+  validate:
+    desc: gofmt + go vet across the module
+    cmds:
+      - test -z "$(gofmt -l .)" || { gofmt -l .; echo "gofmt failures above"; exit 1; }
+      - go vet ./...
+
+  tck:kit:
+    desc: >-
+      Check one kit against the specification: task tck:kit REF=docker.io/me/sbx-kit-gh:1.0.0.
+      The same checks run inside the frontend during a build; running them
+      here judges what the exporter and the registry produced, and any kit
+      this frontend did not build.
+    requires:
+      vars: [REF]
+    cmds:
+      - go run ./cmd/kit-tck kit {{.REF}}
+
+  tck:kit:layout:
+    desc: >-
+      Check a kit in an OCI layout directory, the shape
+      `buildx --output type=oci` writes: task tck:kit:layout DIR=/tmp/out TAG=sha256:...
+    requires:
+      vars: [DIR, TAG]
+    cmds:
+      - go run ./cmd/kit-tck kit --layout {{.DIR}} {{.TAG}}
+
+  tck:runtime:
+    desc: >-
+      Check a runtime against the capability pages through its adapter:
+      task tck:runtime ADAPTER=./my-adapter. The contract the adapter
+      implements is docs/spec/conformance.md.
+    requires:
+      vars: [ADAPTER]
+    cmds:
+      - go run ./cmd/kit-tck runtime --adapter {{.ADAPTER}}
+
+  frontend:build:
+    desc: >-
+      Verify the frontend builds for both platforms. It produces no image:
+      a multi-platform build cannot load into the local store, so the
+      output is discarded and this is a check, not an artifact. For a
+      local image use `docker build -t {{.FRONTEND_IMAGE}}:{{.FRONTEND_TAG}} .`,
+      or frontend:dev while iterating; to publish, frontend:push, which
+      carries the guard a build target must not.
+    cmds:
+      - docker buildx b -t {{.FRONTEND_IMAGE}}:{{.FRONTEND_TAG}} . {{.PUBLISH_FLAGS}} --output type=cacheonly
+
+  frontend:dev:
+    desc: >-
+      Build the frontend under a unique dev tag and print the syntax line to
+      use. BuildKit caches the frontend image resolution per reference, so
+      rebuilding under a reused tag (like :3) can keep dispatching the stale
+      binary; a fresh tag sidesteps that during frontend development.
+    vars:
+      DEV_TAG:
+        sh: date +dev-%s
+    cmds:
+      - docker build -t {{.FRONTEND_IMAGE}}:{{.DEV_TAG}} .
+      - 'echo "frontend built — use in descriptors under test:"'
+      - 'echo "  # syntax={{.FRONTEND_IMAGE}}:{{.DEV_TAG}}"'
+
+  frontend:push:
+    desc: >-
+      Build and publish the frontend image under FRONTEND_VERSION:
+      FRONTEND_VERSION=3.0.0 FRONTEND_PUSH_OK=1 task frontend:push
+      Always pushes docker/sandbox-kit:<FRONTEND_VERSION>. Also pushes
+      floating docker/sandbox-kit:<major> when FRONTEND_PROMOTE_MAJOR=1
+      (release workflow sets this only for the highest stable v3.X.Y).
+      One buildx invocation does both: a multi-platform build produces no
+      local image, so a separate docker push has nothing to send.
+    requires:
+      vars: [FRONTEND_VERSION]
+    preconditions:
+      - sh: test -n "{{.FRONTEND_PUSH_OK}}"
+        msg: >-
+          {{.FRONTEND_IMAGE}}:{{.FRONTEND_VERSION}} is a public syntax
+          reference; pass FRONTEND_PUSH_OK=1 to confirm the push is
+          intentional (override FRONTEND_IMAGE to push elsewhere).
+    cmds:
+      - |
+        set -euo pipefail
+        ver="{{.FRONTEND_VERSION}}"
+        tags=(-t "{{.FRONTEND_IMAGE}}:$ver")
+        if [ "{{.FRONTEND_PROMOTE_MAJOR}}" = "1" ]; then
+          major=$(printf '%s' "$ver" | cut -d. -f1)
+          tags+=(-t "{{.FRONTEND_IMAGE}}:$major")
+        fi
+        docker buildx b "${tags[@]}" . {{.PUBLISH_FLAGS}} --push
+
+  versions:check:
+    desc: >-
+      Compare the example kits' version-arg defaults against upstream
+      latest releases. gh is not listed: its version authority is the
+      nixpkgs pin in examples/gh/gh.dockerfile, so a bump is editing the
+      pin (and the provides entry the pinned package dictates).
+    silent: true
+    cmds:
+      - |
+        # gh api is authenticated (no anonymous rate limit); curl is the
+        # fallback for hosts without the gh CLI.
+        latest_codex_tag=$( (gh api repos/openai/codex/releases/latest --jq .tag_name 2>/dev/null) || curl -fsSL https://api.github.com/repos/openai/codex/releases/latest | sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p' )
+        latest_codex=${latest_codex_tag#rust-v}
+        latest_claude=$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest)
+        report() { # kit have latest
+          if [ -z "$3" ]; then s="? (upstream check failed)";
+          elif [ "$2" = "$3" ]; then s=ok;
+          else s="OUTDATED (latest $3)"; fi
+          printf '%-12s %-10s %s\n' "$1" "$2" "$s"
+        }
+        for kit in claude claude-mixin; do
+          have=$(sed -n 's/.*default: "\([0-9.]*\)".*/\1/p' examples/$kit/$kit.yaml | head -1)
+          report "$kit" "$have" "$latest_claude"
+        done
+        for kit in codex codex-mixin; do
+          have=$(sed -n 's/.*default: "\([0-9.]*\)".*/\1/p' examples/$kit/$kit.yaml | head -1)
+          report "$kit" "$have" "$latest_codex"
+        done
+        latest_gemini=$(curl -fsSL https://registry.npmjs.org/@google%2Fgemini-cli/latest | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+        have=$(sed -n 's/.*default: "\([0-9.]*\)".*/\1/p' examples/gemini-mixin/gemini-mixin.yaml | head -1)
+        report "gemini-mixin" "$have" "$latest_gemini"
+        latest_opencode=$(curl -fsSL https://registry.npmjs.org/opencode-ai/latest | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+        for kit in opencode opencode-mixin; do
+          have=$(sed -n 's/.*default: "\([0-9.]*\)".*/\1/p' examples/$kit/$kit.yaml | head -1)
+          report "$kit" "$have" "$latest_opencode"
+        done
+        latest_acp=$(curl -fsSL https://registry.npmjs.org/@agentclientprotocol%2Fclaude-agent-acp/latest | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+        have=$(sed -n 's/.*default: "\([0-9.]*\)".*/\1/p' examples/claude-acp/claude-acp.yaml | head -1)
+        report "claude-acp" "$have" "$latest_acp"
+        latest_codex_acp=$(curl -fsSL https://registry.npmjs.org/@agentclientprotocol%2Fcodex-acp/latest | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+        have=$(sed -n 's/.*default: "\([0-9.]*\)".*/\1/p' examples/codex-acp/codex-acp.yaml | head -1)
+        report "codex-acp" "$have" "$latest_codex_acp"
+
+  kit:build:
+    desc: >-
+      Build one example kit against the frontend its descriptor names:
+      task kit:build KIT=gh [TAG=2.98.0]. During frontend development use
+      kit:dev instead — the builder can pin a reused frontend tag like :3
+      to a stale image. A kit is its .yaml descriptor when one exists,
+      its comment-descriptor .dockerfile otherwise.
+    requires:
+      vars: [KIT]
+    dir: examples/{{.KIT}}
+    cmds:
+      - >-
+        docker buildx build . -f "$(test -f {{.KIT}}.yaml && echo {{.KIT}}.yaml || echo {{.KIT}}.dockerfile)"
+        {{.BUILD_ARGS}} -t {{.KIT}}-kit:{{.TAG}} {{.CLI_ARGS}}
+
+  kit:dev:
+    desc: >-
+      Build one example kit against the CURRENT frontend source:
+      task kit:dev KIT=gh. Builds the frontend under a unique tag and
+      rewrites the descriptor's syntax line to it in a temp copy, because
+      the builder's frontend-image resolution can serve a stale binary for
+      a reused tag no matter how the tag is rebuilt locally.
+    requires:
+      vars: [KIT]
+    vars:
+      DEV_TAG:
+        sh: date +dev-%s
+      BUILD_DIR:
+        sh: mktemp -d /tmp/runtime-kit-dev-XXXXXX
+    cmds:
+      - defer: rm -rf {{.BUILD_DIR}}
+      - docker build -q -t {{.FRONTEND_IMAGE}}:{{.DEV_TAG}} . >/dev/null
+      - cp -r examples/{{.KIT}}/ {{.BUILD_DIR}}/
+      # Only line 1 is rewritten: a comment-descriptor kit's SECOND syntax
+      # stanza names the content's frontend and must stay untouched.
+      - >-
+        F="$(test -f {{.BUILD_DIR}}/{{.KIT}}.yaml && echo {{.KIT}}.yaml || echo {{.KIT}}.dockerfile)" &&
+        sed -i '' '1s|^# syntax=.*|# syntax={{.FRONTEND_IMAGE}}:{{.DEV_TAG}}|' {{.BUILD_DIR}}/$F &&
+        docker buildx build {{.BUILD_DIR}} -f {{.BUILD_DIR}}/$F
+        {{.SECRETS}} {{.BUILD_ARGS}} -t {{.KIT}}-kit:{{.TAG}}
+      - docker rmi {{.FRONTEND_IMAGE}}:{{.DEV_TAG}} >/dev/null
+
+  kits:dev:
+    desc: Build every example kit against the current frontend source
+    cmds:
+      - for: { var: KITS }
+        task: kit:dev
+        vars: { KIT: "{{.ITEM}}" }
+
+  kit:push:
+    desc: >-
+      Build and push one example kit:
+      task kit:push KIT=gh TAG=2.98.0 REGISTRY=docker.io/me
+      (the gh kit verifies release provenance when a token is supplied:
+      add SECRETS='--secret id=gh_token,env=GH_TOKEN')
+    requires:
+      vars: [KIT]
+    preconditions:
+      - sh: test -n "{{.REGISTRY}}"
+        msg: "REGISTRY is required, e.g. REGISTRY=docker.io/me"
+    dir: examples/{{.KIT}}
+    cmds:
+      - >-
+        docker buildx build . -f "$(test -f {{.KIT}}.yaml && echo {{.KIT}}.yaml || echo {{.KIT}}.dockerfile)" {{.SECRETS}} {{.BUILD_ARGS}}
+        --push -t {{.REGISTRY}}/sbx-kit-{{.KIT}}:{{.TAG}} {{.PUBLISH_FLAGS}} {{.CLI_ARGS}}
+
+  kits:build:
+    desc: Build every example kit ({{.KITS}})
+    cmds:
+      - for: { var: KITS }
+        task: kit:build
+        vars: { KIT: "{{.ITEM}}" }
+
+  kits:push:
+    desc: "Build and push every example kit: task kits:push REGISTRY=docker.io/me TAG=1.0.0"
+    cmds:
+      - for: { var: KITS }
+        task: kit:push
+        vars: { KIT: "{{.ITEM}}" }

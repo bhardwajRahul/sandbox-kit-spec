@@ -1,0 +1,9 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+displayName: Required port
+description: Requires a published port outright, so refusing it when unclaimed is observable
+capabilities:
+  - type: com.docker.sandbox/port@1
+    config:
+      container: 8080

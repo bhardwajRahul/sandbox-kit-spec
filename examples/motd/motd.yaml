@@ -1,0 +1,27 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+displayName: MOTD
+description: Single-file kit — the content recipe lives in the inline
+  build block instead of a companion Dockerfile
+
+kind: mixin
+provides: ["motd"]
+version: "1.0.0"
+
+args:
+  greeting:
+    default: world
+    pattern: "^[a-z]+$"
+    buildArg: GREETING
+
+# Full Dockerfile semantics, verbatim: the frontend hands this block to the
+# Dockerfile frontend unchanged, so multi-stage, mounts, and even a foreign
+# # syntax= first line all work. Mutually exclusive with a companion
+# <stem>.dockerfile.
+build: |
+  FROM busybox:1.37 AS build
+  ARG GREETING
+  RUN mkdir -p /out/etc && echo "hello ${GREETING}" > /out/etc/motd
+
+  FROM scratch
+  COPY --from=build /out/ /

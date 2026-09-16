@@ -1,0 +1,6 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "com.docker.sandbox/kit-registry@1",
+  "description": "The kit-registry need \u2014 access to the runtime's registry over its engine image store, where kit builds push results and pull the kit frontend \u2014 takes no config: the address and transport are the host's answer, never part of the request. This schema rejects every config value accordingly.",
+  "not": {}
+}

@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "com.docker.sandbox/volume@1",
+  "description": "Config schema for one volume need: a persistent (or tmpfs) path and its characteristics. Instance-shaped, keyed by path. The @1 in the type names this schema; it moves when the schema does.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "path"
+  ],
+  "properties": {
+    "path": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "size": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+)?\\s*([kKmMgGtT]i?[bB]?)?$"
+    },
+    "tmpfs": {
+      "type": "boolean",
+      "description": "A tmpfs mount instead of a block volume."
+    },
+    "mode": {
+      "type": "string",
+      "pattern": "^[0-7]{3,4}$"
+    }
+  }
+}

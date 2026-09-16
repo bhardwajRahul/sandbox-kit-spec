@@ -1,0 +1,43 @@
+name: Specification change
+description: Propose a change to the grammar, a capability, or a conformance duty
+labels: [spec]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >-
+        What cannot be expressed or cannot be relied on today. A concrete
+        kit or runtime that is stuck is worth more than an abstraction.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed statement
+      description: >-
+        The normative sentence you would add or change — MUST, MUST NOT,
+        SHOULD, SHOULD NOT — phrased as it would appear in the
+        specification.
+    validations:
+      required: true
+  - type: textarea
+    id: checkable
+    attributes:
+      label: How it is checked
+      description: >-
+        How a suite would judge it, or why it cannot be observed yet (a
+        waiver is an acceptable answer; silence is not).
+    validations:
+      required: true
+  - type: dropdown
+    id: compatibility
+    attributes:
+      label: Compatibility
+      options:
+        - Additive — existing descriptors and runtimes keep working
+        - Behavior only — a runtime duty changes, the grammar does not
+        - Moves a capability version
+        - Moves the schema version
+    validations:
+      required: true

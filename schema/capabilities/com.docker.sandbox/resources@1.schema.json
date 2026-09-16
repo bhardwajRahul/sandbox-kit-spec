@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "com.docker.sandbox/resources@1",
+  "description": "Config schema for the resources need: CPU, memory, and GPU constraints. Limits constrain the kit rather than grant it anything, so this type is not permission surface. Singleton. The @1 in the type names this schema; it moves when the schema does.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "cpu": {
+      "type": "number",
+      "minimum": 0
+    },
+    "memory": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+)?\\s*([kKmMgGtT]i?[bB]?)?$"
+    },
+    "gpu": {
+      "type": "string"
+    }
+  }
+}

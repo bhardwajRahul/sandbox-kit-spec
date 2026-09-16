@@ -1,0 +1,10 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+displayName: Optional agent skills
+description: Marks the store as optional, so skipping an unprovidable entry instead of refusing is observable
+capabilities:
+  - type: com.docker.sandbox/agent-skills@1
+    optional: true
+    config:
+      path: /home/agent/.kit-tck/skills-opt

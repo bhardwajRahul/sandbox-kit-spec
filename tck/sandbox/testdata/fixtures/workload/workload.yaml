@@ -1,0 +1,16 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: workload
+displayName: Conformance workload
+description: The base every conformance composition sits on; it only has to stay up while checks exec into it
+provides: ["kit-tck-workload@1.0.0"]
+
+capabilities:
+  # The workload's filename is the profile a runtime surfaces every other
+  # kit's context into, so the suite has somewhere to look.
+  - type: com.docker.sandbox/agent-context@1
+    optional: true
+    config:
+      filename: AGENTS.md
+      content: |
+        Conformance workload.

@@ -1,0 +1,51 @@
+# syntax=docker/sandbox-kit:3
+# yaml-language-server: $schema=https://raw.githubusercontent.com/docker/sandbox-kit-spec/main/schema/kit.schema.json
+schemaVersion: "3"
+displayName: Team environment
+author: "Docker, Inc."
+description: >-
+  A shell sandbox with the GitHub CLI and a shared team note, published as
+  one kit — the set form. Composing shell + gh by hand gives the same
+  sandbox; this exists so the composition can be shared as one reference.
+sourceUrl: https://github.com/docker/sandbox-kit-spec
+licenses: [Apache-2.0]
+
+# A set's content is the kits it lists. The frontend resolves each one,
+# judges the set the way a runtime judges a set at create, and merges
+# their layers and declarations into one ordinary kit — so what this
+# publishes is a workload (shell is one), and `kind: set` never reaches
+# a consumer.
+kind: set
+version: "1.0.0"
+
+args:
+  # A set's kits are published references, so the namespace they live
+  # under is the one thing an example cannot hardcode. A build-phase arg
+  # is the right home for it: the same value the kits were pushed under
+  # is passed at build, and expansion bakes it into the published
+  # descriptor's kits list.
+  registry:
+    default: docker.io/dockerdev
+    # A colon so a registry can carry a port: the throwaway
+    # localhost:5000 the docs recommend is the common case, and the
+    # expanded references are parsed properly by the validator.
+    pattern: '^[a-z0-9][a-z0-9._/:-]*$'
+    description: Registry namespace the listed kits were pushed to
+    buildArg: KIT_REGISTRY
+
+kits:
+  # The workload. One of them is a workload, so the merged kit is one too.
+  - ref: ${{ kit.args.registry }}/sbx-kit-shell:1.0.0
+
+  # A content-bearing mixin: its gh binary and nix closure become layers
+  # of the merged kit, and its network policy and GitHub credential merge
+  # into the merged descriptor.
+  - ref: ${{ kit.args.registry }}/sbx-kit-gh:2.72.0
+
+# The set's own declarations merge on top of theirs. This one adds a note
+# of its own; shell's AGENTS.md profile and gh's guidance are merged with
+# it into a single staged body, headed by the kit each section came from.
+capabilities:
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      contentFile: ./team-context.md

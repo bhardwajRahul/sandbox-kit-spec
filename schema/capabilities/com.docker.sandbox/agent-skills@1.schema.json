@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "com.docker.sandbox/agent-skills@1",
+  "description": "Config schema for one agent-skills need: the in-container path the host's shared skills store is asked for, and the most access the kit is willing to take. Instance-shaped, keyed by path. The host's own setting narrows the mode further and can withhold the mount entirely; neither side exceeds the other. The @1 in the type names this schema; it moves when the schema does.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "path"
+  ],
+  "properties": {
+    "path": {
+      "type": "string",
+      "pattern": "^(/([^./][^/]*|\\.[^./][^/]*|\\.\\.[^/]+))+$",
+      "description": "Absolute, canonical in-container path where the agent reads skills, for example /home/agent/.claude/skills. No . or .. segments, no trailing slash, no doubled separator, and not the root itself: an alias for a path already declared would evade the duplicate check."
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "readonly",
+        "readwrite"
+      ],
+      "description": "The most access the kit is willing to take; defaults to readonly. The host may narrow it but never exceed it."
+    }
+  }
+}

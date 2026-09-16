@@ -1,0 +1,11 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+displayName: Inject-only control
+description: The inject-only fixtures' network policy without their credential, so environment deltas attribute to the credential alone
+capabilities:
+  - type: com.docker.sandbox/network-policy@1
+    optional: true
+    config:
+      runtime:
+        allow: [example.com]

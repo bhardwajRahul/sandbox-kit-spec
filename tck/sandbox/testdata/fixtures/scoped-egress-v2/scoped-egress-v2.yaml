@@ -1,0 +1,26 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+displayName: Scoped egress (network-policy@2)
+description: The scoped-egress policy stated as @2 with bare entries, so the connection grants @2 inherits from @1 are observable on a kit declaring @2
+capabilities:
+  # Optional for the same reason scoped-egress is: a runtime claiming any
+  # one capability can compose the fixture, and each check is gated on the
+  # claim that provides the behavior it judges.
+  #
+  # Bare entries only: these checks judge what @2 inherits, and a runtime
+  # could otherwise pass them by enforcing bounded entries alone.
+  - type: com.docker.sandbox/network-policy@2
+    optional: true
+    config:
+      install:
+        allow: [example.net]
+      runtime:
+        allow: [example.com]
+
+  - type: com.docker.sandbox/lifecycle@1
+    optional: true
+    config:
+      install:
+        - command: sh -c 'if kit-tck-probe https://example.net; then echo reachable > /var/tmp/install-egress; else echo blocked > /var/tmp/install-egress; fi'
+          description: Records whether the install-only domain was open during install

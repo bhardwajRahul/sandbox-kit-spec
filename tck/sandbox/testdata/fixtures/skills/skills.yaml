@@ -1,0 +1,15 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+displayName: Agent skills
+description: Asks for the shared skills store, so mounting it where the kit says is observable
+capabilities:
+  - type: com.docker.sandbox/agent-skills@1
+    config:
+      path: /home/agent/.kit-tck/skills
+  - type: com.docker.sandbox/lifecycle@1
+    optional: true
+    config:
+      install:
+        - command: sh -c 'ls /home/agent/.kit-tck/skills > /var/tmp/skills-at-install 2>&1 || true'
+          description: Records what the skills mount held during install, so mount-before-hooks is observable

@@ -1,0 +1,16 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+displayName: Hook environment
+description: Records the environment its hook was given, so what leaked in is observable
+args:
+  declared:
+    default: "yes"
+    env: DECLARED
+capabilities:
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      install:
+        - command: sh -c 'env > /var/tmp/hook.env'
+          env: [DECLARED]
+          description: Records the environment the hook was given

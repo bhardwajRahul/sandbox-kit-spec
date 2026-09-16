@@ -1,0 +1,170 @@
+# syntax=docker/sandbox-kit:3
+# The Codex agent as a WORKLOAD, migrated from the built-in v2 codex kit:
+# the template image as content with codex re-pinned to the published
+# version, v2's entrypoint and environment in the image config, and the
+# same credential, egress, and hooks as the codex-mixin — a workload needs
+# them just as much, since nothing outside the kit seeds codex config in
+# kit-world.
+schemaVersion: "3"
+displayName: Codex
+author: "Docker, Inc."
+description: >-
+  OpenAI's Codex CLI as a complete workload: the sandbox-templates base
+  with codex pinned to the published release, the OpenAI credential (API
+  key or ChatGPT OAuth), scoped egress, and the config/auth seeds the
+  agent needs.
+sourceUrl: https://github.com/openai/codex
+
+kind: workload
+
+args:
+  version:
+    default: "0.154.0"
+    pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+    description: Codex CLI release to install
+    buildArg: CODEX_VERSION
+
+provides: ["codex@${{ kit.args.version }}"]
+
+dockerfile: ./codex.dockerfile
+
+capabilities:
+  # Every domain the credential injects into or routes to, plus the
+  # non-credential domains codex itself needs and the template's apt
+  # mirrors (a workload owns its base, so the mirrors ride here).
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          - api.openai.com:443
+          - openai.com:443
+          - auth.openai.com:443
+          - chatgpt.com:443
+          - files.openai.com:443
+          - registry.npmjs.org:443
+          - releases.openai.com:443
+          - api.github.com:443
+          - github.com:443
+          - release-assets.githubusercontent.com:443
+          - codeload.github.com:443
+          - archive.ubuntu.com:80
+          - security.ubuntu.com:80
+          - ports.ubuntu.com:80
+          - download.docker.com:443
+
+  # Declaring both apiKey and oauth means "whichever the host has bound".
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: OpenAI API access (API key or ChatGPT OAuth)
+    config:
+      service: openai
+      phase: runtime
+      apiKey:
+        name: OPENAI_API_KEY
+        proxyManaged: true
+        inject:
+          - {domain: api.openai.com, header: Authorization, format: "Bearer %s"}
+          - {domain: openai.com, header: Authorization, format: "Bearer %s"}
+      oauth:
+        tokenEndpoint: {host: auth.openai.com, path: /oauth/token}
+        # OAuth-mode model calls route through chatgpt.com/backend-api/codex
+        # with the sentinel bearer — resourceHosts is what tells the proxy
+        # to substitute the real token there, not just at the token
+        # endpoint.
+        resourceHosts:
+          - chatgpt.com
+        sentinels:
+          accessToken: oai-oat01-proxy-managed
+          refreshToken: oai-ort01-proxy-managed
+
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      install:
+        # Seed ~/.codex/config.toml + ~/.codex/auth.json, branching on the
+        # auth mode surfaced via SBX_CRED_OPENAI_MODE — identical to the
+        # codex-mixin's seed, because a workload gets no seeding from
+        # anywhere else. Deterministic from the mode, so idempotent.
+        - command: |
+            set -e
+            mkdir -p /home/agent/.codex /home/agent/.agents
+            MODE="${SBX_CRED_OPENAI_MODE:-none}"
+            cat > /home/agent/.codex/config.toml << 'EOF'
+            approval_policy = "never"
+            sandbox_mode = "danger-full-access"
+            mcp_oauth_credentials_store = "file"
+            EOF
+            case "$MODE" in
+              oauth|apikey)
+                cat >> /home/agent/.codex/config.toml << 'EOF'
+            forced_login_method = "api"
+            EOF
+                ;;
+            esac
+            if [ "$MODE" = oauth ]; then
+              cat >> /home/agent/.codex/config.toml << 'EOF'
+
+            model_provider = "sandboxd"
+
+            [model_providers.sandboxd]
+            name = "Sandbox Proxy"
+            base_url = "https://chatgpt.com/backend-api/codex"
+            experimental_bearer_token = "oai-oat01-proxy-managed"
+            requires_openai_auth = false
+            EOF
+            fi
+            case "$MODE" in
+              oauth|apikey)
+                cat > /home/agent/.codex/auth.json << 'EOF'
+            {
+              "OPENAI_API_KEY": "proxy-managed"
+            }
+            EOF
+                ;;
+              *)
+                rm -f /home/agent/.codex/auth.json
+                ;;
+            esac
+          user: agent
+          env: [SBX_CRED_OPENAI_MODE]
+          description: Seed Codex config/auth from SBX_CRED_OPENAI_MODE
+      startup:
+        # Gateway-first MCP registration; append-with-guard keeps it
+        # idempotent across gateway restarts. No-op when MCP is off.
+        - command: |
+            set -e
+            [ -n "$MCP_GATEWAY_URL" ] || exit 0
+            cfg="$HOME/.codex/config.toml"
+            touch "$cfg"
+            grep -q "^\[mcp_servers.mcp-gateway\]" "$cfg" && exit 0
+            esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+            url=$(esc "$MCP_GATEWAY_URL")
+            auth=$(esc "$MCP_SENTINEL_TOKEN_NAME")
+            cat >> "$cfg" <<EOF
+
+            [mcp_servers.mcp-gateway]
+            type = "http"
+            url = "$url"
+            [mcp_servers.mcp-gateway.headers]
+            Authorization = "Bearer $auth"
+            EOF
+          user: agent
+          env: [MCP_GATEWAY_URL, MCP_SENTINEL_TOKEN_NAME]
+          description: Register the sandbox MCP gateway in ~/.codex/config.toml
+
+  # Headless verbs, so a host can drive sessions without the TTY. Verb
+  # entries are argv tails appended to the entrypoint's launch command.
+  - type: com.docker.sandbox/agent-sessions@1
+    config:
+      prompt: ["exec", "{{.Prompt}}"]
+      resume: ["resume", "{{.SessionID}}"]
+
+  # Where codex reads shared skills, so the host's store reaches it.
+  - type: com.docker.sandbox/agent-skills@1
+    optional: true
+    config:
+      path: /home/agent/.agents/skills
+
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      filename: AGENTS.md
+      contentFile: ./codex-context.md

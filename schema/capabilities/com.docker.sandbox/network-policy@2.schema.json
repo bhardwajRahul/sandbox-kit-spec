@@ -1,0 +1,160 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "com.docker.sandbox/network-policy@2",
+  "description": "Config schema for the phase-scoped egress policy need: install is open while the install hooks run and closed before the agent starts; runtime is what the agent gets. Each phase allows and denies entries, and an entry may bound its hosts to particular HTTP methods and paths. Singleton, and exclusive with @1. The @2 in the type names this schema; it moves when the schema does.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "install": {
+      "$ref": "#/definitions/networkRules"
+    },
+    "runtime": {
+      "$ref": "#/definitions/networkRules"
+    }
+  },
+  "definitions": {
+    "networkRules": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Entries to permit and entries to refuse. Deny wins.",
+      "properties": {
+        "allow": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/allowEntry"
+          }
+        },
+        "deny": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/denyEntry"
+          }
+        }
+      }
+    },
+    "allowEntry": {
+      "description": "A bare host string grants the connection, as @1's list did. An object stating methods or paths grants only matching HTTP requests, and then names its hosts literally — a pattern cannot be bounded and unbounded at once.",
+      "oneOf": [
+        {
+          "$ref": "#/definitions/hostPattern"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/entryObject"
+            },
+            {
+              "if": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "methods"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "paths"
+                    ]
+                  }
+                ]
+              },
+              "then": {
+                "properties": {
+                  "hosts": {
+                    "items": {
+                      "$ref": "#/definitions/literalHost"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "denyEntry": {
+      "description": "As an allow entry, except that hosts may be patterns however the entry is bounded: a deny wins outright, so an overlap between two of them decides the same way.",
+      "oneOf": [
+        {
+          "$ref": "#/definitions/hostPattern"
+        },
+        {
+          "$ref": "#/definitions/entryObject"
+        }
+      ]
+    },
+    "hostPattern": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A domain pattern: exact host, host:port, *.example.com for one label, or * / ** for everything."
+    },
+    "literalHost": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^*]+$",
+      "description": "One host named exactly, optionally with a port."
+    },
+    "entryObject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hosts"
+      ],
+      "dependencies": {
+        "paths": [
+          "methods"
+        ]
+      },
+      "properties": {
+        "hosts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/hostPattern"
+          }
+        },
+        "methods": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "ANY",
+              "CONNECT",
+              "DELETE",
+              "GET",
+              "HEAD",
+              "OPTIONS",
+              "PATCH",
+              "POST",
+              "PUT",
+              "TRACE"
+            ]
+          },
+          "description": "Uppercase HTTP method tokens, or the single entry ANY. Stating any of them bounds the entry; omit the field to leave it unbounded.",
+          "anyOf": [
+            {
+              "items": {
+                "not": {
+                  "const": "ANY"
+                }
+              }
+            },
+            {
+              "maxItems": 1
+            }
+          ]
+        },
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^/"
+          },
+          "description": "Globs matched against the request path. Stating one requires stating methods; omitted alongside methods, it means every path."
+        }
+      }
+    }
+  }
+}

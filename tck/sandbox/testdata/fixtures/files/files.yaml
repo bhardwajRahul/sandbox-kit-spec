@@ -1,0 +1,16 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+displayName: Declared file
+description: Writes a file whose content comes from an arg, so expansion is observable
+args:
+  greeting:
+    # Deliberately not the value the check passes: a runtime that
+    # ignored --arg would otherwise pass by using the default.
+    default: unset
+capabilities:
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      files:
+        - path: /etc/kit-written
+          content: '${{ kit.args.greeting }}'

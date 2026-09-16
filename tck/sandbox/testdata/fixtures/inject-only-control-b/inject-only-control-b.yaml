@@ -1,0 +1,11 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+displayName: Inject-only control B
+description: The control policy under a second kit name, so a runtime-owned variable that varies with the composed kit set differs between the two baselines and self-excludes from stability
+capabilities:
+  - type: com.docker.sandbox/network-policy@1
+    optional: true
+    config:
+      runtime:
+        allow: [example.com]

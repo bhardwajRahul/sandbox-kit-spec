@@ -1,0 +1,14 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+displayName: Lifecycle counters
+description: Counts its own hook runs, so install-once and startup-every-boot are observable
+capabilities:
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      install:
+        - command: sh -c 'n=$(cat /var/tmp/install.count 2>/dev/null || echo 0); echo $((n+1)) > /var/tmp/install.count'
+          description: Counts install runs, so a second one is visible in the count itself
+      startup:
+        - command: sh -c 'n=$(cat /var/tmp/startup.count 2>/dev/null || echo 0); echo $((n+1)) > /var/tmp/startup.count'
+          description: Counts boots, so every-boot execution is visible

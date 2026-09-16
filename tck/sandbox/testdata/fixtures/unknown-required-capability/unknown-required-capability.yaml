@@ -1,0 +1,11 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+displayName: Unimplementable requirement
+description: >-
+  Requires a capability no runtime implements, so refusing it is the only
+  conforming answer. The type is deliberately outside com.docker.sandbox,
+  since a host namespace could one day implement anything inside it.
+capabilities:
+  - type: invalid.example/nothing-implements-this@1
+    description: A capability that exists only to be refused

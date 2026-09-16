@@ -1,0 +1,18 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+displayName: Tool
+description: Content-bearing mixin for smoke-testing overlay deltas
+
+kind: mixin
+provides: ["tool@1.0.0"]
+requires: 
+  - hello >= 1.0.0
+
+capabilities:
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      startup:
+        - command: [sh, -c, "echo $(date) > /time.txt && cat /time.txt"]
+          user: "0"
+          background: false
+          description: Write the current time to a file and cat it

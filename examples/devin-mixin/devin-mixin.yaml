@@ -1,0 +1,118 @@
+# syntax=docker/sandbox-kit:3
+# Cognition's Devin CLI as a MIXIN: the template-shipped binary in an
+# overlay, with the same credential, egress, and seeds as the devin
+# workload, minus what only the environment-owning kit carries (the
+# entrypoint — run `devin` in the base's shell — and the base's apt
+# mirrors).
+schemaVersion: "3"
+displayName: Devin (mixin)
+author: "Docker, Inc."
+description: >-
+  Cognition's Devin CLI as a mixin — the binary in an overlay, with the
+  passthrough Devin credential and the seeds the agent needs. Layer it
+  onto a shell base and run `devin`.
+sourceUrl: https://devin.ai
+version: "0.1.0"
+
+kind: mixin
+
+provides: ["devin"]
+
+dockerfile: ./devin-mixin.dockerfile
+
+capabilities:
+  # The Devin/Windsurf hosts the credential routes to, the CLI's own
+  # login and asset hosts. The base's apt mirrors stay with the
+  # base.
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          - api.devin.ai:443
+          - app.devin.ai:443
+          - windsurf.com:443
+          - server.codeium.com:443
+          - unleash.codeium.com:443
+          - cli.devin.ai:443
+          - static.devin.ai:443
+
+  # The Devin credential is captured during in-sandbox login and flows
+  # PASSTHROUGH: the real token reaches the named hosts, and the
+  # credential file below renders it for the CLI. The key is inject-only,
+  # matching v2's empty name — no env var carries it, not even a
+  # sentinel.
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: Devin account credential captured during in-sandbox login
+    config:
+      service: devin
+      phase: runtime
+      # Inject-only: the credential is captured at in-sandbox login and
+      # exists as outbound rewrites; no env var carries it, not even a
+      # sentinel.
+      apiKey:
+        inject:
+          - {domain: server.codeium.com, header: Authorization, format: "Bearer %s"}
+          - {domain: api.devin.ai, header: Authorization, format: "Bearer %s"}
+      oauth:
+        tokenEndpoint: {host: api.devin.ai, path: /auth/cli/token}
+        resourceHosts:
+          - server.codeium.com
+          - api.devin.ai
+        # Devin's token response carries one field serving both roles.
+        responseFields:
+          accessToken: token
+          refreshToken: token
+        passthrough: true
+        # Devin reads a TOML credentials file; format: toml keeps the
+        # declaration declarative (nested maps would become tables) while
+        # producing the file the CLI expects.
+        credentialFile:
+          path: "~/.local/share/devin/credentials.toml"
+          format: toml
+          structure:
+            api_server_url: "https://server.codeium.com"
+            devin_webapp_host: "app.devin.ai"
+            devin_api_url: "https://api.devin.ai"
+            windsurf_api_key: "{{.PrimaryApiKey}}"
+
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      files:
+        # Seeded only when absent: the agent owns its config after.
+        - path: /home/agent/.config/devin/config.json
+          content: '{"auto_update": false}'
+          overwrite: false
+          description: Disable Devin background updates
+      startup:
+        # Gateway-first MCP registration, merged with jq rather than
+        # overwritten: startup runs on every boot, and mcp_config.json is
+        # the agent's whole MCP surface, so truncating it would delete
+        # user-added servers. Deep merge updates only the mcp-gateway
+        # entry; write-temp + rename keeps a crash from leaving a
+        # half-written file. No-op when MCP isn't enabled.
+        - command: |
+            set -e
+            [ -n "$MCP_GATEWAY_URL" ] || exit 0
+            mkdir -p "$HOME/.config/devin"
+            cfg="$HOME/.config/devin/mcp_config.json"
+            frag=/tmp/sandbox-mcp-gateway.json
+            jq -n --arg url "$MCP_GATEWAY_URL" --arg auth "Bearer $MCP_SENTINEL_TOKEN_NAME" \
+              '{mcpServers: {"mcp-gateway": {url: $url, transport: "http", headers: {Authorization: $auth}}}}' > "$frag"
+            [ -f "$cfg" ] || echo '{}' > "$cfg"
+            jq -s '.[0] * .[1]' "$cfg" "$frag" > "$cfg.tmp"
+            mv "$cfg.tmp" "$cfg"
+            rm -f "$frag"
+          user: agent
+          env: [MCP_GATEWAY_URL, MCP_SENTINEL_TOKEN_NAME]
+          description: Register the sandbox MCP gateway by merging into mcp_config.json
+
+  # Where devin reads shared skills, so the host's store reaches it.
+  - type: com.docker.sandbox/agent-skills@1
+    optional: true
+    config:
+      path: /home/agent/.agents/skills
+
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      contentFile: ./devin-context.md

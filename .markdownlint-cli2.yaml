@@ -1,0 +1,9 @@
+# The file set, so CI and a local `task lint:md` judge the same files.
+# Rules live in .markdownlint.yml.
+globs:
+  - "**/*.md"
+# Conformance fixtures are test inputs whose bodies the suite asserts on;
+# they are not documentation to be styled. This has to be here rather
+# than in a .markdownlintignore, which markdownlint-cli2 does not read.
+ignores:
+  - "tck/**/testdata/**"

@@ -1,0 +1,62 @@
+# syntax=docker/sandbox-kit:3
+# yaml-language-server: $schema=https://raw.githubusercontent.com/docker/sandbox-kit-spec/main/schema/kit.schema.json
+schemaVersion: "3"
+displayName: Claude over ACP
+author: "Docker, Inc."
+description: >-
+  A sandbox an ACP client can drive: a shell base, Claude Code, and the
+  Agent Client Protocol adapter that fronts it — published as one kit.
+  The same three kits compose by hand; this exists so an editor can be
+  pointed at one reference instead of three that have to agree.
+sourceUrl: https://github.com/docker/sandbox-kit-spec
+licenses: [Apache-2.0]
+
+kind: set
+version: "1.0.0"
+
+args:
+  # The kits below are published references, so the namespace they live
+  # under is the one thing this file cannot hardcode. A build-phase arg
+  # is its home: the value is expanded into the kits list before the
+  # merge resolves anything, and baked into the published descriptor.
+  registry:
+    default: docker.io/docker
+    # A colon so a registry can carry a port: the throwaway
+    # localhost:5000 the docs recommend is the common case, and the
+    # expanded references are parsed properly by the validator.
+    pattern: '^[a-z0-9][a-z0-9._/:-]*$'
+    description: Registry namespace the listed kits were pushed to
+    buildArg: KIT_REGISTRY
+
+kits:
+  # The base. One of them is a workload, so the merged kit is one too,
+  # and its AGENTS.md profile becomes the merged kit's.
+  - ref: ${{ kit.args.registry }}/sbx-kit-shell:1.0.6
+
+  # Claude Code itself: the binary at /usr/local/bin/claude, the
+  # Anthropic egress and credential, and the session-state volumes. The
+  # adapter below contributes none of that because it drives this
+  # kit's claude rather than talking to Anthropic itself.
+  #
+  # The mixin rather than the claude workload kit, and not
+  # interchangeably: the adapter resolves the CLI through
+  # CLAUDE_CODE_EXECUTABLE=/usr/local/bin/claude, which is where this
+  # kit installs it. The workload's own install lands under
+  # $HOME/.local/bin, and the adapter ships with its vendored fallback
+  # binary omitted on purpose, so that pairing resolves and builds and
+  # then finds no agent at run time.
+  - ref: ${{ kit.args.registry }}/sbx-kit-claude-mixin:1.0.6
+
+  # The ACP adapter. Its requires: ["claude"] is answered by the kit
+  # above — which is also what orders the two, whatever order they are
+  # listed in here.
+  - ref: ${{ kit.args.registry }}/sbx-kit-claude-acp:1.0.6
+
+# The set's own declarations merge on top of the three. This one adds
+# only a note: how to reach the adapter, which is the one thing none of
+# the kits can say on its own, because none of them knows it was
+# composed with the others.
+capabilities:
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      contentFile: ./claude-acp-set-context.md

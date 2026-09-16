@@ -1,0 +1,24 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+displayName: HTTP egress
+description: Bounds two hosts by method and path, so an HTTP refusal is observable apart from a connection refusal
+capabilities:
+  - type: com.docker.sandbox/network-policy@2
+    config:
+      runtime:
+        allow:
+          - hosts: [example.com]
+            methods: [GET]
+            paths: [/allowed/**]
+          # The refused-method control: POST is allowed somewhere, so a
+          # 403 on the denied target is the boundary's answer, not the
+          # method being unspeakable.
+          - hosts: [example.org]
+            methods: [POST]
+        deny:
+          # Overlaps the allow entry above rather than sitting beside it,
+          # so a refusal here can only come from deny precedence.
+          - hosts: [example.com]
+            methods: [GET]
+            paths: [/allowed/secret/**]

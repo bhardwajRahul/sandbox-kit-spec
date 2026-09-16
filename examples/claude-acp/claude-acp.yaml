@@ -1,0 +1,49 @@
+# syntax=docker/sandbox-kit:3
+# The ACP (Agent Client Protocol) adapter for Claude Code as a MIXIN:
+# `claude-agent-acp` speaks ACP on stdio so protocol clients (Zed and
+# other ACP-capable editors) can drive a Claude Code session inside the
+# sandbox. Everything environmental rides with the claude-mixin kit
+# this one requires — the Anthropic credential surface
+# (~/.claude/.credentials.json, settings.json apiKeyHelper), the
+# api.anthropic.com egress, and the session-state volumes — because the
+# adapter drives that kit's claude binary rather than talking to
+# Anthropic itself. This kit contributes the adapter, its Node runtime,
+# and the one environment variable that binds the two together.
+schemaVersion: "3"
+displayName: Claude Code ACP adapter
+author: "Docker, Inc."
+description: >-
+  The Agent Client Protocol adapter for Claude Code as a mixin — the
+  claude-agent-acp stdio server with its Node runtime in an overlay,
+  bound to the composed claude binary. Layer it onto a base that
+  composes the claude-mixin kit and point an ACP client (such as Zed)
+  at `claude-agent-acp`.
+sourceUrl: https://github.com/zed-industries/claude-code-acp
+
+kind: mixin
+
+args:
+  version:
+    default: "0.75.1"
+    pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+    description: claude-agent-acp release to install
+    buildArg: ACP_VERSION
+
+provides: ["claude-acp@${{ kit.args.version }}"]
+
+# The adapter execs the sandboxed claude binary, so a composition without
+# claude yields an adapter with no agent behind it. Requiring the
+# capability rather than naming the kit keeps any claude-carrying kit
+# eligible, and it is also what makes CLAUDE_CODE_EXECUTABLE resolvable:
+# the claude-mixin kit installs /usr/local/bin/claude.
+requires: ["claude"]
+
+# No network policy and no credential: the adapter opens no sockets of
+# its own. Its egress and auth are whatever the claude it execs already
+# has, which the claude-mixin kit declares. The package is installed at
+# build time, so unlike an `npx`-at-startup launcher this needs no
+# registry.npmjs.org access at runtime either.
+capabilities:
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      contentFile: ./claude-acp-context.md

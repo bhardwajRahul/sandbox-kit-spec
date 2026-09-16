@@ -1,0 +1,5 @@
+/bin
+# Local build artifacts
+/frontend
+/kit-tck
+/bin/

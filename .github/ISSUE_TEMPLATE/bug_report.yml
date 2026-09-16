@@ -1,0 +1,28 @@
+name: Bug report
+description: A kit, the frontend, or a conformance suite behaves incorrectly
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, what you got, and how to reproduce it.
+    validations:
+      required: true
+  - type: textarea
+    id: descriptor
+    attributes:
+      label: Descriptor or command
+      description: >-
+        The kit descriptor (or the `sbx`/`kit-tck` command) that shows the
+        problem. Trim it to the smallest thing that still fails.
+      render: yaml
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: >-
+        Module tag or commit, and the frontend tag from the descriptor's
+        `# syntax=` line.
+    validations:
+      required: true

@@ -1,0 +1,158 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+displayName: Kit Builder
+description: DHI-based Docker-in-Docker sandbox for building kits — dockerd,
+  buildx with a dedicated container-driver builder, and QEMU binfmt
+  emulators for multi-arch builds. Every package installed from the DHI
+  deb repository.
+sourceUrl: https://github.com/docker/sandbox-kit-spec
+
+kind: workload
+provides: ["kit-builder"]
+version: "1.0.0"
+
+# Every need is a typed, versioned capability request the host answers —
+# grants, refuses, or prompts. A host refuses a required type it does not
+# provide by name, never by silently dropping it.
+capabilities:
+  # DinD: dockerd needs real privilege; the microVM is the boundary.
+  - type: com.docker.sandbox/privileged@1
+
+  # The runtime's kit registry: where builds push results and pull the
+  # kit frontend. Declared — not smuggled in through network egress —
+  # because engine image-store access is a grant of its own.
+  - type: com.docker.sandbox/kit-registry@1
+    description: Push built kit images into the runtime's image store
+
+  # The engine store doubles as the kit build cache; removing the sandbox
+  # is cache GC.
+  - type: com.docker.sandbox/volume@1
+    config: {path: /var/lib/docker}
+
+  # Kit builds are bursty, but without a stated limit the builder inherits
+  # the host defaults (every core, most of the memory) and competes with
+  # the sandboxes being built for. Four CPUs and 8 GiB cover parallel
+  # multi-arch builds; a create-request override always wins, which the
+  # CLI exposes as SBX_KIT_BUILDER_CPUS / SBX_KIT_BUILDER_MEMORY.
+  - type: com.docker.sandbox/resources@1
+    config: {cpu: 4, memory: 8g}
+
+  # Builds fetch from wherever the recipe says: base images from any
+  # registry, apt/npm/pip mirrors, release tarballs. A domain list would
+  # make the builder useless for real Dockerfiles, so this kit declares
+  # unrestricted egress honestly — the permission gate shows it, and the
+  # sandbox boundary (not a domain list) is the control.
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow: ["**"]
+
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      startup:
+        # The runtime starts dockerd for templates labeled start-docker; this
+        # guard makes the kit self-sufficient when it does not. `docker info`
+        # succeeding means something already started the engine.
+        - command:
+            - sh
+            - -c
+            - |
+              set -eu
+              if docker info >/dev/null 2>&1; then exit 0; fi
+              if ! pgrep -x dockerd >/dev/null 2>&1; then
+                dockerd >/var/log/dockerd.log 2>&1 &
+              fi
+          user: "0"
+          background: true
+          description: Start dockerd unless the runtime already did
+
+        # QEMU binfmt emulators: kernel-side work, so root. Runs every boot;
+        # registrations are kernel-global and survive restarts, so the guard
+        # skips the network-heavy install when they are already present.
+        - command:
+            - sh
+            - -c
+            - |
+              set -eu
+              i=0
+              until docker info >/dev/null 2>&1; do
+                i=$((i + 1))
+                [ "$i" -lt 60 ] || { echo "dockerd did not come up" >&2; exit 1; }
+                sleep 1
+              done
+              if [ ! -e /proc/sys/fs/binfmt_misc/register ]; then
+                mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc
+              fi
+              if ! ls /proc/sys/fs/binfmt_misc/qemu-* >/dev/null 2>&1; then
+                docker run --privileged --rm tonistiigi/binfmt --install all
+              fi
+          user: "0"
+          description: Register QEMU emulators for multi-arch builds
+
+        # The container-driver buildx builder — what makes multi-platform kit
+        # builds work; the default docker driver cannot export multi-arch.
+        # Runs as the agent user because buildx builder instances are per-user
+        # state under ~/.docker/buildx: created by root, the builder would be
+        # invisible to the agent's shell. Idempotent: the agent's buildx config
+        # and the builder container in /var/lib/docker both survive restarts,
+        # so inspect succeeds on later boots and create is skipped.
+        #
+        # The builder runs through the sandbox's egress proxy end to end: the
+        # proxy env rides driver-opts (the kit-registry alias has no DNS
+        # record by design — the proxy resolves it), and the buildkitd
+        # container gets the sandbox's merged system trust bundle copied in,
+        # because the proxy MITMs whatever traffic it must (the HTTPS alias
+        # always, external registries when credentials ride them) and the
+        # stock buildkit image only trusts public CAs. The copy runs every
+        # boot, not just at create: the proxy CA is per-sandbox state, the
+        # buildkitd container survives restarts in /var/lib/docker, and Go
+        # loads system roots lazily on first TLS use — so a boot-time copy is
+        # in place before any build traffic, rotation included. The plain-HTTP
+        # host.docker.internal entry stays as the fallback for daemons that
+        # predate the alias routing and goes away when those age out.
+        - command:
+            - sh
+            - -c
+            - |
+              set -eu
+              i=0
+              until [ -f /usr/local/share/ca-certificates/proxy-ca.crt ]; do
+                i=$((i + 1))
+                [ "$i" -lt 15 ] || break
+                sleep 1
+              done
+              if ! docker buildx inspect sbx-builder >/dev/null 2>&1; then
+                mkdir -p /home/agent/.config/buildkit
+                printf '[registry."host.docker.internal:5411"]\n  http = true\n' \
+                  > /home/agent/.config/buildkit/sbx-builder.toml
+                docker buildx create --name sbx-builder \
+                  --driver docker-container \
+                  --driver-opt network=host \
+                  ${HTTPS_PROXY:+--driver-opt env.HTTPS_PROXY="$HTTPS_PROXY"} \
+                  ${HTTP_PROXY:+--driver-opt env.HTTP_PROXY="$HTTP_PROXY"} \
+                  --config /home/agent/.config/buildkit/sbx-builder.toml \
+                  --bootstrap --use
+              fi
+              if docker inspect buildx_buildkit_sbx-builder0 >/dev/null 2>&1; then
+                docker cp /etc/ssl/certs/ca-certificates.crt \
+                  buildx_buildkit_sbx-builder0:/etc/ssl/certs/ca-certificates.crt
+              fi
+          user: "1000"
+          env: [HTTP_PROXY, HTTPS_PROXY]
+          description: Bootstrap the agent's container-driver buildx builder
+
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      filename: AGENTS.md
+      content: |
+        ## Kit builder sandbox
+
+        This sandbox builds kit images with Docker-in-Docker.
+
+        - Build a kit: `docker buildx build . -f <kit>.yaml` — the buildx
+          builder `sbx-builder` (docker-container driver) is already selected.
+        - Multi-arch builds work via registered QEMU emulators:
+          `docker buildx build --platform linux/amd64,linux/arm64 .`
+        - Export for the host: add `--output type=oci,dest=out.tar`.
+        - The engine store under /var/lib/docker persists across restarts and
+          serves as the build cache.

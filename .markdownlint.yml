@@ -1,0 +1,17 @@
+# The specification wraps prose by hand and uses long reference tables,
+# so line length is not a rule worth enforcing.
+default: true
+MD013: false
+# Compact table separators (|---|---|) are the house style throughout the
+# specification; spacing them out would churn every table for nothing.
+MD060: false
+# Agent-context files are runtime inputs an agent reads inside the
+# sandbox, and the README opens with its banner: neither legitimately
+# starts with a top-level heading.
+MD041: false
+# Normative rows carry their conformance anchor as a trailing HTML
+# comment (`| ... | <!-- tck: <id> -->`), which the coverage guard parses
+# and these rules read as a stray cell or a missing pipe. The anchor
+# convention wins: it is load-bearing, the pipe style is not.
+MD055: false
+MD056: false

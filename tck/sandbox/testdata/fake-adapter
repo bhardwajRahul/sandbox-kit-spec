@@ -1,0 +1,481 @@
+#!/usr/bin/env bash
+# A runtime that exists only to test the suite. It implements the
+# conformance contract over a state directory, and KIT_TCK_FAKE_BROKEN
+# makes it violate one requirement at a time, so each check can be shown to
+# fail when the behavior it judges is absent.
+set -euo pipefail
+
+state="${KIT_TCK_FAKE_STATE:?KIT_TCK_FAKE_STATE is required}"
+broken="${KIT_TCK_FAKE_BROKEN:-}"
+
+# What this runtime claims: everything it implements, a subset when the
+# suite narrows it, nothing when broken that way. The refusal duty below
+# is always keyed off this same list, because claiming and refusing are
+# two sides of one statement.
+default_claims="com.docker.sandbox/lifecycle@1,com.docker.sandbox/network-policy@1,com.docker.sandbox/network-policy@2,com.docker.sandbox/credential@1,com.docker.sandbox/agent-context@1,com.docker.sandbox/volume@1,com.docker.sandbox/resources@1,com.docker.sandbox/privileged@1,com.docker.sandbox/agent-skills@1"
+claims="${KIT_TCK_FAKE_CLAIMS:-$default_claims}"
+if [ "$broken" = "claims-nothing" ]; then claims=""; fi
+verb="${1:-}"
+shift || true
+
+case "$verb" in
+capabilities)
+  if [ -n "$claims" ]; then echo "$claims" | tr ',' '\n'; fi
+  ;;
+
+create)
+  kits=()
+  greeting=""
+  hostmode="readwrite"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --arg)
+      case "$2" in greeting=*) greeting="${2#greeting=}" ;; esac
+      shift 2
+      ;;
+    --skills-host-mode)
+      hostmode="$2"
+      shift 2
+      ;;
+    *)
+      kits+=("$1")
+      shift
+      ;;
+    esac
+  done
+
+  # Required and optional skills entries part ways when the host's store
+  # is off: a required one cannot be satisfied and forces a refusal, an
+  # optional one is skipped and the sandbox starts without the mount.
+  required_skills=""
+  optional_skills=""
+  for kit in "${kits[@]}"; do
+    case "$kit" in
+    *skills-optional*) optional_skills=1 ;;
+    *skills*) required_skills=1 ;;
+    esac
+  done
+  if [ "$hostmode" = "off" ] && [ -n "$required_skills" ] && [ "$broken" != "ignores-host-off" ]; then
+    echo "refusing: the host's skills setting is off and the kit requires the store" >&2
+    exit 2
+  fi
+  if [ "$hostmode" = "off" ] && [ -n "$optional_skills" ] && [ "$broken" = "refuses-optional-skills" ]; then
+    echo "refusing: skills are off" >&2
+    exit 2
+  fi
+
+  # A required capability this runtime does not implement is refused,
+  # unless the fake is told to accept it.
+  for kit in "${kits[@]}"; do
+    if [[ "$kit" == *unknown-required-capability* && "$broken" != "accept-unknown" ]]; then
+      echo "refusing: kit requires a capability this runtime does not implement" >&2
+      # Exit 2 is the contract's refusal signal: deliberate, not a failure.
+      if [ "$broken" = "refusal-as-error" ]; then exit 1; fi
+      exit 2
+    fi
+  done
+
+  # A fixture whose required capability is unclaimed is refused, exactly
+  # as the contract expects of a real partial runtime.
+  # accepts-required-unclaimed is the runtime that skips this duty and
+  # quietly under-provisions.
+  if [ "$broken" != "accepts-required-unclaimed" ]; then
+    for kit in "${kits[@]}"; do
+      need=""
+      case "$kit" in
+      *skills-optional* | *scoped-egress*) ;;
+      *context*) need="com.docker.sandbox/agent-context@1" ;;
+      *hooks* | *files* | *restricted-env*) need="com.docker.sandbox/lifecycle@1" ;;
+      # Before the *egress* arm, which would otherwise claim this name.
+      *http-egress*) need="com.docker.sandbox/network-policy@2" ;;
+      *egress*) need="com.docker.sandbox/network-policy@1" ;;
+      *credential*) need="com.docker.sandbox/credential@1" ;;
+      *volume*) need="com.docker.sandbox/volume@1" ;;
+      *resources*) need="com.docker.sandbox/resources@1" ;;
+      *privileged*) need="com.docker.sandbox/privileged@1" ;;
+      *skills*) need="com.docker.sandbox/agent-skills@1" ;;
+      *port*) need="com.docker.sandbox/port@1" ;;
+      *usb-device*) need="com.docker.sandbox/usb-device@1" ;;
+      *agent-sessions*) need="com.docker.sandbox/agent-sessions@1" ;;
+      *kit-registry*) need="com.docker.sandbox/kit-registry@1" ;;
+      esac
+      if [ -n "$need" ] && ! printf ',%s,' "$claims" | grep -q ",$need,"; then
+        echo "refusing: kit requires $need, which this runtime does not claim" >&2
+        exit 2
+      fi
+    done
+  fi
+
+  if [ "$broken" = "refuses-everything" ]; then
+    echo "refusing: this runtime declines every composition" >&2
+    exit 2
+  fi
+
+  if [ "$broken" = "create-always-errors" ]; then
+    echo "simulated failure unrelated to any policy decision" >&2
+    exit 1
+  fi
+
+  id="sbx-$$-${RANDOM}"
+  dir="$state/$id"
+  mkdir -p "$dir"
+  printf '%s' "1" >"$dir/install.count"
+  printf '%s' "1" >"$dir/startup.count"
+  # The install phase could reach its install-only domain; the boundary
+  # closes afterwards.
+  printf '%s' "reachable" >"$dir/install-egress"
+  printf '%s' "closed" >"$dir/phase"
+  # A hook sees its declared env and the platform baseline, nothing else.
+  {
+    echo "PATH=/usr/bin"
+    echo "HOME=/home/agent"
+    # A sentinel smuggled into a variable the hook legitimately sees: no
+    # name is added, so only the stable-value comparison against the
+    # credential-free hook baselines sees it.
+    if [ "$broken" = "hides-install-inject-only-in-declared" ] && ( for kit in "${kits[@]}"; do [[ "$kit" == *credential-inject-only-install* ]] && exit 0; done; exit 1 ); then
+      echo "DECLARED=inject-only-sentinel"
+    else
+      echo "DECLARED=yes"
+    fi
+    # A leaking runtime passes its own environment through, sentinel and all.
+    if [ "$broken" = "leaks-env" ]; then echo "KIT_TCK_HOST_SENTINEL=${KIT_TCK_HOST_SENTINEL:-}"; fi
+    # A leak that is not the sentinel: only exact-name judgment sees it.
+    if [ "$broken" = "leaks-undeclared-env" ]; then echo "UNDECLARED=value"; fi
+    # A host baseline value under an allowed name: the adapter's own PATH
+    # carries the suite's sentinel component, so copying it is visible.
+    if [ "$broken" = "copies-host-baseline" ]; then echo "PATH=$PATH"; fi
+    if [ "$broken" = "copies-host-hostname" ]; then echo "HOSTNAME=${HOSTNAME:-}"; fi
+    if [ "$broken" = "copies-host-home" ]; then echo "HOME=${HOME:-}"; fi
+    if [ "$broken" = "copies-host-pwd" ]; then echo "PWD=$(pwd)"; fi
+    # A runtime inventing an env slot for an install-phase inject-only
+    # credential: it surfaces only in install hooks, which is exactly
+    # where the phase-blind no-env duty is judged.
+    if [ "$broken" = "exposes-install-inject-only" ]; then
+      for kit in "${kits[@]}"; do
+        if [[ "$kit" == *credential-inject-only-install* ]]; then echo "KIT_TCK_INSTALL_TOKEN=sentinel-token"; fi
+      done
+    fi
+  } >"$dir/hook.env"
+  if [ "$broken" = "ignores-files" ]; then printf '%s' "" >"$dir/kit-written"; else printf '%s' "$greeting" >"$dir/kit-written"; fi
+  mkdir -p "$dir/volume"
+  if [ "$hostmode" = "readonly" ]; then : >"$dir/host-skills-readonly"; fi
+  # A co-composed kit widening the shared path to readwrite.
+  for kit in "${kits[@]}"; do
+    if [[ "$kit" == *skills-shared* ]]; then : >"$dir/skills-shared"; fi
+    if [[ "$kit" == *credential-inject-only* ]]; then : >"$dir/inject-only"; fi
+    if [[ "$kit" == *credential-inject-only-plain* ]]; then : >"$dir/inject-only-plain"; fi
+    if [[ "$kit" == *credential-inject-only-install* ]]; then : >"$dir/inject-only-install"; fi
+  done
+  # The host's shared store is one directory at state level, seeded once
+  # with the contract's marker. Every declared path is a view of it — a
+  # per-sandbox copy would satisfy every listing while violating "every
+  # declared path receives the same store", which is exactly what the
+  # cross-path write check exists to catch.
+  store="$state/store"
+  mkdir -p "$store"
+  if [ "$broken" != "empty-skills" ] && [ "$broken" != "wrong-skill" ]; then
+    : >"$store/${KIT_TCK_SKILL_NAME:-unset}"
+  fi
+  # A neighbour of the marker, to catch a substring match.
+  if [ "$broken" = "wrong-skill" ]; then : >"$store/${KIT_TCK_SKILL_NAME:-unset}-old"; fi
+
+  # A skipped optional entry gets no mount; only a broken runtime mounts
+  # something at its path anyway.
+  if [ -n "$optional_skills" ]; then
+    if [ "$hostmode" != "off" ] || [ "$broken" = "mounts-optional-despite-off" ]; then
+      ln -s "$store" "$dir/skills-opt"
+    fi
+  fi
+  # The shared store, mounted where the kit asked for it.
+  if [ "$broken" != "ignores-skills" ] && [ "$hostmode" != "off" ]; then
+    ln -s "$store" "$dir/skills"
+    case "$broken" in
+    first-skills-only)
+      # A runtime that honours the first declaration and stops.
+      ;;
+    writable-decoy)
+      # A writable scratch directory in place of the shared store: the
+      # write succeeds and proves nothing, and the marker is missing.
+      mkdir -p "$dir/skills-rw"
+      ;;
+    separate-stores)
+      # An independent copy per path: every listing looks right, but a
+      # write through one path never reaches the others.
+      mkdir -p "$dir/skills-rw"
+      : >"$dir/skills-rw/${KIT_TCK_SKILL_NAME:-unset}"
+      ;;
+    *)
+      ln -s "$store" "$dir/skills-rw"
+      ;;
+    esac
+  fi
+  # What each skills fixture's install hook saw: hooks run at create, so
+  # a runtime that mounts a store afterwards records the miss here.
+  # mounts-later-skills-late is the sneak: the first declaration on time,
+  # later ones after hooks.
+  if [ "$broken" = "mounts-skills-late" ] || [ ! -d "$dir/skills" ]; then
+    echo "ls: cannot access '/home/agent/.kit-tck/skills': No such file or directory" >"$dir/skills-at-install"
+  else
+    ls "$dir/skills" >"$dir/skills-at-install"
+  fi
+  if [ "$broken" = "mounts-skills-late" ] || [ "$broken" = "mounts-later-skills-late" ] || [ ! -d "$dir/skills-rw" ]; then
+    echo "ls: cannot access '/home/agent/.kit-tck/skills-rw': No such file or directory" >"$dir/skills-rw-at-install"
+  else
+    ls "$dir/skills-rw" >"$dir/skills-rw-at-install"
+  fi
+  if [ "$broken" != "no-context" ]; then
+    # Surfaced progressively: the profile points at the kit's staged body
+    # rather than restating it, which is the reference the check asserts.
+    printf '%s\n' "## context" "See /usr/share/sandbox/kit/context/context.md" >"$dir/profile"
+  else
+    # A runtime ignoring agent-context writes the workload's own profile
+    # and surfaces nothing into it.
+    printf '%s\n' "Conformance workload." >"$dir/profile"
+  fi
+  echo "$id"
+  ;;
+
+exec)
+  id="$1"
+  shift
+  [ "${1:-}" = "--" ] && shift
+  dir="$state/$id"
+  case "${1:-}" in
+  cat)
+    case "$2" in
+    /var/tmp/install.count) cat "$dir/install.count" ;;
+    /var/tmp/startup.count) cat "$dir/startup.count" ;;
+    /var/tmp/install-egress) cat "$dir/install-egress" ;;
+    /var/tmp/hook.env) cat "$dir/hook.env" ;;
+    /var/tmp/skills-at-install) cat "$dir/skills-at-install" ;;
+    /var/tmp/skills-rw-at-install) cat "$dir/skills-rw-at-install" ;;
+    /etc/kit-written) cat "$dir/kit-written" ;;
+    /home/agent/workspace/AGENTS.md) cat "$dir/profile" ;;
+    /usr/share/sandbox/kit/context/context.md)
+      # The staged body behind the profile's reference. A runtime that
+      # surfaces the reference while dropping the mixin's layers has an
+      # index into nothing.
+      if [ "$broken" = "drops-context-body" ]; then
+        echo "no such file: $2" >&2
+        exit 1
+      fi
+      echo "Conformance fixture context body."
+      ;;
+    /var/tmp/kit-tck-scratch)
+      if [ -f "$dir/scratch" ]; then cat "$dir/scratch"; else
+        echo "no such file" >&2
+        exit 1
+      fi
+      ;;
+    /data/marker)
+      if [ -f "$dir/volume/marker" ]; then cat "$dir/volume/marker"; else
+        echo "no such file" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      echo "no such file: $2" >&2
+      exit 1
+      ;;
+    esac
+    ;;
+  env)
+    echo "PATH=/usr/bin"
+    echo "HOME=/home/agent"
+    if [ "$broken" = "hides-inject-only-in-token" ] && [ -f "$dir/inject-only" ]; then
+      echo "KIT_TCK_TOKEN=inject-only-sentinel"
+    else
+      echo "KIT_TCK_TOKEN=sentinel-token"
+    fi
+    # A sentinel smuggled into a variable the workload already owns: no
+    # name is added, so only the value comparison on the image-owned
+    # canary sees it.
+    if [ "$broken" = "hides-inject-only-in-existing-env" ] && [ -f "$dir/inject-only" ]; then
+      echo "KIT_TCK_CANARY=inject-only-sentinel"
+    else
+      echo "KIT_TCK_CANARY=image-baseline"
+    fi
+    # The secret smuggled under an unrelated name: only a whole-environment
+    # scan sees it.
+    if [ "$broken" = "leaks-secret-elsewhere" ]; then echo "UNRELATED_DEBUG=${KIT_TCK_BOUND_SECRET:-}"; fi
+    # A runtime inventing an env slot for an inject-only credential: the
+    # variable appears only in sandboxes that composed that kit, so a
+    # baseline diff sees it.
+    if [ "$broken" = "leaks-inject-only-env" ] && [ -f "$dir/inject-only" ]; then echo "KIT_TCK_INJECT_TOKEN=sentinel-token"; fi
+    # Leaks only for the default-management fixture: proves the check
+    # judges that composition too, not just the proxyManaged one.
+    if [ "$broken" = "leaks-plain-inject-only-env" ] && [ -f "$dir/inject-only-plain" ]; then echo "KIT_TCK_PLAIN_TOKEN=sentinel-token"; fi
+    ;;
+
+  printenv)
+    # The container sees a sentinel; the real secret never arrives.
+    if [ "$broken" = "no-credential" ]; then
+      echo "printenv: KIT_TCK_TOKEN: not set" >&2
+      exit 1
+    fi
+    if [ "$broken" = "leaks-secret" ]; then echo "${KIT_TCK_BOUND_SECRET:-}"; fi
+    # A decorated leak: the secret embedded in a larger value, which an
+    # equality check would wave through.
+    if [ "$broken" = "leaks-secret-decorated" ]; then echo "Bearer ${KIT_TCK_BOUND_SECRET:-}"; fi
+    if [ "$broken" != "leaks-secret" ] && [ "$broken" != "leaks-secret-decorated" ]; then echo "sentinel-token"; fi
+    ;;
+  kit-tck-probe)
+    case "$2" in
+    https://example.com) exit 0 ;;
+    https://example.net)
+      # Reachable only while the install phase is open. Exit 7 is the
+      # probe's policy-denial status; a transport failure would be
+      # anything else and must not pass a deny assertion.
+      if [ "$(cat "$dir/phase")" = "open" ] || [ "$broken" = "leaves-install-egress-open" ]; then exit 0; fi
+      echo "refused by policy" >&2
+      exit 7
+      ;;
+    *)
+      if [ "$broken" = "allows-everything" ]; then exit 0; fi
+      echo "refused by policy" >&2
+      exit 7
+      ;;
+    esac
+    ;;
+  kit-tck-http-probe)
+    # $2 is the method, $3 the URL. The host is reachable; only the HTTP
+    # rules decide, so each broken mode drops exactly one of them.
+    case "$3" in
+    https://example.org/*)
+      # The refused-method control target: POST is allowed here.
+      if [ "$2" = "POST" ]; then exit 0; fi
+      echo "refused by policy: method $2" >&2
+      exit 7
+      ;;
+    https://example.com/allowed/secret/*)
+      # Before the allow arm, which matches this path too: only deny
+      # precedence refuses it, so that is the one thing being dropped.
+      if [ "$broken" = "ignores-http-deny" ]; then exit 0; fi
+      echo "refused by policy: deny rule" >&2
+      exit 7
+      ;;
+    https://example.com/allowed/*)
+      if [ "$2" = "GET" ] || [ "$broken" = "ignores-http-method" ]; then exit 0; fi
+      echo "refused by policy: method $2" >&2
+      exit 7
+      ;;
+    https://example.com/*)
+      if [ "$broken" = "ignores-http-path" ]; then exit 0; fi
+      echo "refused by policy: path" >&2
+      exit 7
+      ;;
+    *)
+      echo "refused by policy" >&2
+      exit 7
+      ;;
+    esac
+    ;;
+  ls)
+    case "$2" in
+    /home/agent/.kit-tck/skills-opt)
+      if [ -d "$dir/skills-opt" ]; then ls "$dir/skills-opt"; else
+        echo "ls: cannot access '$2': No such file or directory" >&2
+        exit 1
+      fi
+      ;;
+    /home/agent/.kit-tck/skills-rw)
+      if [ -d "$dir/skills-rw" ]; then ls "$dir/skills-rw"; else
+        echo "ls: cannot access '$2': No such file or directory" >&2
+        exit 1
+      fi
+      ;;
+    /home/agent/.kit-tck/skills)
+      if [ -d "$dir/skills" ]; then ls "$dir/skills"; else
+        echo "ls: cannot access '$2': No such file or directory" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      echo "unsupported path: $2" >&2
+      exit 1
+      ;;
+    esac
+    ;;
+  kit-tck-write)
+    case "$2" in
+    /var/tmp/kit-tck-scratch)
+      printf '%s' "$3" >"$dir/scratch"
+      ;;
+    /home/agent/.kit-tck/skills/*)
+      # A co-composed readwrite declaration widens this mount, unless the
+      # runtime wrongly resolves the shared path to the narrower mode.
+      if [ -f "$dir/skills-shared" ] && [ "$broken" != "narrows-shared-path" ] && [ ! -f "$dir/host-skills-readonly" ]; then
+        : >"$dir/skills/$(basename "$2")"
+        exit 0
+      fi
+      # Alone, the kit declared no mode, so this mount is read-only
+      # however permissive the host is.
+      if [ "$broken" = "ignores-readonly" ]; then
+        : >"$dir/skills/$(basename "$2")"
+        exit 0
+      fi
+      echo "read-only file system" >&2
+      exit 1
+      ;;
+    /home/agent/.kit-tck/skills-rw/*)
+      # The host withholds write however much the kit asked for.
+      if [ -f "$dir/host-skills-readonly" ] && [ "$broken" != "ignores-host-readonly" ]; then
+        echo "read-only file system" >&2
+        exit 1
+      fi
+      if [ "$broken" = "ignores-readwrite" ]; then
+        echo "read-only file system" >&2
+        exit 1
+      fi
+      : >"$dir/skills-rw/$(basename "$2")"
+      ;;
+    *)
+      mkdir -p "$(dirname "$dir/volume/$(basename "$2")")"
+      printf '%s' "$3" >"$dir/volume/$(basename "$2")"
+      ;;
+    esac
+    ;;
+  kit-tck-memory-limit)
+    if [ "$broken" = "ignores-resources" ]; then echo "max"; else echo "2147483648"; fi
+    ;;
+  kit-tck-privileged)
+    if [ "$broken" = "ignores-privileged" ]; then echo "no"; else echo "yes"; fi
+    ;;
+  *)
+    echo "unsupported command: $*" >&2
+    exit 1
+    ;;
+  esac
+  ;;
+
+stop) ;;
+
+recreate)
+  # A fresh container: the writable layer goes, declared volumes stay.
+  dir="$state/$1"
+  if [ "$broken" != "keeps-writable-layer" ]; then rm -f "$dir/scratch"; fi
+  if [ "$broken" = "loses-volume" ]; then rm -rf "$dir/volume" && mkdir -p "$dir/volume"; fi
+  ;;
+
+start)
+  dir="$state/$1"
+  if [ "$broken" = "loses-volume-on-restart" ]; then rm -rf "$dir/volume" && mkdir -p "$dir/volume"; fi
+  if [ "$broken" != "no-startup" ]; then
+    count=$(cat "$dir/startup.count")
+    printf '%s' "$((count + 1))" >"$dir/startup.count"
+  fi
+  if [ "$broken" = "install-twice" ]; then
+    count=$(cat "$dir/install.count")
+    printf '%s' "$((count + 1))" >"$dir/install.count"
+  fi
+  ;;
+
+rm)
+  rm -rf "${state:?}/$1"
+  ;;
+
+*)
+  echo "unknown verb: $verb" >&2
+  exit 2
+  ;;
+esac
