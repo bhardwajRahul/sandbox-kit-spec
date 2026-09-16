@@ -18,17 +18,34 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # Every kit whose version arg tracks an upstream release.
 TRACKED=(claude claude-mixin codex codex-mixin gemini-mixin opencode opencode-mixin claude-acp codex-acp)
 
+# Tracked, but never rewritten unattended: the pin does not travel alone.
+# codex-acp's version and the `requires: ["codex >= …"]` floor beside it
+# state one fact — the adapter deleted its bundled codex, so the composed
+# one has to satisfy the range the adapter declares. Moving the pin
+# without the floor publishes an adapter whose metadata lies about what
+# it can drive, so the report names it and a person raises both.
+COUPLED=(codex-acp)
+
 usage() {
 	cat >&2 <<'EOF'
 usage: hack/kit-version.sh <command> [kit]
 
-  kits             the kits whose version tracks an upstream release
-  upstream <kit>   the release upstream publishes (exit 1 when untracked)
-  current <kit>    the version the descriptor records, or "dev"
-  update <kit>     refresh the descriptor from upstream, print the version
-  check            report every tracked kit against upstream
+  kits              the kits whose version tracks an upstream release
+  upstream <kit>    the release upstream publishes (exit 1 when untracked)
+  current <kit>     the version the descriptor records, or "dev"
+  update <kit>      refresh the descriptor from upstream, print the version
+  override <flags>  the version a --build-arg in <flags> pins, if any
+  check             report every tracked kit against upstream
 EOF
 	exit 2
+}
+
+coupled() {
+	local kit
+	for kit in "${COUPLED[@]}"; do
+		[ "$kit" = "$1" ] && return 0
+	done
+	return 1
 }
 
 descriptor() { printf 'examples/%s/%s.yaml\n' "$1" "$1"; }
@@ -82,25 +99,43 @@ current() {
 	' "$file"
 }
 
+# The version a --build-arg pins, if the flags carry one. The frontend
+# gives that argument precedence over the descriptor's default, so a tag
+# derived from the file would name a version the build did not install.
+override() {
+	printf '%s\n' "$*" | sed -n 's/.*--build-arg[= ]*version=\([^ ]*\).*/\1/p'
+}
+
 # Refresh the descriptor from upstream and print the version to build as.
 # An untracked kit, or an upstream that cannot be reached, leaves the
 # descriptor alone and answers with what it already records — a build
 # offline is still a build, just not a bump.
 update() {
-	local kit=$1 file latest tmp
+	local kit=$1 file have latest tmp
 	file=$(descriptor "$kit")
+	have=$(current "$kit")
 	if ! latest=$(upstream "$kit") || [ -z "$latest" ] || [ ! -f "$file" ]; then
-		current "$kit"
+		printf '%s\n' "$have"
 		return
 	fi
-	if [ "$(current "$kit")" != "$latest" ]; then
+	if coupled "$kit"; then
+		[ "$have" = "$latest" ] ||
+			printf '%s: %s is out, but its pin moves with the requires floor beside it — raise both by hand\n' \
+				"$kit" "$latest" >&2
+		printf '%s\n' "$have"
+		return
+	fi
+	if [ "$have" != "$latest" ]; then
 		tmp=$(mktemp)
 		awk -v version="$latest" '
 			/^  version:$/           { inarg = 1 }
 			inarg && /^    default:/ { sub(/"[^"]*"/, "\"" version "\""); inarg = 0 }
 			{ print }
 		' "$file" >"$tmp"
-		mv "$tmp" "$file"
+		# Written back through the descriptor rather than moved over it:
+		# mktemp's 0600 would otherwise become the file's mode.
+		cat "$tmp" >"$file"
+		rm -f "$tmp"
 	fi
 	printf '%s\n' "$latest"
 }
@@ -114,6 +149,8 @@ check() {
 			status="? (upstream check failed)"
 		elif [ "$have" = "$latest" ]; then
 			status=ok
+		elif coupled "$kit"; then
+			status="OUTDATED (latest $latest, raise with its requires floor)"
 		else
 			status="OUTDATED (latest $latest)"
 		fi
@@ -132,5 +169,6 @@ upstream | current | update)
 	[ $# -eq 1 ] || usage
 	"$command" "$1"
 	;;
+override) override "$@" ;;
 *) usage ;;
 esac

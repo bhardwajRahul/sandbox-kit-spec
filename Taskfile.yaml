@@ -233,6 +233,10 @@ tasks:
       - |
         set -euo pipefail
         tag="{{.TAG}}"
+        # A version build arg outranks the descriptor in the frontend, so
+        # the tag follows it rather than the file — and a build pinned
+        # that way refreshes nothing.
+        [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/hack/kit-version.sh override "{{.BUILD_ARGS}}")
         [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/hack/kit-version.sh update {{.KIT}})
         docker buildx build . -f "$(test -f {{.KIT}}.yaml && echo {{.KIT}}.yaml || echo {{.KIT}}.dockerfile)" \
           {{.BUILD_ARGS}} -t {{.KIT}}-kit:"$tag" {{.CLI_ARGS}}
@@ -260,12 +264,15 @@ tasks:
       # version is read, never refreshed: iterating on the frontend should
       # not reach for the network, nor leave a bump in the tree behind a
       # build.
-      - >-
-        F="$(test -f {{.BUILD_DIR}}/{{.KIT}}.yaml && echo {{.KIT}}.yaml || echo {{.KIT}}.dockerfile)" &&
-        TAG="$(test -n "{{.TAG}}" && echo "{{.TAG}}" || hack/kit-version.sh current {{.KIT}})" &&
-        sed -i '' '1s|^# syntax=.*|# syntax={{.FRONTEND_IMAGE}}:{{.DEV_TAG}}|' {{.BUILD_DIR}}/$F &&
-        docker buildx build {{.BUILD_DIR}} -f {{.BUILD_DIR}}/$F
-        {{.SECRETS}} {{.BUILD_ARGS}} -t {{.KIT}}-kit:"$TAG"
+      - |
+        set -euo pipefail
+        F="$(test -f {{.BUILD_DIR}}/{{.KIT}}.yaml && echo {{.KIT}}.yaml || echo {{.KIT}}.dockerfile)"
+        tag="{{.TAG}}"
+        [ -n "$tag" ] || tag=$(hack/kit-version.sh override "{{.BUILD_ARGS}}")
+        [ -n "$tag" ] || tag=$(hack/kit-version.sh current {{.KIT}})
+        sed -i '' '1s|^# syntax=.*|# syntax={{.FRONTEND_IMAGE}}:{{.DEV_TAG}}|' {{.BUILD_DIR}}/"$F"
+        docker buildx build {{.BUILD_DIR}} -f {{.BUILD_DIR}}/"$F" \
+          {{.SECRETS}} {{.BUILD_ARGS}} -t {{.KIT}}-kit:"$tag"
       - docker rmi {{.FRONTEND_IMAGE}}:{{.DEV_TAG}} >/dev/null
 
   kits:dev:
@@ -294,6 +301,10 @@ tasks:
       - |
         set -euo pipefail
         tag="{{.TAG}}"
+        # A version build arg outranks the descriptor in the frontend, so
+        # the tag follows it rather than the file — and a build pinned
+        # that way refreshes nothing.
+        [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/hack/kit-version.sh override "{{.BUILD_ARGS}}")
         [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/hack/kit-version.sh update {{.KIT}})
         docker buildx build . -f "$(test -f {{.KIT}}.yaml && echo {{.KIT}}.yaml || echo {{.KIT}}.dockerfile)" \
           {{.SECRETS}} {{.BUILD_ARGS}} \
