@@ -34,7 +34,7 @@ usage: hack/kit-version.sh <command> [kit]
   upstream <kit>    the release upstream publishes (exit 1 when untracked)
   current <kit>     the version the descriptor records, or "dev"
   update <kit>      refresh the descriptor from upstream, print the version
-  override <flags>  the version a --build-arg in <flags> pins, if any
+  override <flags…> the version a --build-arg in <flags…> pins, if any
   check             report every tracked kit against upstream
 EOF
 	exit 2
@@ -102,8 +102,14 @@ current() {
 # The version a --build-arg pins, if the flags carry one. The frontend
 # gives that argument precedence over the descriptor's default, so a tag
 # derived from the file would name a version the build did not install.
+# Every source that reaches the build line is passed here, in the order
+# docker reads them, because the last --build-arg for a key is the one
+# that takes effect and the tag has to agree with it.
+# Quotes are stripped first: Task hands its passthrough arguments on as
+# --build-arg 'version=…', which is the same flag with different spelling.
 override() {
-	printf '%s\n' "$*" | sed -n 's/.*--build-arg[= ]*version=\([^ ]*\).*/\1/p'
+	printf '%s\n' "$*" | tr -d "\"'" |
+		sed -n 's/.*--build-arg[= ]*version=\([^ ]*\).*/\1/p'
 }
 
 # Refresh the descriptor from upstream and print the version to build as.
