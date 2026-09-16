@@ -75,7 +75,7 @@ func Merge(sandbox Input, mixins []Input) (*Merged, error) {
 			// sharing a lock share an image record. A wall clock would give
 			// every assembly of the same set a different digest.
 			config.History = append(config.History, ocispec.History{
-				CreatedBy: "runtime-kit assemble " + m.Name,
+				CreatedBy: "sandbox-kit assemble " + m.Name,
 				Comment:   "kit overlay layer",
 			})
 		}
@@ -221,7 +221,7 @@ func mergePath(config *ocispec.ImageConfig, o *configOwners, kit, addition strin
 
 // TagRepository is the repository every assembled-image tag lives under;
 // the runtime's GC recognizes retired assemblies by it.
-const TagRepository = "runtime-kit-assembled"
+const TagRepository = "sandbox-kit-assembled"
 
 // Tag derives the deterministic local tag for an assembled image from the
 // bytes that define it — the lock. Two sandboxes created from the same lock

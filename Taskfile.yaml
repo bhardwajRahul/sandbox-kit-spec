@@ -251,7 +251,7 @@ tasks:
       DEV_TAG:
         sh: date +dev-%s
       BUILD_DIR:
-        sh: mktemp -d /tmp/runtime-kit-dev-XXXXXX
+        sh: mktemp -d /tmp/sandbox-kit-dev-XXXXXX
     cmds:
       - defer: rm -rf {{.BUILD_DIR}}
       - docker build -q -t {{.FRONTEND_IMAGE}}:{{.DEV_TAG}} . >/dev/null
