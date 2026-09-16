@@ -15,7 +15,6 @@ version: "1.0.0"
 # High-level tools from the template image/SBOM (not a full package dump).
 provides:
   - bash
-  - git
   - curl
   - openssl
   - ca-certificates
@@ -25,7 +24,6 @@ provides:
   - pip
   - node
   - npm
-  - gh
   - jq
   - make
   - gcc
