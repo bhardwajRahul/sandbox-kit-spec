@@ -12,8 +12,8 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 
-	"github.com/docker/sandbox-kit-spec/spec"
-	tckkit "github.com/docker/sandbox-kit-spec/tck/kit"
+	"github.com/docker/sandbox-kit-spec/v3/spec"
+	tckkit "github.com/docker/sandbox-kit-spec/v3/tck/kit"
 )
 
 // buildArtifact lets the conformance checks read the filesystem a build is

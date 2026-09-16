@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/sandbox-kit-spec/tck/adapter"
-	"github.com/docker/sandbox-kit-spec/tck/report"
+	"github.com/docker/sandbox-kit-spec/v3/tck/adapter"
+	"github.com/docker/sandbox-kit-spec/v3/tck/report"
 )
 
 // runAgainstFake drives the suite against a runtime that exists only to be

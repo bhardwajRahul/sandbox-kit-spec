@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/docker/sandbox-kit-spec/spec"
+	"github.com/docker/sandbox-kit-spec/v3/spec"
 )
 
 // LockVersion is the current lock schema version.

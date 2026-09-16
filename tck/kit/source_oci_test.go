@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"oras.land/oras-go/v2/content/oci"
 
-	"github.com/docker/sandbox-kit-spec/spec"
+	"github.com/docker/sandbox-kit-spec/v3/spec"
 )
 
 // layoutFixture writes a kit into an OCI layout the way an exporter would,

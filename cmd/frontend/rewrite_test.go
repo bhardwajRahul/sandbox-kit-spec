@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/sandbox-kit-spec/spec"
+	"github.com/docker/sandbox-kit-spec/v3/spec"
 )
 
 // The same string can legitimately occur before the field — a description

@@ -23,7 +23,7 @@ import (
 	"oras.land/oras-go/v2/registry/remote/credentials"
 	"oras.land/oras-go/v2/registry/remote/retry"
 
-	"github.com/docker/sandbox-kit-spec/assemble"
+	"github.com/docker/sandbox-kit-spec/v3/assemble"
 )
 
 // maxIndexDepth bounds how far a reference may nest indexes. Real

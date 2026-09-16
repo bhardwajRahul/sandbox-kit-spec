@@ -109,8 +109,10 @@ see [docs/kit-intro.md](docs/kit-intro.md).
   grammar, the OCI layout, and one page per well-known capability type
   detailing the runtime behavior a supporting runtime implements.
 - `spec/` — descriptor types, strict decoding, validation, arg expansion, and
-  capability/version parsing. This module is the single source of truth for
-  the grammar; the Docker Sandboxes runtime imports it to read published kits.
+  capability/version parsing. Import as
+  `github.com/docker/sandbox-kit-spec/v3/spec`; this package is the single
+  source of truth for the grammar, and the Docker Sandboxes runtime imports
+  it to read published kits.
 - `schema/kit.schema.json` — the descriptor grammar as a JSON Schema, for
   editor validation and completion. Point the yaml-language-server at it
   with a modeline on the descriptor's second line (the `# syntax=` line

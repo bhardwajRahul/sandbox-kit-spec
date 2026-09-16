@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/sandbox-kit-spec/tck/adapter"
-	"github.com/docker/sandbox-kit-spec/tck/report"
+	"github.com/docker/sandbox-kit-spec/v3/tck/adapter"
+	"github.com/docker/sandbox-kit-spec/v3/tck/report"
 )
 
 // Env is what a check runs against: the runtime under test, the kits it
