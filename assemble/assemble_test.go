@@ -187,7 +187,7 @@ func TestTagIsDeterministic(t *testing.T) {
 	a := Tag([]byte(`{"version":1}`))
 	require.Equal(t, a, Tag([]byte(`{"version":1}`)))
 	require.NotEqual(t, a, Tag([]byte(`{"version":2}`)))
-	require.Contains(t, a, "runtime-kit-assembled:")
+	require.Contains(t, a, "sandbox-kit-assembled:")
 }
 
 func tarLayer(t *testing.T, gzipped bool, entries map[string]string) []byte {

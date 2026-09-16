@@ -555,7 +555,7 @@ func buildCompanion(ctx context.Context, c gwclient.Client, d *spec.Descriptor, 
 // into the dockerfile frontend input; file recipes are read from the
 // dockerfile local like any -f file.
 func solveDockerfile(ctx context.Context, c gwclient.Client, d *spec.Descriptor, opts map[string]string, content *companionSource, plat *ocispecs.Platform, target string) (*gwclient.Result, error) {
-	if line, _, _ := strings.Cut(strings.TrimSpace(string(content.bytes)), "\n"); strings.HasPrefix(line, "# syntax=") && (strings.Contains(line, "sandbox-kit") || strings.Contains(line, "runtime-kit") || strings.Contains(line, "sbx-kit")) {
+	if line, _, _ := strings.Cut(strings.TrimSpace(string(content.bytes)), "\n"); strings.HasPrefix(line, "# syntax=") && (strings.Contains(line, "sandbox-kit") || strings.Contains(line, "sbx-kit")) {
 		return nil, fmt.Errorf("content recipe %s names the kit frontend in its syntax directive; the recipe is an ordinary Dockerfile", content.name)
 	}
 
