@@ -40,8 +40,14 @@ jobs:
       - name: Validate
         run: task validate
 
-      - name: Lint
-        run: task lint
+      # Match ci.yaml: pin the golangci-lint binary via the action, then
+      # markdown through Task (docker image + .markdownlint-cli2.yaml).
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.10.1
+
+      - name: Markdownlint
+        run: task lint:md
 
       - name: Unit tests
         run: task test:unit
