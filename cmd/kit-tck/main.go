@@ -12,6 +12,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -23,9 +24,16 @@ import (
 // Set by GoReleaser via -ldflags "-X main.version=…".
 var version = "dev"
 
+// errNotConformant is the verdict, not an error to report: the run said
+// what was wrong on stdout already, and main only has to fail the exit
+// status without saying it twice.
+var errNotConformant = errors.New("does not conform")
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "kit-tck:", err)
+		if !errors.Is(err, errNotConformant) {
+			fmt.Fprintln(os.Stderr, "kit-tck:", err)
+		}
 		os.Exit(1)
 	}
 }
@@ -62,7 +70,36 @@ usage:
   kit-tck runtime --adapter <path> [--fixtures <dir>]
                                     check a runtime through its adapter
   kit-tck version                  print the build version
+
+reporting:
+  --verbose, -v                    list the checks that passed
+  --format text|json               json reports every check and its spec link
+  --color auto|always|never        auto follows the terminal and NO_COLOR
 `, version)
+}
+
+// parse reads a subcommand's flags and returns what was left over.
+//
+// The flag package stops at the first argument that is not a flag, which
+// would silently ignore `kit-tck kit <ref> --verbose` — the order most
+// people type. Parsing resumes after each operand instead, so a flag is
+// a flag wherever it appears. The package's own output is discarded: a
+// bad flag should produce one usage block, not two.
+func parse(fs *flag.FlagSet, args []string) (*presentation, []string, error) {
+	p := addReportingFlags(fs)
+	fs.SetOutput(io.Discard)
+	var operands []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			usage()
+			return nil, nil, err
+		}
+		if fs.NArg() == 0 {
+			return p, operands, nil
+		}
+		operands = append(operands, fs.Arg(0))
+		args = fs.Args()[1:]
+	}
 }
 
 func runKit(args []string) error {
@@ -70,50 +107,46 @@ func runKit(args []string) error {
 	layout := fs.String("layout", "", "read from an OCI layout directory instead of a registry")
 	plainHTTP := fs.Bool("plain-http", false,
 		"reach the registry over HTTP; implied for a loopback registry, which serves no TLS")
-	if err := fs.Parse(args); err != nil {
+	presentation, operands, err := parse(fs, args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() != 1 {
+	if len(operands) != 1 {
 		usage()
 		return fmt.Errorf("exactly one reference is required")
 	}
+	reference := operands[0]
 
 	ctx := context.Background()
-	var (
-		artifacts []tckkit.Artifact
-		err       error
-	)
+	var artifacts []tckkit.Artifact
+	// What was judged, as the reader would have to type it again: a tag
+	// alone does not say which layout on disk it was read from.
+	target := reference
 	// Every runnable platform: §9 and §10 apply to each manifest, so a
 	// multi-platform artifact conforms only if all of them do.
 	if *layout != "" {
-		artifacts, err = tckkit.FromLayoutAll(ctx, *layout, fs.Arg(0))
+		target = *layout + " " + reference
+		artifacts, err = tckkit.FromLayoutAll(ctx, *layout, reference)
 	} else {
 		var opts []tckkit.RegistryOption
 		if *plainHTTP {
 			opts = append(opts, tckkit.WithPlainHTTP())
 		}
-		artifacts, err = tckkit.FromRegistryAll(ctx, fs.Arg(0), opts...)
+		artifacts, err = tckkit.FromRegistryAll(ctx, reference, opts...)
 	}
 	if err != nil {
 		return err
 	}
 
-	failed := false
+	judged := outcome{suite: "kit", target: target}
 	for _, artifact := range artifacts {
 		rep, err := tckkit.Run(ctx, artifact)
 		if err != nil {
 			return err
 		}
-		if name := platformOf(artifact); name != "" {
-			fmt.Printf("%s:\n", name)
-		}
-		fmt.Println(rep)
-		failed = failed || rep.Failed()
+		judged.add(platformOf(artifact), rep)
 	}
-	if failed {
-		return fmt.Errorf("%s does not conform", fs.Arg(0))
-	}
-	return nil
+	return presentation.write(os.Stdout, judged)
 }
 
 // runRuntime judges a candidate runtime through the adapter contract in
@@ -124,7 +157,8 @@ func runRuntime(args []string) error {
 	fixtures := fs.String("fixtures", "", "directory holding the suite's fixture kits (default: the shipped ones)")
 	timeout := fs.Duration("timeout", 30*time.Minute,
 		"overall deadline for the run; a hanging adapter fails with a timeout instead of hanging the suite")
-	if err := fs.Parse(args); err != nil {
+	presentation, _, err := parse(fs, args)
+	if err != nil {
 		return err
 	}
 	if *path == "" {
@@ -134,7 +168,6 @@ func runRuntime(args []string) error {
 	root := *fixtures
 	if root == "" {
 		var cleanup func()
-		var err error
 		if root, cleanup, err = tcksandbox.DefaultFixtureRoot(); err != nil {
 			return err
 		}
@@ -155,11 +188,9 @@ func runRuntime(args []string) error {
 		}
 		return err
 	}
-	fmt.Println(rep)
-	if rep.Failed() {
-		return fmt.Errorf("runtime does not conform")
-	}
-	return nil
+	judged := outcome{suite: "runtime", target: *path}
+	judged.add("", rep)
+	return presentation.write(os.Stdout, judged)
 }
 
 // platformOf names the image a report covers, when the artifact came from

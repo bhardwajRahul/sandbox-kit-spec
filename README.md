@@ -356,6 +356,19 @@ task tck:kit:layout DIR=/tmp/out TAG=sha256:...
 A runtime is tested through an adapter: an executable implementing seven
 verbs. Any language will do.
 
+Both suites report the same way: every finding names the statement it
+judged and links to where the specification says it, and the run ends in
+a tally of what was checked. Nothing is printed for a check that passed —
+`--verbose` lists those too — and `--format json` is the same run as data,
+each finding carrying its spec link, for a pipeline that annotates rather
+than reads. Color follows the terminal and `NO_COLOR`; `--color` settles
+it either way.
+
+```sh
+kit-tck kit docker.io/me/sbx-kit-gh:1.0.0 --verbose
+kit-tck kit docker.io/me/sbx-kit-gh:1.0.0 --format json
+```
+
 ## Development
 
 ```sh

@@ -78,23 +78,22 @@ type state struct {
 
 // Run judges an artifact against every check.
 func Run(ctx context.Context, a Artifact) (report.Report, error) {
+	// Nothing else can be judged without a descriptor, so this one
+	// finding is the whole report — recorded as the check it is, since
+	// a report has to say what ran as well as what it found.
 	raw := a.Annotations()[spec.AnnotationDescriptor]
 	if raw == "" {
-		return report.Report{Findings: []report.Finding{{
-			Check:       "descriptor-annotation",
-			Requirement: "SPEC-v3 §9.3",
-			Severity:    report.Fail,
-			Detail:      fmt.Sprintf("manifest carries no %s annotation; this is not a kit", spec.AnnotationDescriptor),
-		}}}, nil
+		var rep report.Report
+		rep.Add("descriptor-annotation", "SPEC-v3 §9.3",
+			report.Failf("manifest carries no %s annotation; this is not a kit", spec.AnnotationDescriptor))
+		return rep, nil
 	}
 	d, err := spec.Decode([]byte(raw))
 	if err != nil {
-		return report.Report{Findings: []report.Finding{{
-			Check:       "descriptor-annotation",
-			Requirement: "SPEC-v3 §9.3",
-			Severity:    report.Fail,
-			Detail:      fmt.Sprintf("descriptor annotation does not decode: %v", err),
-		}}}, nil
+		var rep report.Report
+		rep.Add("descriptor-annotation", "SPEC-v3 §9.3",
+			report.Failf("descriptor annotation does not decode: %v", err))
+		return rep, nil
 	}
 
 	s := &state{artifact: a, descriptor: d}
