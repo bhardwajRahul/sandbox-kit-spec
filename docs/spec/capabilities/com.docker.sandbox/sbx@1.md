@@ -88,8 +88,8 @@ A conforming runtime:
   so profile and rc files never run; this is the only thing that loads it.
 - **MUST** place the workspace at the image config's working directory <!-- tck: sbx@1/workspace-at-workdir -->
   when the image declares an absolute one, so the kit's paths and the
-  host's agree. Observable wherever the host writes into the workspace,
-  such as an `agent-context@1` profile.
+  host's agree. Observable wherever the host derives a path from the
+  workspace, such as the `agent-context@1` profile it writes beside it.
 - **MAY** refuse the type. Refusal fails resolution for a required entry;
   an optional entry is skipped and recorded, and the kit runs however the
   host runs an ordinary image.

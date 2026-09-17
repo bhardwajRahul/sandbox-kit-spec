@@ -132,9 +132,10 @@ PRIV
 # exec check for reasons that have nothing to do with capabilities. The
 # fixture waits instead, and waits without spinning.
 # The suite's checks read the agent-context profile beside the workspace,
-# so the workload pins its workspace where the contract says the suite
-# will look: a runtime placing the profile beside the workload's own
-# workdir lands exactly there.
+# so the workload pins its workdir where the contract says the suite will
+# look: a runtime placing the profile beside the workload's own workdir
+# writes it as this directory's sibling, which is exactly where the suite
+# reads.
 # The canary the inject-only check compares by value: the image owns it,
 # so it is identical in every composition, and a runtime smuggling a
 # credential into an existing variable is judged against a variable the

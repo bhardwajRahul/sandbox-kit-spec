@@ -755,14 +755,19 @@ var checks = []check{
 			}
 			defer cleanup()
 
-			const profile = "/home/sbxagent/workspace/AGENTS.md"
+			// Beside the declared workdir, where agent-context@1 puts a
+			// profile. The location is still derived from what the image
+			// says: a runtime hard-coding the conventional identity
+			// writes beside /home/agent/workspace instead, which is a
+			// different path and no file here.
+			const profile = "/home/sbxagent/AGENTS.md"
 			res, err := e.Adapter.Exec(ctx, id, "cat", profile)
 			if err != nil {
 				return []report.Finding{report.Failf("read profile: %v", err)}
 			}
 			if res.ExitCode != 0 {
 				return []report.Finding{report.Failf(
-					"the image declares its working directory as /home/sbxagent/workspace, but nothing is at %s; the workspace goes where the image says, not at a fixed path", profile)}
+					"the image declares its working directory as /home/sbxagent/workspace, but nothing is at %s beside it; the workspace goes where the image says, not at a fixed path", profile)}
 			}
 			return nil
 		},

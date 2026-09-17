@@ -120,9 +120,10 @@ runtime **SHOULD NOT** point these fixtures at a store a user depends on.
 
 The workload fixture declares its working directory as
 `/home/agent/workspace`, and the suite reads the agent-context profile
-there. A runtime is free to place workspaces wherever it likes for its own
-workloads; for THIS workload, the declared workdir is the workspace, so
-the profile lands at a path the suite can name.
+beside it, at `/home/agent/AGENTS.md`. A runtime is free to place
+workspaces wherever it likes for its own workloads; for THIS workload, the
+declared workdir is the workspace, so the profile's place beside it is a
+path the suite can name.
 
 An adapter that cannot bind credentials **SHOULD NOT** claim
 `com.docker.sandbox/credential@1`, in which case its checks are skipped.

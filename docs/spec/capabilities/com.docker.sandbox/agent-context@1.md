@@ -47,8 +47,11 @@ self-contained: consumers never resolve authored-relative paths.
 A conforming runtime:
 
 - **MUST** treat the workload Kit's `filename` as the profile file it <!-- tck: agent-context@1/workload-filename-is-profile -->
-  materializes for the agent (beside the workspace), seeded with the
-  runtime's own guidance.
+  materializes for the agent, seeded with the runtime's own guidance. It
+  belongs **beside** the workspace — the workspace directory's sibling,
+  not a file inside it: a workspace is usually the user's own checkout,
+  and a profile written into it would arrive as an untracked change to
+  their tree.
 - **MUST** surface each contributing Kit's context **progressively**: the <!-- tck: agent-context@1/progressive-surfacing -->
   profile carries a per-kit index (a "Kits" section) telling the agent
   which Kit contributed what and where to read it on demand — stacking

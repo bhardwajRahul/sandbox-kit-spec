@@ -270,8 +270,8 @@ exec)
     /var/tmp/skills-at-install) cat "$dir/skills-at-install" ;;
     /var/tmp/skills-rw-at-install) cat "$dir/skills-rw-at-install" ;;
     /etc/kit-written) cat "$dir/kit-written" ;;
-    /home/agent/workspace/AGENTS.md) cat "$dir/profile" ;;
-    /home/sbxagent/workspace/AGENTS.md)
+    /home/agent/AGENTS.md) cat "$dir/profile" ;;
+    /home/sbxagent/AGENTS.md)
       if [ -f "$dir/sbx" ] && [ "$broken" != "workspace-at-fixed-path" ]; then
         cat "$dir/profile"
       else
