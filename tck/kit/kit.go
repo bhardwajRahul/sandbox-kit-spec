@@ -149,6 +149,35 @@ func skip(format string, args ...any) []report.Finding {
 	return []report.Finding{report.Skipf(format, args...)}
 }
 
+func warn(format string, args ...any) []report.Finding {
+	return []report.Finding{report.Warnf(format, args...)}
+}
+
+// passwdEntry is what a host reads out of the image to learn the identity
+// it must honor: the uid it execs as, the gid it chowns to, the login name
+// commands run under, and the home its file writes work from.
+type passwdEntry struct {
+	name, uid, gid, home string
+}
+
+// lookupPasswd resolves an image config user — a name, a uid, or either
+// with a group suffix — against /etc/passwd content. Both spellings have
+// to resolve, because the host needs the half the image did not state.
+func lookupPasswd(passwd, user string) (passwdEntry, bool) {
+	want, _, _ := strings.Cut(user, ":")
+	for _, line := range strings.Split(passwd, "\n") {
+		fields := strings.Split(strings.TrimSpace(line), ":")
+		if len(fields) < 6 {
+			continue
+		}
+		e := passwdEntry{name: fields[0], uid: fields[2], gid: fields[3], home: fields[5]}
+		if e.name == want || e.uid == want {
+			return e, true
+		}
+	}
+	return passwdEntry{}, false
+}
+
 var checks = []check{
 	{
 		name:        "descriptor-valid",
@@ -354,6 +383,90 @@ var checks = []check{
 			argv := append(append([]string{}, cfg.Config.Entrypoint...), cfg.Config.Cmd...)
 			if len(argv) == 0 || argv[0] == "" {
 				return fail("a workload runs under a bare docker run, so its config needs a runnable entrypoint or cmd")
+			}
+			return nil
+		},
+	},
+	{
+		// The floor a workload promises by declaring sbx@1: the shells the
+		// host runs things through, and an identity it can resolve without
+		// assuming one. Judged from the artifact, so a kit that cannot be
+		// operated this way is caught at publish rather than at the first
+		// failed hook.
+		name:        "sbx-platform-floor",
+		requirement: "sbx@1",
+		run: func(ctx context.Context, s *state) []report.Finding {
+			if !spec.HasCapability(s.descriptor.Capabilities, spec.CapabilitySbx) {
+				return nil
+			}
+			if s.descriptor.Kind != spec.KindWorkload {
+				return fail("only a workload can carry the platform floor: a mixin's image config never becomes the composed image's, so nothing a host reads would come from here")
+			}
+
+			var findings []report.Finding
+			for _, shell := range []string{"/bin/sh", "/bin/bash"} {
+				present, err := hasFile(ctx, s.artifact, shell)
+				if err != nil {
+					return fail("read %s: %v", shell, err)
+				}
+				if !present {
+					findings = append(findings, fail("%s is missing; the host runs hooks through sh and launches the agent under bash", shell)...)
+				}
+			}
+
+			cfg, err := s.artifact.Config(ctx)
+			if err != nil {
+				return append(findings, fail("read image config: %v", err)...)
+			}
+			user := strings.TrimSpace(cfg.Config.User)
+			if user == "" {
+				return append(findings, fail("image config declares no user; declaring sbx@1 asks the host to honor an identity the image does not state")...)
+			}
+			passwd, present, err := s.artifact.ReadFile(ctx, "/etc/passwd")
+			if err != nil {
+				return append(findings, fail("read /etc/passwd: %v", err)...)
+			}
+			if !present {
+				return append(findings, fail("no /etc/passwd, so user %q resolves to nothing the host can read before the container exists", user)...)
+			}
+			if _, ok := lookupPasswd(string(passwd), user); !ok {
+				return append(findings, fail("user %q has no /etc/passwd entry; the host resolves its uid, gid and home from the image, before the container exists", user)...)
+			}
+			return findings
+		},
+	},
+	{
+		// BASH_ENV is the only thing that loads the sandbox's persistent
+		// environment into the agent, which is started from neither a
+		// login nor an interactive shell. SHOULD, so a kit that names no
+		// file is warned rather than failed.
+		name:        "sbx-persistent-env",
+		requirement: "sbx@1",
+		run: func(ctx context.Context, s *state) []report.Finding {
+			if !spec.HasCapability(s.descriptor.Capabilities, spec.CapabilitySbx) ||
+				s.descriptor.Kind != spec.KindWorkload {
+				return nil
+			}
+			cfg, err := s.artifact.Config(ctx)
+			if err != nil {
+				return fail("read image config: %v", err)
+			}
+			const key = "BASH_ENV="
+			var file string
+			for _, e := range cfg.Config.Env {
+				if strings.HasPrefix(e, key) {
+					file = strings.TrimPrefix(e, key)
+				}
+			}
+			if file == "" {
+				return warn("image config sets no BASH_ENV, so the agent starts without the sandbox's persistent environment")
+			}
+			present, err := hasFile(ctx, s.artifact, file)
+			if err != nil {
+				return fail("read %s: %v", file, err)
+			}
+			if !present {
+				return warn("BASH_ENV names %s, which the image does not ship", file)
 			}
 			return nil
 		},

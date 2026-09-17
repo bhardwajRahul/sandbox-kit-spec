@@ -334,6 +334,17 @@ const (
 	// practice — the agent the verbs drive is the workload's.
 	CapabilityAgentSessions = "com.docker.sandbox/agent-sessions@1"
 
+	// CapabilitySbx declares that a workload targets the sandbox agent
+	// platform: the host launches the agent rather than letting the image
+	// entrypoint be PID 1, honors the identity the image config states,
+	// and provides the persistent-environment file the image names. The
+	// kit's half is the floor that makes those duties performable — a
+	// shell, bash, and a resolvable user — which the kit conformance
+	// suite judges from the artifact. Not a grant: nothing crosses the
+	// boundary the gate guards. No config; the identity lives in the
+	// image config, where images already express it.
+	CapabilitySbx = "com.docker.sandbox/sbx@1"
+
 	// CapabilityKitRegistry requests the runtime's kit registry — the daemon's
 	// registry facade over the engine image store, where kit builds push
 	// results and pull the kit frontend. Reaching it is the host's

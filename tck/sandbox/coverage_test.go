@@ -96,6 +96,18 @@ var kitCovers = map[string][]string{
 	// artifact can be held to from outside.
 	"merged-set": {"SPEC-v3 §10/merged-set-carries-sources"},
 
+	// The floor a workload promises by declaring sbx@1 is a property of
+	// the artifact, so the kit suite is where it is judged: the shells
+	// the host runs things through, and an identity it can resolve out
+	// of the image before the container exists.
+	"sbx-platform-floor": {
+		"sbx@1/posix-shell-present",
+		"sbx@1/bash-present",
+		"sbx@1/image-declares-user",
+		"sbx@1/user-resolves-in-passwd",
+	},
+	"sbx-persistent-env": {"sbx@1/bash-env-names-a-shipped-file"},
+
 	// Fetching the kits a set lists is what turns the merge from
 	// something only its producer could check into something the
 	// published artifact can be held to.
@@ -218,6 +230,8 @@ var waived = map[string]string{
 
 	"network-policy@2/omitted-methods-paths-are-every": "grammar expansion, judged by the spec package's surface tests",
 	"network-policy@2/fail-closed-on-uninspectable":    "needs a TLS-uninspectable fixture endpoint the suite does not run yet",
+	"sbx@1/agent-launched-under-bash":                  "the adapter contract has no attach verb, so the suite cannot observe how the agent itself is launched — only exec, which is not that",
+	"sbx@1/workspace-at-workdir":                       "observable only through where a runtime surfaces the agent-context profile, which agent-context@1's own checks already judge",
 	"network-policy@2/unbypassable-boundary":           "non-observable from inside, as in @1",
 	"network-policy@2/refused-rule-observable":         "SHOULD; log shape is host-side and unspecified",
 

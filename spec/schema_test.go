@@ -55,7 +55,7 @@ func allCapabilityTypes() []string {
 		CapabilityVolume, CapabilityPort,
 		CapabilityUSBDevice, CapabilityResources, CapabilityPrivileged, CapabilityKitRegistry,
 		CapabilityAgentSessions, CapabilityLifecycle, CapabilityAgentContext,
-		CapabilityAgentSkills,
+		CapabilityAgentSkills, CapabilitySbx,
 	}
 }
 
@@ -245,7 +245,9 @@ func TestPerTypeCapabilitySchemas(t *testing.T) {
 	}
 	require.ElementsMatch(t, allCapabilityTypes(), keys(refByType))
 
-	configless := map[string]bool{CapabilityPrivileged: true, CapabilityKitRegistry: true}
+	// The same set validate.go enforces, so a type cannot be config-less
+	// in one place and config-bearing in the other.
+	configless := configlessCapabilities
 	for _, typ := range allCapabilityTypes() {
 		require.Equal(t, "capabilities/"+typ+".schema.json", refByType[typ],
 			"kit.schema.json must reference %s's own schema file", typ)

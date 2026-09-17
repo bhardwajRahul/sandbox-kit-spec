@@ -12,7 +12,7 @@ broken="${KIT_TCK_FAKE_BROKEN:-}"
 # suite narrows it, nothing when broken that way. The refusal duty below
 # is always keyed off this same list, because claiming and refusing are
 # two sides of one statement.
-default_claims="com.docker.sandbox/lifecycle@1,com.docker.sandbox/network-policy@1,com.docker.sandbox/network-policy@2,com.docker.sandbox/credential@1,com.docker.sandbox/agent-context@1,com.docker.sandbox/volume@1,com.docker.sandbox/resources@1,com.docker.sandbox/privileged@1,com.docker.sandbox/agent-skills@1"
+default_claims="com.docker.sandbox/sbx@1,com.docker.sandbox/lifecycle@1,com.docker.sandbox/network-policy@1,com.docker.sandbox/network-policy@2,com.docker.sandbox/credential@1,com.docker.sandbox/agent-context@1,com.docker.sandbox/volume@1,com.docker.sandbox/resources@1,com.docker.sandbox/privileged@1,com.docker.sandbox/agent-skills@1"
 claims="${KIT_TCK_FAKE_CLAIMS:-$default_claims}"
 if [ "$broken" = "claims-nothing" ]; then claims=""; fi
 verb="${1:-}"
@@ -165,6 +165,7 @@ create)
     if [[ "$kit" == *credential-inject-only* ]]; then : >"$dir/inject-only"; fi
     if [[ "$kit" == *credential-inject-only-plain* ]]; then : >"$dir/inject-only-plain"; fi
     if [[ "$kit" == *credential-inject-only-install* ]]; then : >"$dir/inject-only-install"; fi
+    if [[ "$kit" == *sbx-workload* ]]; then : >"$dir/sbx"; fi
   done
   # The host's shared store is one directory at state level, seeded once
   # with the contract's marker. Every declared path is a view of it — a
@@ -245,6 +246,14 @@ exec)
     case "$2" in
     /var/tmp/install.count) cat "$dir/install.count" ;;
     /var/tmp/startup.count) cat "$dir/startup.count" ;;
+    /var/tmp/sbx-entrypoint-ran)
+      if [ "$broken" = "runs-image-entrypoint" ] && [ -f "$dir/sbx" ]; then
+        echo ran
+      else
+        echo "no such file: $2" >&2
+        exit 1
+      fi
+      ;;
     /var/tmp/install-egress) cat "$dir/install-egress" ;;
     /var/tmp/hook.env) cat "$dir/hook.env" ;;
     /var/tmp/skills-at-install) cat "$dir/skills-at-install" ;;
@@ -279,6 +288,24 @@ exec)
       ;;
     esac
     ;;
+  id)
+    # The identity comes from the image the sandbox was created from; the
+    # fixture's is deliberately not the conventional uid 1000 / agent.
+    if [ -f "$dir/sbx" ] && [ "$broken" != "assumes-uid-1000" ]; then
+      case "$2" in
+      -u) echo 1234 ;;
+      -un) echo sbxagent ;;
+      *) echo "unsupported id flag: $2" >&2; exit 1 ;;
+      esac
+    else
+      case "$2" in
+      -u) echo 1000 ;;
+      -un) echo agent ;;
+      *) echo "unsupported id flag: $2" >&2; exit 1 ;;
+      esac
+    fi
+    ;;
+
   env)
     echo "PATH=/usr/bin"
     echo "HOME=/home/agent"

@@ -20,6 +20,11 @@ provides: ["devin"]
 dockerfile: ./devin.dockerfile
 
 capabilities:
+  # This workload is an agent sandbox: the host launches the agent rather
+  # than running the image's entrypoint as PID 1, and honors the identity
+  # the image config declares instead of assuming one.
+  - type: com.docker.sandbox/sbx@1
+
   # The Devin/Windsurf hosts the credential routes to, the CLI's own
   # login and asset hosts, and the template's apt mirrors (a workload
   # owns its base).

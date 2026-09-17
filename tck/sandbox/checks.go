@@ -17,6 +17,7 @@ const (
 	capNetworkPolicy   = "com.docker.sandbox/network-policy@1"
 	capNetworkPolicyV2 = "com.docker.sandbox/network-policy@2"
 	capCredential      = "com.docker.sandbox/credential@1"
+	capSbx             = "com.docker.sandbox/sbx@1"
 )
 
 // Fixture kits the suite composes. Each is a kit directory under
@@ -24,6 +25,7 @@ const (
 // check reads as the requirement it judges.
 const (
 	fixtureWorkload                    = "workload"
+	fixtureSbxWorkload                 = "sbx-workload"
 	fixtureHooks                       = "hooks"
 	fixtureFiles                       = "files"
 	fixtureScopedEgress                = "scoped-egress"
@@ -657,6 +659,64 @@ var checks = []check{
 					return []report.Finding{report.Failf(
 						"an install-phase inject-only credential changed hook variable %q from %q to %q; it must not repurpose existing variables", name, value, got)}
 				}
+			}
+			return nil
+		},
+	},
+	{
+		// The fixture's identity is uid 1234 named sbxagent, chosen
+		// because it is not the conventional one: a runtime that hard-
+		// codes the convention would pass against a conventional image
+		// while reading nothing, and this is the composition that tells
+		// the two apart.
+		requirement: "sbx@1/honors-image-user",
+		capability:  capSbx,
+		run: func(ctx context.Context, e *Env) []report.Finding {
+			id, cleanup, err := e.sandbox(ctx, []string{fixtureSbxWorkload}, nil)
+			if err != nil {
+				return []report.Finding{report.Failf("create: %v", err)}
+			}
+			defer cleanup()
+
+			var findings []report.Finding
+			for _, want := range []struct{ arg, expect, what string }{
+				{"-u", "1234", "uid"},
+				{"-un", "sbxagent", "login name"},
+			} {
+				got, f := execOutput(ctx, e, id, "id", want.arg)
+				if f != nil {
+					return append(findings, *f)
+				}
+				if strings.TrimSpace(got) != want.expect {
+					findings = append(findings, report.Failf(
+						"the image declares %s %s, but commands run as %q; the identity is read from the image, not assumed",
+						want.what, want.expect, strings.TrimSpace(got)))
+				}
+			}
+			return findings
+		},
+	},
+	{
+		// The image's entrypoint is the agent's launch command, which the
+		// host reads and runs itself. Left as PID 1 it would prepend
+		// itself to whatever the host runs there, so the fixture's
+		// entrypoint records having run and the marker must never appear.
+		requirement: "sbx@1/entrypoint-not-pid-one",
+		capability:  capSbx,
+		run: func(ctx context.Context, e *Env) []report.Finding {
+			id, cleanup, err := e.sandbox(ctx, []string{fixtureSbxWorkload}, nil)
+			if err != nil {
+				return []report.Finding{report.Failf("create: %v", err)}
+			}
+			defer cleanup()
+
+			res, err := e.Adapter.Exec(ctx, id, "cat", "/var/tmp/sbx-entrypoint-ran")
+			if err != nil {
+				return []report.Finding{report.Failf("probe entrypoint marker: %v", err)}
+			}
+			if res.ExitCode == 0 {
+				return []report.Finding{report.Failf(
+					"the image's entrypoint ran as PID 1; the host launches the agent itself and owns PID 1")}
 			}
 			return nil
 		},

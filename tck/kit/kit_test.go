@@ -683,3 +683,141 @@ func TestTheDeclarationCheckJudgesReExports(t *testing.T) {
 	a.annotations[spec.AnnotationDescriptor] = string(published)
 	require.NotContains(t, findings(t, a), "merged-set-declarations")
 }
+
+// sbxWorkload is a workload declaring the platform capability whose
+// filesystem satisfies the floor, so each test below can remove exactly
+// one thing and see that removal reported.
+func sbxWorkload(t *testing.T) *fake {
+	t.Helper()
+	authored := "schemaVersion: \"3\"\nkind: workload\ndisplayName: Demo\nprovides: [\"demo@1.0.0\"]\n" +
+		"capabilities:\n  - type: com.docker.sandbox/sbx@1\n"
+	d, err := spec.Decode([]byte(authored))
+	require.NoError(t, err)
+	published, err := json.Marshal(d)
+	require.NoError(t, err)
+
+	ann := map[string]string{
+		spec.AnnotationDescriptor:    string(published),
+		spec.AnnotationSchemaVersion: "3",
+	}
+	for k, v := range spec.OCIAnnotations(d) {
+		ann[k] = v
+	}
+	// The index annotation is derived, and the annotation check compares
+	// it against the descriptor; a fake that omitted it would fail on
+	// that rather than on the floor.
+	ann[spec.AnnotationCapabilities] = spec.CapabilityTypes(d.Capabilities)
+	a := &fake{
+		annotations: ann,
+		layers:      []ocispec.Descriptor{{Digest: "sha256:aaaa"}},
+		layersKnown: true,
+		files: map[string][]byte{
+			path.Join(StagedKitRoot, stem, stagedDescriptorName): []byte(authored),
+			"/bin/sh":                    []byte("elf"),
+			"/bin/bash":                  []byte("elf"),
+			"/etc/passwd":                []byte("root:x:0:0:root:/root:/bin/bash\nagent:x:1000:1000::/home/agent:/bin/bash\n"),
+			"/etc/sandbox-persistent.sh": []byte(""),
+		},
+	}
+	a.config.Config.User = "agent"
+	a.config.Config.Env = []string{"BASH_ENV=/etc/sandbox-persistent.sh"}
+	a.config.Config.Entrypoint = []string{"/usr/local/bin/agent"}
+	return a
+}
+
+func TestASbxWorkloadSatisfyingTheFloorReportsNothing(t *testing.T) {
+	require.Empty(t, findings(t, sbxWorkload(t)))
+}
+
+// Without the capability the floor is not this kit's promise, so the same
+// gaps must go unreported rather than being imposed on every workload.
+func TestTheFloorIsJudgedOnlyWhenTheCapabilityIsDeclared(t *testing.T) {
+	a := sbxWorkload(t)
+	authored := "schemaVersion: \"3\"\nkind: workload\ndisplayName: Demo\nprovides: [\"demo@1.0.0\"]\n"
+	d, err := spec.Decode([]byte(authored))
+	require.NoError(t, err)
+	published, err := json.Marshal(d)
+	require.NoError(t, err)
+	a.annotations[spec.AnnotationDescriptor] = string(published)
+	delete(a.annotations, spec.AnnotationCapabilities)
+	a.files[path.Join(StagedKitRoot, stem, stagedDescriptorName)] = []byte(authored)
+	delete(a.files, "/bin/bash")
+	a.config.Config.User = ""
+
+	require.Empty(t, findings(t, a))
+}
+
+func TestTheFloorNeedsBothShells(t *testing.T) {
+	for _, shell := range []string{"/bin/sh", "/bin/bash"} {
+		t.Run(shell, func(t *testing.T) {
+			a := sbxWorkload(t)
+			delete(a.files, shell)
+
+			got := findings(t, a)["sbx-platform-floor"]
+			require.Equal(t, report.Fail, got.Severity)
+			require.Contains(t, got.Detail, shell)
+		})
+	}
+}
+
+// An image that names no user leaves the host nothing to honor, which is
+// exactly the assumption this capability exists to remove.
+func TestTheFloorNeedsTheImageToDeclareAUser(t *testing.T) {
+	a := sbxWorkload(t)
+	a.config.Config.User = ""
+
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "declares no user")
+}
+
+// Both spellings have to resolve: the host reads whichever half the image
+// did not state out of passwd, before the container exists.
+func TestTheFloorResolvesTheUserByNameOrUid(t *testing.T) {
+	for _, user := range []string{"agent", "1000", "1000:1000"} {
+		t.Run(user, func(t *testing.T) {
+			a := sbxWorkload(t)
+			a.config.Config.User = user
+			require.Empty(t, findings(t, a))
+		})
+	}
+
+	a := sbxWorkload(t)
+	a.config.Config.User = "nobody-here"
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "no /etc/passwd entry")
+}
+
+// A mixin's image config never becomes the composed image's, so the
+// declaration would describe an identity no host reads.
+func TestTheFloorIsWorkloadOnly(t *testing.T) {
+	authored := "schemaVersion: \"3\"\nkind: mixin\ndisplayName: Demo\nprovides: [\"demo@1.0.0\"]\n" +
+		"capabilities:\n  - type: com.docker.sandbox/sbx@1\n"
+	d, err := spec.Decode([]byte(authored))
+	require.NoError(t, err)
+	published, err := json.Marshal(d)
+	require.NoError(t, err)
+
+	a := sbxWorkload(t)
+	a.annotations[spec.AnnotationDescriptor] = string(published)
+	a.files[path.Join(StagedKitRoot, stem, stagedDescriptorName)] = []byte(authored)
+
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "only a workload")
+}
+
+// SHOULD, so a missing persistent-environment file is a warning: the kit
+// still runs, just without whatever the sandbox would have added.
+func TestAMissingPersistentEnvIsAWarning(t *testing.T) {
+	a := sbxWorkload(t)
+	a.config.Config.Env = nil
+	require.Equal(t, report.Warn, findings(t, a)["sbx-persistent-env"].Severity)
+
+	a = sbxWorkload(t)
+	delete(a.files, "/etc/sandbox-persistent.sh")
+	got := findings(t, a)["sbx-persistent-env"]
+	require.Equal(t, report.Warn, got.Severity)
+	require.Contains(t, got.Detail, "does not ship")
+}

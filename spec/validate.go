@@ -401,6 +401,7 @@ var singletonCapabilities = map[string]bool{
 	CapabilityAgentSessions:   true,
 	CapabilityLifecycle:       true,
 	CapabilityAgentContext:    true,
+	CapabilitySbx:             true,
 }
 
 // argvContains reports whether any argv element contains the substring
@@ -418,6 +419,7 @@ func argvContains(argv []string, sub string) bool {
 var configlessCapabilities = map[string]bool{
 	CapabilityPrivileged:  true,
 	CapabilityKitRegistry: true,
+	CapabilitySbx:         true,
 }
 
 // validateCapabilityEntries checks the typed capability list. Type syntax and
