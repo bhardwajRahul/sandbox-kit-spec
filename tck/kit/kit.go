@@ -193,7 +193,7 @@ func lookupPasswd(passwd, group, user string) (passwdEntry, bool) {
 		// Matching is not resolving: a row whose uid or gid is not a
 		// number, or whose home is not an absolute path, leaves the host
 		// without the values this capability promises it can read.
-		if !isNumeric(e.uid) || !isNumeric(e.gid) || !strings.HasPrefix(e.home, "/") {
+		if e.name == "" || !isNumeric(e.uid) || !isNumeric(e.gid) || !strings.HasPrefix(e.home, "/") {
 			return passwdEntry{}, false
 		}
 		if !hasGroup {

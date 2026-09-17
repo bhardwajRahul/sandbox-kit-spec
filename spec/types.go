@@ -274,17 +274,20 @@ type Capability struct {
 }
 
 // UnmarshalYAML records whether the document stated a config at all,
-// which the decoded map cannot distinguish from an omitted key.
-func (c *Capability) UnmarshalYAML(node *yaml.Node) error {
+// which the decoded map cannot distinguish from an omitted key. The
+// callback form, not the node form: a node decodes through a fresh
+// decoder that does not inherit KnownFields, which would silently accept
+// misspelled capability fields.
+func (c *Capability) UnmarshalYAML(unmarshal func(any) error) error {
 	type plain Capability
-	if err := node.Decode((*plain)(c)); err != nil {
+	if err := unmarshal((*plain)(c)); err != nil {
 		return err
 	}
-	for i := 0; i+1 < len(node.Content); i += 2 {
-		if node.Content[i].Value == "config" {
-			c.configSet = true
-		}
+	var keys map[string]yaml.Node
+	if err := unmarshal(&keys); err != nil {
+		return err
 	}
+	_, c.configSet = keys["config"]
 	return nil
 }
 

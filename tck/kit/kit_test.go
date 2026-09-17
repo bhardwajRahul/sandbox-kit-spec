@@ -828,6 +828,7 @@ func TestAMalformedPasswdRowDoesNotResolve(t *testing.T) {
 		"agent:x:1000:notanumber::/home/agent:/bin/bash",
 		"agent:x:1000:1000::relative/home:/bin/bash",
 		"agent:x:1000:1000:::/bin/bash",
+		":x:1000:1000::/home/agent:/bin/bash",
 	} {
 		t.Run(row, func(t *testing.T) {
 			a := sbxWorkload(t)

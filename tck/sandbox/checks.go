@@ -722,6 +722,10 @@ var checks = []check{
 		// passes there while ignoring what the image declares.
 		requirement: "sbx@1/workspace-at-workdir",
 		capability:  capSbx,
+		// The profile is how the workspace's location is observed, and
+		// resolution rightly skips an optional request the host does not
+		// claim.
+		needs: []string{capAgentContext},
 		run: func(ctx context.Context, e *Env) []report.Finding {
 			id, cleanup, err := e.sandbox(ctx, []string{fixtureSbxWorkload}, nil)
 			if err != nil {

@@ -571,6 +571,12 @@ func TestValidateNeedEntries(t *testing.T) {
 	_, err = Validate(base(Capability{Type: CapabilityKitRegistry}, Capability{Type: CapabilityKitRegistry}))
 	require.ErrorContains(t, err, "already declared")
 
+	// A capability's own fields stay strictly decoded: recording config
+	// presence must not open the struct to typos.
+	_, err = Decode([]byte("schemaVersion: \"3\"\nkind: workload\ndisplayName: Demo\n" +
+		"provides: [\"demo@1.0.0\"]\ncapabilities:\n  - type: " + CapabilityPrivileged + "\n    optionl: true\n"))
+	require.ErrorContains(t, err, "optionl")
+
 	// Merge unions a set into one workload-kinded descriptor, so a
 	// mixin's platform claim would be indistinguishable from the
 	// workload's own by the time an artifact is judged.
