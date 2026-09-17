@@ -164,18 +164,28 @@ type passwdEntry struct {
 	uid, gid   int64
 }
 
+// allDigits reports that a spelling is numeric, which is what decides
+// whether a runtime reads it as an id at all — separately from whether
+// the value is one a host can hold.
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // parseID reads a uid or gid the way a runtime must be able to hold one:
 // uid_t and gid_t are 32-bit unsigned, and the top value is the
 // "leave this one alone" sentinel rather than an identity, so neither it
 // nor anything above it names a user a host can honor.
 func parseID(s string) (int64, bool) {
-	if s == "" {
+	if !allDigits(s) {
 		return 0, false
-	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return 0, false
-		}
 	}
 	id, err := strconv.ParseInt(s, 10, 64)
 	if err != nil || id >= math.MaxUint32 {
@@ -202,7 +212,13 @@ func lookupPasswd(passwd, group, user string) (passwdEntry, bool) {
 	wantGroup, hasGroup := explicitGroup(user)
 	// A runtime reads a numeric spelling as a uid, so resolution has to
 	// as well: a row merely named "1000" is not uid 1000, and 001000 is.
-	wantID, numeric := parseID(want)
+	// A numeric spelling the host cannot hold is not a login name to
+	// fall back on either — it resolves to nothing.
+	numeric := allDigits(want)
+	wantID, inRange := parseID(want)
+	if numeric && !inRange {
+		return passwdEntry{}, false
+	}
 	for _, line := range strings.Split(passwd, "\n") {
 		// Only the line terminator comes off: whitespace inside a record
 		// is part of the field, and normalizing it would resolve " agent"
@@ -258,8 +274,10 @@ func lookupPasswd(passwd, group, user string) (passwdEntry, bool) {
 
 // lookupGroup resolves the group half of an image config user to a gid.
 func lookupGroup(groupFile, want string) (int64, bool) {
-	if gid, ok := parseID(want); ok {
-		return gid, true
+	if allDigits(want) {
+		// Numeric, so it is a gid whether or not it is a usable one; a
+		// group merely named "4294967295" is not it.
+		return parseID(want)
 	}
 	for _, line := range strings.Split(groupFile, "\n") {
 		line = strings.TrimSuffix(line, "\r")
@@ -299,7 +317,7 @@ func resolveImageUser(ctx context.Context, a Artifact, user string) (passwdEntry
 	// irrelevant to an identity that does not name one.
 	var groupFile []byte
 	if group, ok := explicitGroup(user); ok {
-		if _, numeric := parseID(group); !numeric {
+		if !allDigits(group) {
 			groupFile, _, err = a.ReadFile(ctx, "/etc/group")
 			switch {
 			case errors.Is(err, assemble.ErrFileTooLarge):

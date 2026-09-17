@@ -656,6 +656,28 @@ func TestFileStatFollowsLinksToTheTarget(t *testing.T) {
 	require.False(t, present)
 }
 
+// A relative symlink resolves against the directory the lookup actually
+// reached, which a symlinked ancestor can move.
+func TestALinkResolvesAgainstWhereItsAncestorsLed(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		require.NoError(t, tw.WriteHeader(&tar.Header{
+			Name: "long/a", Typeflag: tar.TypeSymlink, Linkname: "../x",
+		}))
+		require.NoError(t, tw.WriteHeader(&tar.Header{
+			Name: "x/file", Typeflag: tar.TypeSymlink, Linkname: "../target",
+		}))
+		writeFile(t, tw, "target", 0o750, 7, 9)
+		// What the lexical parent would have reached instead.
+		writeFile(t, tw, "long/target", 0o644, 0, 0)
+	})
+	c := a.(statChecker)
+
+	st, present, err := c.FileStat(context.Background(), "/long/a/file")
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Equal(t, FileStat{Mode: 0o750, Uid: 7, Gid: 9, Regular: true}, st)
+}
+
 // A hard link captures its target's inode at the moment the link applies,
 // so the bits a later layer gives the target's path are another file's.
 func TestFileStatOfAHardLinkIsTheInodeItCaptured(t *testing.T) {

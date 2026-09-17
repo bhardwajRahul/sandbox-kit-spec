@@ -49,7 +49,9 @@ A workload declaring this type:
   and the home as the working directory it writes from. A user the image
   names but does not resolve leaves the host guessing the rest.
   Resolution follows what a runtime does with the spelling: a numeric
-  user is a uid rather than a login name, a non-empty `user:group`
+  user is a uid rather than a login name — and stays one, so a numeric
+  spelling a host cannot hold resolves to nothing rather than falling
+  back to a login name that reads the same — a non-empty `user:group`
   suffix is the gid that applies instead of the passwd primary and
   resolves against `/etc/group` when it is named, and comments and
   malformed records are passed over as any account resolver passes over

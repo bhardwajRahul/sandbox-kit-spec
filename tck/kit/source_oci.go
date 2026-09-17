@@ -739,7 +739,7 @@ func resolveLinkTarget(name string, entry assemble.FileEntry) string {
 }
 
 func (a *ociArtifact) readFileAt(ctx context.Context, name string, depth, upto int) ([]byte, bool, error) {
-	return a.readFileFrom(ctx, name, name, depth, upto, upto)
+	return a.readFileFrom(ctx, name, "", depth, upto, upto)
 }
 
 // readFileFrom locates name — path and ancestors alike — within layers
@@ -756,6 +756,13 @@ func (a *ociArtifact) readFileFrom(ctx context.Context, name, alias string, dept
 	name, hidden, err := a.resolveAncestors(ctx, name, depth, find)
 	if err != nil || hidden {
 		return nil, false, err
+	}
+	if alias == "" {
+		// A direct lookup resolves a relative link against wherever its
+		// own ancestors led, not against the name it was written as.
+		// Only a hard link brings a separate alias, because its inode
+		// was reached through one.
+		alias = name
 	}
 	winner, err := a.winningLayer(ctx, name, find)
 	if err != nil || winner < 0 {
@@ -826,7 +833,7 @@ func (a *ociArtifact) resolveHardLink(ctx context.Context, winner, upto int, ali
 }
 
 func (a *ociArtifact) hasFileAt(ctx context.Context, name string, depth, upto int) (bool, error) {
-	return a.hasFileFrom(ctx, name, name, depth, upto, upto)
+	return a.hasFileFrom(ctx, name, "", depth, upto, upto)
 }
 
 func (a *ociArtifact) hasFileFrom(ctx context.Context, name, alias string, depth, find, upto int) (bool, error) {
@@ -836,6 +843,13 @@ func (a *ociArtifact) hasFileFrom(ctx context.Context, name, alias string, depth
 	name, hidden, err := a.resolveAncestors(ctx, name, depth, find)
 	if err != nil || hidden {
 		return false, err
+	}
+	if alias == "" {
+		// A direct lookup resolves a relative link against wherever its
+		// own ancestors led, not against the name it was written as.
+		// Only a hard link brings a separate alias, because its inode
+		// was reached through one.
+		alias = name
 	}
 	winner, err := a.winningLayer(ctx, name, find)
 	if err != nil || winner < 0 {
@@ -874,7 +888,7 @@ func (a *ociArtifact) FileStat(ctx context.Context, name string) (FileStat, bool
 }
 
 func (a *ociArtifact) fileStatAt(ctx context.Context, name string, depth, upto int) (FileStat, bool, error) {
-	return a.fileStatFrom(ctx, name, name, depth, upto, upto)
+	return a.fileStatFrom(ctx, name, "", depth, upto, upto)
 }
 
 func (a *ociArtifact) fileStatFrom(ctx context.Context, name, alias string, depth, find, upto int) (FileStat, bool, error) {
@@ -884,6 +898,13 @@ func (a *ociArtifact) fileStatFrom(ctx context.Context, name, alias string, dept
 	name, hidden, err := a.resolveAncestors(ctx, name, depth, find)
 	if err != nil || hidden {
 		return FileStat{}, false, err
+	}
+	if alias == "" {
+		// A direct lookup resolves a relative link against wherever its
+		// own ancestors led, not against the name it was written as.
+		// Only a hard link brings a separate alias, because its inode
+		// was reached through one.
+		alias = name
 	}
 	winner, err := a.winningLayer(ctx, name, find)
 	if err != nil || winner < 0 {

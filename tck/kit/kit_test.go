@@ -1007,6 +1007,24 @@ func TestACommentedPasswdRecordIsNotAnAccount(t *testing.T) {
 	require.Contains(t, got.Detail, "does not resolve")
 }
 
+// A numeric spelling is an id, usable or not: it never falls back to
+// being a login name.
+func TestAnOutOfRangeNumericIsNotALoginName(t *testing.T) {
+	a := sbxWorkload(t)
+	a.files["/etc/passwd"] = []byte("4294967295:x:1000:1000::/home/agent:/bin/bash\n")
+	a.config.Config.User = "4294967295"
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+
+	a = sbxWorkload(t)
+	a.files["/etc/group"] = []byte("4294967295:x:2000:\n")
+	a.config.Config.User = "agent:4294967295"
+	got = findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+}
+
 // A runtime resolves a numeric user by value, so a padded spelling names
 // the same identity as the row it matches.
 func TestAPaddedNumericUserResolves(t *testing.T) {
