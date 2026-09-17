@@ -14,10 +14,10 @@ environment. That answer was worth a decade of tooling, because the same
 bits build, pull, and run the same way on every machine that has ever
 heard of an OCI image.
 
-Then we started shipping agents, and an agent is not a workload. A
-container isolates an application: a thing that runs, does its job, and
-touches only what it was handed. An agent is an actor. It decides what to
-do next and then does it — to your filesystem, your network, your
+Then we started shipping agents, and an agent is not a static application
+workload. A container isolates an application: a thing that runs, does its
+job, and touches only what it was handed. An agent is an actor. It decides
+what to do next and then does it — to your filesystem, your network, your
 databases, your cloud account — with authority you granted on purpose.
 
 That authority is not a flaw to be closed off; it is the point. An agent
