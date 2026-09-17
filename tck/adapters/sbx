@@ -145,7 +145,11 @@ die() {
 # not arrange host state for a type it does not name, and
 # `not-agent-skills@1` or `agent-skills@10` contain one that it does.
 claims() {
-	capabilities | grep -qxF "$1"
+	local list
+	# Captured, not piped: grep -q stops reading at the first match, and
+	# under pipefail the producer's SIGPIPE would come back as no match.
+	list="$(capabilities)"
+	grep -qxF "$1" <<<"$list"
 }
 
 # stat's spellings differ between the GNU and BSD tools. GNU first,
@@ -195,9 +199,9 @@ release_host_state() {
 		*)
 			if [ -z "$store" ]; then
 				echo "sbx-adapter: could not resolve the skills store; the marker skill $name outlived the run" >&2
-			elif ! grep -qF "$marker_line" "$store/$name/SKILL.md" 2>/dev/null; then
-				# Already gone, or no longer what seeding wrote: either
-				# way not this run's to remove.
+			elif ! marker_body "$name" | diff -q - "$store/$name/SKILL.md" >/dev/null 2>&1; then
+				# Already gone, or no longer exactly what seeding wrote:
+				# an edited skill belongs to whoever edited it.
 				rm -f "$state/seeded-skill"
 			elif rm -rf "${store:?}/${name:?}"; then
 				rm -f "$state/seeded-skill"
@@ -267,9 +271,14 @@ seed_skill_store() {
 	# The name, not the path: cleanup resolves the store again rather
 	# than following a path out of a file into somewhere else.
 	printf '%s\n' "$name" >"$state/seeded-skill"
-	cat >"$store/$name/SKILL.md" <<EOF
+	marker_body "$name" >"$store/$name/SKILL.md"
+}
+
+# What seeding writes, and what cleanup expects to find unchanged.
+marker_body() {
+	cat <<EOF
 ---
-name: $name
+name: $1
 description: Marker skill the conformance suite looks for in the shared store
 ---
 
@@ -293,7 +302,12 @@ bind_credential() {
 	# business rather than the default installation's.
 	[ -n "${SBX_TCK_APP_NAME:-}" ] ||
 		die "credential@1 binds the fixture's secret into the app's secret store; run under SBX_TCK_APP_NAME so the default installation's is left alone"
-	if run_sbx secret ls --json 2>/dev/null | grep -q '"kit-tck"'; then
+	local bound
+	# Captured for the same reason claims() is: a short-circuiting grep
+	# can leave the producer on a SIGPIPE that pipefail reads as no
+	# match, and this one decides whether a real secret is replaced.
+	bound="$(run_sbx secret ls --json 2>/dev/null || true)"
+	if grep -q '"kit-tck"' <<<"$bound"; then
 		echo "sbx-adapter: a kit-tck secret is already bound; leaving it, and its checks will report what the sandbox saw" >&2
 		return 0
 	fi
@@ -315,7 +329,9 @@ bind_credential() {
 }
 
 capabilities() {
-	printf '%s\n' "${SBX_TCK_CAPABILITIES:-$default_capabilities}" | tr ',' '\n' |
+	# Unset takes the default; set-and-empty is a runtime claiming
+	# nothing, which the contract allows and :- could not express.
+	printf '%s\n' "${SBX_TCK_CAPABILITIES-$default_capabilities}" | tr ',' '\n' |
 		sed '/^[[:space:]]*$/d;s/^[[:space:]]*//;s/[[:space:]]*$//'
 }
 
@@ -359,15 +375,22 @@ create_sandbox() {
 		# daemon may have made the sandbox and the CLI failed after it.
 		# The name is the adapter's own, so asking for its removal
 		# cannot reach anything of the user's.
-		run_sbx rm --force "$id" >/dev/null 2>&1 || true
-		# §2.4 has the suite address only the ids create returned, so a
-		# create that returned none leaves nothing to recreate or remove
-		# and its bookkeeping goes with it.
-		rm -f "$state/$id.create"
-		# No id means no cleanup callback, so what this create arranged
-		# on the host has to be taken back here or not at all.
-		release_host_state
-		if printf '%s' "$output" | grep -Eqi "$refusal_pattern"; then
+		if run_sbx inspect "$id" >/dev/null 2>&1 && ! run_sbx rm --force "$id" >/dev/null 2>&1; then
+			# Still there, so the record stays with it: a sandbox that
+			# outlived its create may still be reading what this run
+			# seeded, and no id reached the suite to remove it later.
+			echo "sbx-adapter: $id survived a failed create and could not be removed; its record and the host state it may be using are left in place" >&2
+		else
+			# §2.4 has the suite address only the ids create returned, so
+			# a create that returned none leaves nothing to recreate or
+			# remove and its bookkeeping goes with it.
+			rm -f "$state/$id.create"
+			# No id means no cleanup callback, so what this create
+			# arranged on the host has to be taken back here or not at
+			# all.
+			release_host_state
+		fi
+		if grep -Eqi "$refusal_pattern" <<<"$output"; then
 			exit 2
 		fi
 		# Exit 2 is the contract's word for a refusal, so passing sbx's
