@@ -25,7 +25,10 @@
 #                                sandboxes, the skills store, secrets and
 #                                policy onto state of their own. Needs its
 #                                own `sbx --app-name <name> login`, and is
-#                                required when credential@1 is claimed.
+#                                required when credential@1 is claimed —
+#                                which also passes the fixture's secret
+#                                through sbx's argv, since set-custom
+#                                takes no protected input.
 #   SBX_TCK_STATE                where the adapter remembers each
 #                                sandbox's create arguments, for recreate.
 #                                It has to be a directory only this user
@@ -212,14 +215,14 @@ release_host_state() {
 		esac
 	fi
 	if [ -f "$state/bound-credential" ]; then
-		# The record outlives a failed removal: it is the only thing that
-		# knows a real secret is still in the store, and dropping it
-		# would strand the secret silently.
-		if run_sbx secret rm kit-tck -f >/dev/null 2>&1; then
-			rm -f "$state/bound-credential"
-		else
-			echo "sbx-adapter: the kit-tck credential outlived the run; remove it with 'sbx secret rm kit-tck'" >&2
+		# Once. A binding this run made is the run's to remove, but a
+		# later one cannot tell that binding from the replacement an
+		# operator put under the same name, so a failure is reported and
+		# forgotten rather than retried against whatever is there next.
+		if ! run_sbx secret rm kit-tck -f >/dev/null 2>&1; then
+			echo "sbx-adapter: the kit-tck credential outlived the run and will not be removed again; 'sbx secret rm kit-tck' takes it out" >&2
 		fi
+		rm -f "$state/bound-credential"
 	fi
 }
 
@@ -347,6 +350,14 @@ bind_credential() {
 	# example.com is the host the fixture's credential injects into at
 	# runtime, and binding any other one would present the sandbox a
 	# sentinel the proxy never substitutes.
+	#
+	# --value puts the secret in sbx's argv, where a process of this
+	# user's can read it while the command runs. set-custom offers no
+	# protected input — --token carries the same warning, and --command
+	# is re-run by the daemon, which does not have the suite's
+	# environment — so the exposure is stated rather than hidden: this is
+	# the suite's throwaway fixture value, and credential@1 stays
+	# unclaimed by default.
 	if run_sbx secret set-custom \
 		--name kit-tck \
 		--host example.com \

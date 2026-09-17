@@ -318,6 +318,17 @@ exec)
     if [ "$broken" = "writes-files-as-root" ]; then echo 0; else echo 1000; fi
     ;;
 
+  test)
+    # Whether the agent can change what was declared for it. Owning a
+    # file it cannot write leaves the entry as unusable as one it does
+    # not own.
+    case "$2" in
+    -w) ;;
+    *) echo "unsupported test: $2" >&2; exit 1 ;;
+    esac
+    [ "$broken" != "writes-files-read-only" ]
+    ;;
+
   id)
     # The identity comes from the image the sandbox was created from; the
     # fixture's is deliberately not the conventional uid 1000 / agent.

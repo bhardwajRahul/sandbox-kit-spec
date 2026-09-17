@@ -391,6 +391,17 @@ var checks = []check{
 					"the declared file belongs to uid %s while the agent is uid %s; whichever user writes it, a file entry ends up the agent's — a path only root can own is an install hook's job",
 					strings.TrimSpace(owner), strings.TrimSpace(agent))}
 			}
+
+			// Owning it is not the same as being able to change it, and
+			// this entry declares no mode to explain a read-only one.
+			res, err := e.Adapter.Exec(ctx, id, "test", "-w", "/home/agent/.config/kit-written")
+			if err != nil {
+				return []report.Finding{report.Failf("probe the declared file: %v", err)}
+			}
+			if res.ExitCode != 0 {
+				return []report.Finding{report.Failf(
+					"the declared file is not writable by the agent, and its entry declares no mode asking for that")}
+			}
 			return nil
 		},
 	},
