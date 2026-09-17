@@ -1,7 +1,7 @@
 # Docker Sandbox Kit Specification — v3
 
-Normative reference for the kit descriptor at `schemaVersion: "3"` and for
-the OCI artifact a published kit takes. The authoritative implementation is
+Normative reference for the Kit descriptor at `schemaVersion: "3"` and for
+the OCI artifact a published Kit takes. The authoritative implementation is
 the Go package at [`spec/`](../../spec/) ([`types.go`](../../spec/types.go),
 [`validate.go`](../../spec/validate.go), [`version.go`](../../spec/version.go));
 where this document and the code disagree, the code wins.
@@ -24,14 +24,14 @@ are used as described in RFC 2119.
 
 ## 1. Overview
 
-A **kit** is one OCI image. Its manifest annotation
-`vnd.docker.sandbox.kit.descriptor` carries the kit's declarations — the
-**descriptor** this document specifies — and its layers carry the kit's
-content. There is no kit-specific media type or artifactType: a kit pulls,
+A **Kit** is one OCI image. Its manifest annotation
+`vnd.docker.sandbox.kit.descriptor` carries the Kit's declarations — the
+**descriptor** this document specifies — and its layers carry the Kit's
+content. There is no kit-specific media type or artifactType: a Kit pulls,
 inspects, and `FROM`s with stock tooling, and an engine that does not read
 the annotation runs it as an ordinary image.
 
-There are exactly two kinds of kit, distinguished by the `kind:` field:
+There are exactly two kinds of Kit, distinguished by the `kind:` field:
 
 | Kind | Layers are | Count per composition |
 |---|---|---|
@@ -39,7 +39,7 @@ There are exactly two kinds of kit, distinguished by the `kind:` field:
 | **`mixin`** | An overlay that lands on a workload's filesystem. May be declaration-only (a single descriptor-file layer). | Zero or more |
 
 A descriptor deliberately carries **no name, no image reference, and no
-runtime config**: identity is the reference a kit is consumed by, matchable
+runtime config**: identity is the reference a Kit is consumed by, matchable
 identity is what [`provides`](#5-provides-requires-integrates-conflicts)
 states, and runtime config lives in the image config where images already
 carry it. A `version:` field exists only as a fallback for consumption
@@ -47,8 +47,8 @@ references that carry no version of their own ([§4](#4-top-level-fields)).
 
 ### 1.1 Descriptor and content
 
-The descriptor is authored as YAML. The kit's content recipe is ordinary
-Dockerfile text — or, for a set, a list of other kits — connected to the
+The descriptor is authored as YAML. The Kit's content recipe is ordinary
+Dockerfile text — or, for a set, a list of other Kits — connected to the
 descriptor by one of four authoring
 forms ([§3](#3-authoring-forms)). At build time a BuildKit frontend —
 dispatched by the descriptor's first line, `# syntax=docker/sandbox-kit:3` —
@@ -123,7 +123,7 @@ descriptor ([§3.1](#31-companion-pair)).
 
 ## 3. Authoring forms
 
-A kit's declarations and its content recipe pair in one of four ways.
+A Kit's declarations and its content recipe pair in one of four ways.
 All four produce the same kind of artifact — an ordinary OCI image, read
 the same way — so the first three are an authoring choice and nothing
 more. The fourth is visible in one respect: a merged set keeps the
@@ -170,7 +170,7 @@ content's own frontend. A comment-descriptor file **MUST NOT** also declare <!--
 
 ### 3.4 Kit set
 
-A `kind: set` descriptor's content is the kits it lists in `kits:` —
+A `kind: set` descriptor's content is the Kits it lists in `kits:` —
 the one authoring form whose recipe is not Dockerfile text. It exists so
 a working environment can be shared as one reference instead of a command
 line someone has to retype.
@@ -192,36 +192,36 @@ kits:
 
 | Field | Type | Rules |
 |---|---|---|
-| `ref` | string | REQUIRED. The registry reference the kit is consumed by. A local path or a git URL is refused: a set's kits MUST be resolvable from the manifest alone, or the set could only be reproduced from the directory it was written in. | <!-- tck: SPEC-v3 §3.4/kit-published-reference -->
-| `digest` | string | optional when authored, REQUIRED when published. `sha256:<64 hex>`, pinning that kit's manifest. |
-| `args` | map\<string,string\> | That kit's create-phase args, keyed by its own arg names. |
+| `ref` | string | REQUIRED. The registry reference the Kit is consumed by. A local path or a git URL is refused: a set's Kits MUST be resolvable from the manifest alone, or the set could only be reproduced from the directory it was written in. | <!-- tck: SPEC-v3 §3.4/kit-published-reference -->
+| `digest` | string | optional when authored, REQUIRED when published. `sha256:<64 hex>`, pinning that Kit's manifest. |
+| `args` | map\<string,string\> | That Kit's create-phase args, keyed by its own arg names. |
 
 - `kits:` is mutually exclusive with `build:` and `dockerfile:`, and a <!-- tck: SPEC-v3 §3.4/set-declares-no-recipe -->
-  comment-descriptor file cannot declare it: a kit's content recipe lives
+  comment-descriptor file cannot declare it: a Kit's content recipe lives
   in exactly one place.
 - A `kind: set` descriptor **MUST** list at least one kit. <!-- tck: SPEC-v3 §3.4/set-has-kits -->
 - The order of the list carries no meaning. The set is resolved by
   [§5.3](#53-resolution-semantics-consumer-contract), which derives
-  composition order from the listed kits' own declarations — with the
+  composition order from the listed Kits' own declarations — with the
   one difference that a set **MAY** have no workload among them,
   producing a merged mixin that composes onto a workload later exactly as
-  those kits would have.
-- A set **MAY** declare anything a kit declares — capabilities, provides,
+  those Kits would have.
+- A set **MAY** declare anything a Kit declares — capabilities, provides,
   lifecycle hooks, its own args. Those declarations merge with the
-  listed kits' as one more contribution ([§9.5](#95-merging-a-set)).
+  listed Kits' as one more contribution ([§9.5](#95-merging-a-set)).
 - `kind: set` is an authoring kind and **MUST NOT** appear in a published <!-- tck: SPEC-v3 §3.4/set-kind-never-published -->
   descriptor: publishing derives `workload` or `mixin` from the listed
-  kits ([§9.5](#95-merging-a-set)). Stating the derived kind beside `kits:`
+  Kits ([§9.5](#95-merging-a-set)). Stating the derived kind beside `kits:`
   is equivalent and legal.
 
 ### 3.5 Content rules by kind
 
-- A `kind: workload` kit **MUST** have content: its layers are the root <!-- tck: SPEC-v3 §3.5/workload-has-content -->
-  filesystem. A workload with no recipe and no kits list is rejected at build.
-- A `kind: mixin` kit **MAY** have no recipe, producing a declaration-only image (one descriptor-file layer; see §10).
+- A `kind: workload` Kit **MUST** have content: its layers are the root <!-- tck: SPEC-v3 §3.5/workload-has-content -->
+  filesystem. A workload with no recipe and no Kits list is rejected at build.
+- A `kind: mixin` Kit **MAY** have no recipe, producing a declaration-only image (one descriptor-file layer; see §10).
 - A workload's recipe **SHOULD** build on a base providing the runtime's <!-- tck: SPEC-v3 §3.5/workload-base-should-match-runtime -->
   platform floor — `bash`, the `agent` user (uid 1000), `git`, a CA store —
-  or the kit builds fine and fails at agent launch.
+  or the Kit builds fine and fails at agent launch.
 
 ---
 
@@ -258,20 +258,20 @@ kits: []                    # optional. §3.4. Exclusive with build, dockerfile.
 | Field | Type | Rules |
 |---|---|---|
 | `schemaVersion` | string | REQUIRED. MUST be `"3"`. | <!-- tck: SPEC-v3 §4/schema-version-3 -->
-| `kind` | string | REQUIRED. `workload`, `mixin`, or `set`. `set` is an authoring kind only — publishing derives `workload` or `mixin` from the kits it lists ([§3.4](#34-kit-set)). (`sandbox` is the pre-rename spelling of `workload`; consumers MAY accept it on published kits, authors MUST NOT write it.) | <!-- tck: SPEC-v3 §4/sandbox-spelling-not-written -->
+| `kind` | string | REQUIRED. `workload`, `mixin`, or `set`. `set` is an authoring kind only — publishing derives `workload` or `mixin` from the Kits it lists ([§3.4](#34-kit-set)). (`sandbox` is the pre-rename spelling of `workload`; consumers MAY accept it on published Kits, authors MUST NOT write it.) | <!-- tck: SPEC-v3 §4/sandbox-spelling-not-written -->
 | `displayName` | string | optional. |
-| `author` | string | optional. Who published the kit, in the `org.opencontainers.image.authors` convention (`Name <email>`, commas for multiples). **Display metadata only**: a self-asserted claim, never identity and never a trust input — publisher identity lives in the reference's registry namespace and the signature. |
+| `author` | string | optional. Who published the Kit, in the `org.opencontainers.image.authors` convention (`Name <email>`, commas for multiples). **Display metadata only**: a self-asserted claim, never identity and never a trust input — publisher identity lives in the reference's registry namespace and the signature. |
 | `description` | string | optional. |
 | `sourceUrl` | string | optional. |
-| `iconUrl` | string | optional. Absolute **https** URL to an image representing the kit in catalogs and pickers. Display metadata, self-asserted like `displayName`. The scheme is constrained because a consumer fetches and renders this rather than merely displaying it: `javascript:`, `data:`, and `file:` are refused, and plain `http:` is refused so a rendered icon is not attacker-swappable in transit. Referenced rather than staged into a layer, because the surfaces that want an icon hold the manifest and not the layers — an icon a consumer had to pull the kit to see would arrive after the moment it existed to inform. No `org.opencontainers.image.*` annotation is emitted for it: OCI defines no icon key, and the descriptor annotation already carries the field. |
+| `iconUrl` | string | optional. Absolute **https** URL to an image representing the Kit in catalogs and pickers. Display metadata, self-asserted like `displayName`. The scheme is constrained because a consumer fetches and renders this rather than merely displaying it: `javascript:`, `data:`, and `file:` are refused, and plain `http:` is refused so a rendered icon is not attacker-swappable in transit. Referenced rather than staged into a layer, because the surfaces that want an icon hold the manifest and not the layers — an icon a consumer had to pull the Kit to see would arrive after the moment it existed to inform. No `org.opencontainers.image.*` annotation is emitted for it: OCI defines no icon key, and the descriptor annotation already carries the field. |
 | `version` | string | optional. Version-shaped ([§5.2](#52-versions)), or a build-phase arg reference expanded at publish. See below. |
 | `licenses` | list\<string\> | optional. SHOULD be SPDX identifiers. | <!-- tck: SPEC-v3 §4/licenses-spdx -->
 | `build` | string | optional. Literal Dockerfile text. Exclusive with `dockerfile` and `kits`. |
 | `dockerfile` | string | optional. Relative path inside the descriptor's directory; MUST NOT escape it (that directory is the build context's root). Exclusive with `build` and `kits`. | <!-- tck: SPEC-v3 §4/dockerfile-inside-context -->
-| `kits` | list\<kit\> | optional. The kits this kit's content is merged from ([§3.4](#34-kit-set)). Exclusive with `build` and `dockerfile`. |
+| `kits` | list\<kit\> | optional. The Kits this Kit's content is merged from ([§3.4](#34-kit-set)). Exclusive with `build` and `dockerfile`. |
 
 **`version` is a fallback, never an override.** It supplies the version for
-unversioned `provides` entries when the kit is consumed by a reference that
+unversioned `provides` entries when the Kit is consumed by a reference that
 carries no version of its own — a local directory, a git branch or commit.
 A version-shaped consumption reference (an OCI tag, a version-shaped git
 ref) always wins over it, so a stale `version:` cannot lie to the resolver;
@@ -281,7 +281,7 @@ an explicit `provides: [name@version]` outranks both.
 
 ## 5. `provides`, `requires`, `integrates`, `conflicts`
 
-Kit-to-kit capabilities: free-form names a kit offers or constrains, matched
+Kit-to-Kit capabilities: free-form names a Kit offers or constrains, matched
 at resolution. Distinct from [§7 `capabilities`](#7-capabilities), which are
 typed requests answered by the **host**.
 
@@ -303,7 +303,7 @@ conflicts: ["podman"]                           # must be absent from the resolv
   providers; at most one provider per capability name), never a
   backtracking solver that picks versions from a registry.
 - `conflicts` entries are bare names.
-- Nothing is provided implicitly: a kit that wants to be requirable by name
+- Nothing is provided implicitly: a Kit that wants to be requirable by name
   states so in `provides`.
 - Arg references are permitted in `provides` (and `version`) only — they are
   expanded at publish ([§9.1](#91-expansion)). `requires`, `integrates`, and
@@ -319,7 +319,7 @@ while a third party's `com.example/gh` never matches either, the way
 `docker.io/library/` qualifies bare image names. Matching, locks, and
 surfaces speak normalized names; the short form is display sugar.
 
-`com.docker.kit/` (vocabulary kits provide) is deliberately a sibling of
+`com.docker.kit/` (vocabulary Kits provide) is deliberately a sibling of
 `com.docker.sandbox/` (contracts the runtime answers, [§7](#7-capabilities)).
 
 ### 5.2 Versions
@@ -336,7 +336,7 @@ declared no version.
 
 ### 5.3 Resolution semantics (consumer contract)
 
-A conforming runtime resolving a kit set:
+A conforming runtime resolving a Kit set:
 
 - **MUST** treat the set as closed: every `requires` is satisfied by the <!-- tck: SPEC-v3 §5.3/closed-set -->
   set itself or resolution fails. Capability names resolve to nothing and
@@ -348,8 +348,8 @@ A conforming runtime resolving a kit set:
 - **MUST** order composition by the dependency graph (providers before <!-- tck: SPEC-v3 §5.3/dependency-order -->
   requirers; met `integrates` entries order like requires), never by flag
   order.
-- **MUST** include exactly one `workload` kit per composition. <!-- tck: SPEC-v3 §5.3/one-workload -->
-- **MUST** fail when two kits provide the same normalized name, at any <!-- tck: SPEC-v3 §5.3/one-provider-per-name -->
+- **MUST** include exactly one `workload` Kit per composition. <!-- tck: SPEC-v3 §5.3/one-workload -->
+- **MUST** fail when two Kits provide the same normalized name, at any <!-- tck: SPEC-v3 §5.3/one-provider-per-name -->
   versions. Only one provider's content is reachable after composition,
   so a second provide vouches for shadowed content; one name has one
   owner. Composing `claude` with `claude-mixin` is the canonical mistake
@@ -386,7 +386,7 @@ args:
 | *the key* | string | MUST match `^[A-Za-z_][A-Za-z0-9_]*$`. | <!-- tck: SPEC-v3 §6/arg-key-grammar -->
 | `default` | string | Used when the installer supplies nothing. `default: ""` is a real default. Mutually exclusive with `required`. |
 | `required` | bool | The installer MUST supply a value. | <!-- tck: SPEC-v3 §6/required-arg-supplied -->
-| `description` | string | optional. Shown wherever a kit's inputs are listed. |
+| `description` | string | optional. Shown wherever a Kit's inputs are listed. |
 | `enum` | list\<string\> | Exact accepted set. Mutually exclusive with `pattern`. |
 | `pattern` | string | RE2 regexp matched against the **whole** value. Mutually exclusive with `enum`. |
 | `env` | string | Opts the resolved value into the container environment under this name. Mutually exclusive with `buildArg` — an arg resolves in one phase. |
@@ -430,13 +430,13 @@ args:
   published artifact bounds what values an installer can materialize into
   policy.
 - A supplied value failing its `enum`/`pattern`, a missing `required`
-  value, and a supplied name the kit never declared are all errors.
+  value, and a supplied name the Kit never declared are all errors.
 
 ---
 
 ## 7. `capabilities`
 
-Everything the kit needs but cannot supply itself: a list of **typed,
+Everything the Kit needs but cannot supply itself: a list of **typed,
 versioned capability requests**, each answered — granted, refused, or
 prompted — by the host. One model for every ask: resource grants and
 engine-executed behaviors alike go through this list, so a host answers the
@@ -455,7 +455,7 @@ capabilities:
 | Field | Type | Rules |
 |---|---|---|
 | `type` | string | REQUIRED. `<namespace>/<name>@<version>`: dotted lowercase namespace, hyphenated lowercase name, integer config-schema version. The version moves when the type's config schema does — capability types evolve without a descriptor schema-major bump. |
-| `optional` | bool | The kit degrades gracefully without it: an unknown or unprovidable optional entry is skipped and recorded; a required one fails resolution closed. |
+| `optional` | bool | The Kit degrades gracefully without it: an unknown or unprovidable optional entry is skipped and recorded; a required one fails resolution closed. |
 | `config` | map | Type-specific request payload. Strictly decoded for well-known types (unknown config keys are errors); carried opaquely for unknown types. |
 | `description` | string | optional. |
 
@@ -504,7 +504,7 @@ behavior** for a runtime supporting the type:
 An unknown type is the extension point working as designed. The spec
 library validates only the type-name grammar and arity; the config rides
 opaquely. At resolution, a host that does not recognize a **required**
-type MUST refuse the kit by that type's name; <!-- tck: SPEC-v3 §7.3/unknown-required-refused --> an **optional** unknown type
+type MUST refuse the Kit by that type's name; <!-- tck: SPEC-v3 §7.3/unknown-required-refused --> an **optional** unknown type
 MUST be skipped and recorded. <!-- tck: SPEC-v3 §7.3/unknown-optional-skipped --> A host-specific capability's author publishes
 its contract under their own namespace, following the structure of the
 pages above.
@@ -519,7 +519,7 @@ for every other request. The projection input is the **effective descriptor** �
 declarations with this installation's create-phase arg values expanded
 ([§6](#6-args)) — so the surface describes the policy actually enforced,
 and an arg value that widens policy gates like any widening. Consumers
-that gate updates store a kit's surface in the lock and diff a
+that gate updates store a Kit's surface in the lock and diff a
 candidate's against it:
 
 - Version movement whose surface stays within the granted one **MAY** apply
@@ -532,7 +532,7 @@ candidate's against it:
 - `optional` does not change the surface: it changes what happens when the
   host cannot provide, not what is granted when it can.
 - `resources@1`, `lifecycle@1`, `agent-context@1`, and `agent-sessions@1`
-  contribute nothing to the surface: resource limits constrain the kit
+  contribute nothing to the surface: resource limits constrain the Kit
   rather than grant it anything, and the latter three run inside the
   sandbox on the entrypoint's trust plane (see their pages).
 
@@ -572,7 +572,7 @@ lock records — one caller's substitution never rewrites it.
 ### 9.2 Versioned provides
 
 At publish, every `provides` entry **MUST** carry a version — its own <!-- tck: SPEC-v3 §9.2/versioned-provides -->
-`@version` or the descriptor's `version:` fallback. A published kit with an
+`@version` or the descriptor's `version:` fallback. A published Kit with an
 unversioned provide would satisfy only unconstrained requires and silently
 defeat version-constraint resolution. Kits with no provides publish fine.
 
@@ -584,13 +584,13 @@ single-platform builds with attestation manifests):
 
 | Annotation | Value |
 |---|---|
-| `vnd.docker.sandbox.kit.descriptor` | The published descriptor as **compact JSON** — `json.Marshal` of the decoded, expanded document. Authoring is YAML; the published form is a derived artifact, and JSON matches the manifest it rides in and is byte-deterministic. Consumers decode with a YAML parser (YAML accepts JSON), so YAML-valued annotations from kits published before the switch keep decoding. |
+| `vnd.docker.sandbox.kit.descriptor` | The published descriptor as **compact JSON** — `json.Marshal` of the decoded, expanded document. Authoring is YAML; the published form is a derived artifact, and JSON matches the manifest it rides in and is byte-deterministic. Consumers decode with a YAML parser (YAML accepts JSON), so YAML-valued annotations from Kits published before the switch keep decoding. |
 | `vnd.docker.sandbox.kit.schema-version` | The descriptor's `schemaVersion`, so tooling dispatches on the grammar version without parsing the descriptor. Always equal to the field inside. |
-| `vnd.docker.sandbox.kit.capabilities` | The requested capability types — deduplicated, sorted, comma-joined. An **index, never a second source**: existence checks and policy filters read one small canonical value; the descriptor stays authoritative. Omitted when the kit requests nothing, so absence means "none requested". Commas cannot appear in a type string, so splitting is unambiguous. |
+| `vnd.docker.sandbox.kit.capabilities` | The requested capability types — deduplicated, sorted, comma-joined. An **index, never a second source**: existence checks and policy filters read one small canonical value; the descriptor stays authoritative. Omitted when the Kit requests nothing, so absence means "none requested". Commas cannot appear in a type string, so splitting is unambiguous. |
 
 The frontend also derives the standard `org.opencontainers.image.*`
 annotations from the descriptor, so registry tooling that knows nothing
-about kits displays a kit's metadata: `title` ← `displayName`,
+about Kits displays a Kit's metadata: `title` ← `displayName`,
 `description` ← `description`, `authors` ← `author`, `source` ←
 `sourceUrl`, `licenses` ← the comma-joined `licenses` list, and `version`
 ← `version:` or the one version every versioned `provides` entry agrees
@@ -618,11 +618,11 @@ frontend enforces a budget: a warning above 64 KiB, an error above
 ### 9.5 Merging a set
 
 Publishing a `kind: set` descriptor ([§3.4](#34-kit-set)) resolves the
-kits it lists and merges them into one ordinary kit. Their roles — and
+Kits it lists and merges them into one ordinary kit. Their roles — and
 the fact that there were several — survive only as the pinned `kits:`
 record in the published descriptor.
 
-**Resolution.** Every listed kit is resolved to a manifest digest and
+**Resolution.** Every listed Kit is resolved to a manifest digest and
 its published descriptor read. The set is then judged by
 [§5.3](#53-resolution-semantics-consumer-contract), with a workload
 among them optional; failure is a build failure, so an incoherent set
@@ -631,51 +631,51 @@ cannot be published. Each one's create-phase args are resolved from its
 resolved away; a value that is itself one `${{ kit.args.* }}` reference
 re-exports the input under the set's own name, and that reference
 survives into the merged descriptor for the set's declaration to bound
-and create to resolve. The kit's own declaration is answered and gone,
+and create to resolve. The Kit's own declaration is answered and gone,
 so the set's is the only one an installer can read.
 
-A re-exported arg's declaration on the set **MUST** say at least what the kit's said: required where the kit required it, defaulted where the kit defaulted it, its `enum` restated or narrowed, its `pattern` restated. <!-- tck: SPEC-v3 §9.5/re-export-restates-contract -->
+A re-exported arg's declaration on the set **MUST** say at least what the Kit's said: required where the Kit required it, defaulted where the Kit defaulted it, its `enum` restated or narrowed, its `pattern` restated. <!-- tck: SPEC-v3 §9.5/re-export-restates-contract -->
 
 Without that, an installer supplying nothing to an optional re-export
-of a required arg leaves the reference unresolved, and a value the kit
+of a required arg leaves the reference unresolved, and a value the Kit
 would have refused reaches it with nothing left to refuse it. A
 reference can only survive where the config field holds text, so a set
-pins rather than re-exports an arg its kit reads as a number.
+pins rather than re-exports an arg its Kit reads as a number.
 
 **Derived kind.** `workload` when one of them is a workload, `mixin`
 when they all are mixins. Two workloads is an error.
 
 **Content.** Their layers are merged in composition order, later over
 earlier.
-Merging **MUST** preserve those kits' own layers rather than repacking <!-- tck: SPEC-v3 §9.5/layers-preserved -->
-their content, so the merged kit's blobs stay shared with the kits it was
+Merging **MUST** preserve those Kits' own layers rather than repacking <!-- tck: SPEC-v3 §9.5/layers-preserved -->
+their content, so the merged Kit's blobs stay shared with the Kits it was
 built from.
 
-Two kits contributing the same file resolve by that order, rather than
+Two Kits contributing the same file resolve by that order, rather than
 failing the way the same two would when a runtime composes them at
 create. The rule is not relaxed, only unenforceable where the merge
-happens: deciding it needs every kit's layer inventory, and a build
+happens: deciding it needs every Kit's layer inventory, and a build
 frontend reaches neither the layer blobs nor a filesystem listing
 cheaper than one round trip per directory. A merged set is therefore
 judged for collisions where its layers can be read — from the published
 artifact.
 
-**Declarations.** Every contribution — the listed kits and the set's
+**Declarations.** Every contribution — the listed Kits and the set's
 own declarations alike — is ordered by the same dependency graph
 [§5.3](#53-resolution-semantics-consumer-contract) derives, providers
-before the kits that require or integrate with them. The set's own
+before the Kits that require or integrate with them. The set's own
 declarations come last among equals, being the statement made with the
-whole composition in view; a kit that integrates with something the set
+whole composition in view; a Kit that integrates with something the set
 provides puts the set ahead of it, and a circle between them is an
 error. In that order they reconcile into one descriptor:
 
 | Declaration | Rule |
 |---|---|
 | `provides` | Union. They are facts about content that travelled in. |
-| `requires`, `integrates` | Union **minus** entries the set satisfies itself — a kit cannot satisfy its own requirement ([§5.3](#53-resolution-semantics-consumer-contract)), so a retained one could never resolve. | <!-- tck: SPEC-v3 §9.5/internal-requires-dropped -->
+| `requires`, `integrates` | Union **minus** entries the set satisfies itself — a Kit cannot satisfy its own requirement ([§5.3](#53-resolution-semantics-consumer-contract)), so a retained one could never resolve. | <!-- tck: SPEC-v3 §9.5/internal-requires-dropped -->
 | `conflicts` | Union. |
 | `licenses` | Union. The artifact ships every one of their layers, so a narrower list would misreport it — and §9.3 derives an annotation from it. | <!-- tck: SPEC-v3 §9.5/licenses-union -->
-| `args` | The set's own. The listed kits' are answered at publish, pinned or re-exported. |
+| `args` | The set's own. The listed Kits' are answered at publish, pinned or re-exported. |
 | Display fields | The set's own: the artifact is a new thing with its own name, publisher, and documentation. |
 | Instance-shaped capabilities | Union, deduplicated on the type's own key ([§7.1](#71-arity)). Two different configs under one key is an error. |
 | `network-policy` | Allow and deny union per phase. The output states one version: `@2` when any of them uses it, with `@1` hosts joining as the unbounded entries they already are. An allow entry bounded to methods or paths is dropped when another entry grants its host outright — the union of the two grants *is* the unbounded one. |
@@ -687,14 +687,14 @@ error. In that order they reconcile into one descriptor:
 
 A merged descriptor **MUST** be identical across every platform a <!-- tck: SPEC-v3 §9.5/declarations-platform-independent -->
 multi-platform set builds for: the annotation is written once per
-platform manifest, and a descriptor describes the kit rather than one of
+platform manifest, and a descriptor describes the Kit rather than one of
 its platforms.
 
 ---
 
 ## 10. The OCI layout
 
-One shape for every kit — an ordinary OCI image:
+One shape for every Kit — an ordinary OCI image:
 
 ```text
 manifest  oci.image.manifest.v1+json
@@ -707,9 +707,9 @@ manifest  oci.image.manifest.v1+json
                                         + the staged kit sources
 ```
 
-- **Every kit stages its sources**: the published descriptor at
-  `/usr/share/sandbox/kit/<stem>/kit.yaml` and, when the kit has a content
-  recipe, its Dockerfile text at `…/kit.dockerfile`. A published kit is
+- **Every Kit stages its sources**: the published descriptor at
+  `/usr/share/sandbox/kit/<stem>/kit.yaml` and, when the Kit has a content
+  recipe, its Dockerfile text at `…/kit.dockerfile`. A published Kit is
   self-describing — inside any sandbox that composes it, the declarations
   and the recipe are readable in place — and every manifest carries at
   least one layer, which the OCI image-manifest schema requires
@@ -727,9 +727,9 @@ manifest  oci.image.manifest.v1+json
   as authored. `requires` states what the mixin can sit on, because
   nothing else can check.
 - A **merged set** is an ordinary workload or mixin: its layers are its
-  listed kits' layers, and the `kits:` record in its descriptor names
-  those kits with their digests, one manifest GET away.
-  A merged kit **MUST** carry the staged sources of every kit it lists, <!-- tck: SPEC-v3 §10/merged-set-carries-sources -->
+  listed Kits' layers, and the `kits:` record in its descriptor names
+  those Kits with their digests, one manifest GET away.
+  A merged Kit **MUST** carry the staged sources of every Kit it lists, <!-- tck: SPEC-v3 §10/merged-set-carries-sources -->
   beside its own, so that `ls /usr/share/sandbox/kit/` inside it
   enumerates what it was built from. The record says what was merged;
   these are the declarations that came with it, and a consumer that
@@ -739,9 +739,9 @@ manifest  oci.image.manifest.v1+json
   OCI **empty descriptor** is deliberately not used for this case — it is
   the artifact pattern, and an empty-JSON blob under an image-config
   manifest is not a filesystem layer and breaks the ordinary
-  pullable-image property kits are built on.
+  pullable-image property Kits are built on.
 
-Consumers recognize a v3 kit by: a plain image manifest (no artifactType,
+Consumers recognize a v3 Kit by: a plain image manifest (no artifactType,
 image-config media type) carrying the descriptor annotation. Preflight is
 one manifest GET — the descriptor comes from the annotation, the runtime
 contract from the config blob; layers are never fetched until the runtime
@@ -764,8 +764,8 @@ The spec library enforces, beyond per-field rules stated above:
   version-shaped (or a build-phase arg reference in the authored form);
   `build:`, `dockerfile:`, and `kits:` mutually exclusive;
   `dockerfile:` relative and non-escaping.
-- **kits**: a `kind: set` descriptor lists at least one; every entry
-  names a published kit by a registry reference (no path, no git URL),
+- **Kits**: a `kind: set` descriptor lists at least one; every entry
+  names a published Kit by a registry reference (no path, no git URL),
   with a well-formed `sha256:` digest when pinned; no two entries name
   one kit.
 - **provides/requires/integrates/conflicts**: entries parse under the
@@ -779,7 +779,7 @@ The spec library enforces, beyond per-field rules stated above:
   (see the capability pages); **cross-entry**: every credential inject
   domain appears in the matching phase of the network policy's allow list
   (a bare `*`/`**` allow entry covers every domain). Entries whose config
-  references a kit arg defer their typed and cross-entry checks to the
+  references a Kit arg defer their typed and cross-entry checks to the
   **effective form** ([§6](#6-args)), where every placeholder is resolved.
 - **args**: name and env/buildArg charsets; `default`/`required`,
   `enum`/`pattern`, and `env`/`buildArg` mutually exclusive; `pattern`
@@ -788,7 +788,7 @@ The spec library enforces, beyond per-field rules stated above:
   `${{ kit.args.* }}` reference names a declared arg.
 - **published form**: no build-phase references remain; provides are
   literal and ([§9.2](#92-versioned-provides)) versioned; `kind` is the
-  derived `workload` or `mixin`, never `set`; every listed kit carries
+  derived `workload` or `mixin`, never `set`; every listed Kit carries
   a digest.
 
 Errors carry the offending element's dotted path with source positions
@@ -806,7 +806,7 @@ smuggle a malformed declaration past a conforming consumer.
 Kit content (recipes, lifecycle hooks, staged files) MAY assume the
 platform floor of a conforming runtime: `bash` and `sh`, `curl`, `git`, a
 populated CA store, and a non-root default user named `agent`, uid `1000`,
-home `/home/agent`. Everything else a kit needs, it installs or ships.
+home `/home/agent`. Everything else a Kit needs, it installs or ships.
 
 Phase-scoped enforcement is the load-bearing runtime behavior: the
 **install phase** (once, at sandbox create, while

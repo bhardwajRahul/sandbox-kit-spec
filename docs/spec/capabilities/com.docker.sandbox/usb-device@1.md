@@ -40,7 +40,7 @@ partner is an error.
 A conforming runtime:
 
 - **MUST** pass matching devices through to the sandbox when granted, and <!-- tck: usb-device@1/matching-devices-passed -->
-  refuse the kit (required) or skip the entry (optional) when it cannot or
+  refuse the Kit (required) or skip the entry (optional) when it cannot or
   will not.
 - **MUST** treat the grant as scoped to the match: a `class` grant does not <!-- tck: usb-device@1/grant-scoped-to-match -->
   admit unrelated devices, an ID grant admits only that vendor/product.

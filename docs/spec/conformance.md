@@ -6,9 +6,9 @@ This document specifies how a runtime demonstrates that it implements
 The key words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** are to be
 interpreted as in RFC 2119.
 
-Conformance has two halves, and they are independent. A kit is judged
+Conformance has two halves, and they are independent. A Kit is judged
 against the artifact rules; a runtime is judged against the behavior its
-capability pages require. A runtime that consumes kits it did not build is
+capability pages require. A runtime that consumes Kits it did not build is
 still responsible only for the second.
 
 ## 1. Kit conformance
@@ -16,7 +16,7 @@ still responsible only for the second.
 An artifact conforms when it satisfies [§9](SPEC-v3.md#9-publishing) and
 [§10](SPEC-v3.md#10-the-oci-layout). `kit-tck kit <reference>` judges a
 published artifact; the reference implementation's BuildKit frontend runs
-the same checks before it exports, so a kit built by it cannot be
+the same checks before it exports, so a Kit built by it cannot be
 published malformed.
 
 Running both matters. Build-time checks see the descriptor, the recipe,
@@ -51,7 +51,7 @@ Exit status carries meaning beyond success and failure:
 | any other non-zero | The verb failed |
 
 The distinction is load-bearing. Several requirements are satisfied only
-by refusing something — a kit requiring a capability the runtime does not
+by refusing something — a Kit requiring a capability the runtime does not
 implement, most importantly — and a suite that accepted any non-zero exit
 as a refusal would pass an adapter that fails at everything, including one
 that cannot find its fixtures. An adapter **MUST** exit `2` when it
@@ -64,7 +64,7 @@ An adapter **MUST NOT** require interactive input.
 | Verb | Arguments | stdout | Purpose |
 |---|---|---|---|
 | `capabilities` | — | one capability type per line | What the runtime claims to implement |
-| `create` | `<kit-ref>…`, zero or more `--arg name=value`, at most one `--skills-host-mode readonly\|off` | one sandbox id | Compose the kit set and start it |
+| `create` | `<kit-ref>…`, zero or more `--arg name=value`, at most one `--skills-host-mode readonly\|off` | one sandbox id | Compose the Kit set and start it |
 | `exec` | `<id> -- <argv>…` | the command's stdout | Run a command inside |
 | `stop` | `<id>` | — | Stop without discarding state |
 | `start` | `<id>` | — | Start a stopped sandbox |
@@ -72,7 +72,7 @@ An adapter **MUST NOT** require interactive input.
 | `rm` | `<id>` | — | Discard the sandbox |
 
 `capabilities` is what makes a partial implementation testable: the suite
-skips the types a runtime does not claim, and asserts that a kit
+skips the types a runtime does not claim, and asserts that a Kit
 **requiring** an unclaimed type is refused rather than silently
 under-provisioned.
 
@@ -104,14 +104,14 @@ anything:
 
 An adapter claiming `com.docker.sandbox/agent-skills@1` **MUST** default
 skills to their **most permissive** setting. Access is the narrower of the
-host's setting and the kit's, so a restrictive default makes the kit's
+host's setting and the Kit's, so a restrictive default makes the Kit's
 half unobservable: a read-only mount would prove nothing about whether the
-runtime honored a kit asking for read-only, or merely never offered write
+runtime honored a Kit asking for read-only, or merely never offered write
 to anyone.
 
 The host's half is judged separately: when `create` carries
 `--skills-host-mode`, the adapter **MUST** arrange that host setting for
-that sandbox — `readonly` withholds write however much a kit asked for,
+that sandbox — `readonly` withholds write however much a Kit asked for,
 and `off` withholds the store, which for a required entry means the
 runtime refuses the create, while an optional entry is skipped and the
 sandbox starts without the mount. Without this input the suite could never
@@ -135,8 +135,8 @@ addresses sandboxes only by the ids `create` returned.
 
 ### 2.5 Kit references
 
-The suite builds its fixture kits through the runtime under test, because
-a runtime that consumes kits necessarily has a way to obtain them. A
+The suite builds its fixture Kits through the runtime under test, because
+a runtime that consumes Kits necessarily has a way to obtain them. A
 `create` argument is therefore whatever reference form the runtime accepts
 — a local directory, an image reference — and an adapter **MAY** pass it
 through unchanged.
@@ -147,5 +147,5 @@ A runtime claiming conformance **SHOULD** state which capability types it
 implements and publish the suite's output. A runtime implementing a subset
 is conforming for the types it claims, provided it refuses what it cannot
 provide: silently ignoring a required capability is the one failure the
-model cannot tolerate, because the kit's author declared it precisely
-because the kit does not work without it.
+model cannot tolerate, because the Kit's author declared it precisely
+because the Kit does not work without it.

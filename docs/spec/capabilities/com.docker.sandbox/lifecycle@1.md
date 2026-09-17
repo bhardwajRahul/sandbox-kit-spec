@@ -1,10 +1,10 @@
 # `com.docker.sandbox/lifecycle@1`
 
-The kit's setup and launch behavior, executed by the engine across the
+The Kit's setup and launch behavior, executed by the engine across the
 sandbox's life: install hooks once at create, startup hooks every boot,
 files written at start, and the interactive argv tail for TTY sessions. A
 capability rather than grammar fields so a host that cannot execute them
-refuses the kit by name at preflight instead of silently never running its
+refuses the Kit by name at preflight instead of silently never running its
 setup.
 
 - **Shape**: singleton — at most one entry per descriptor.
@@ -97,14 +97,14 @@ A conforming runtime:
 - **MUST** launch interactive (TTY) sessions with the workload's launch <!-- tck: lifecycle@1/interactive-launch -->
   argv plus the `interactive` tail, and headless runs with the image
   config's `Entrypoint` + `Cmd` as-is.
-- **MUST** refuse a kit whose **required** lifecycle entry it cannot <!-- tck: lifecycle@1/required-unsatisfiable-refused -->
-  execute (a host with no hook execution), rather than composing the kit
+- **MUST** refuse a Kit whose **required** lifecycle entry it cannot <!-- tck: lifecycle@1/required-unsatisfiable-refused -->
+  execute (a host with no hook execution), rather than composing the Kit
   and silently skipping its setup.
-- **SHOULD** attribute a failing hook to its kit in errors (which kit, <!-- tck: lifecycle@1/failing-hook-attributed -->
+- **SHOULD** attribute a failing hook to its Kit in errors (which Kit, <!-- tck: lifecycle@1/failing-hook-attributed -->
   which hook index).
 
 ## Composition
 
 Install and startup lists concatenate in dependency order across the set;
-files likewise. Two kits writing the same file path is last-write-wins in
+files likewise. Two Kits writing the same file path is last-write-wins in
 composition order — authors SHOULD avoid shared paths. <!-- tck: lifecycle@1/shared-paths-avoided -->

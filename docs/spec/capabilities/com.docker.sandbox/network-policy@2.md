@@ -1,7 +1,7 @@
 # `com.docker.sandbox/network-policy@2`
 
 Phase-scoped egress policy whose entries may bound a host to particular
-HTTP requests: what the sandbox may reach while the kit's install hooks
+HTTP requests: what the sandbox may reach while the Kit's install hooks
 run, what the agent may reach in steady state, and what it may do there.
 
 - **Shape**: singleton — at most one entry per descriptor, and exclusive
@@ -35,7 +35,7 @@ which is what it means: every method and path on the hosts it allows.
 ```
 
 An entry is either a **host string** or an **object**. The string form is
-shorthand for an object naming that one host and nothing else, so a kit
+shorthand for an object naming that one host and nothing else, so a Kit
 that bounds nothing writes the list `@1` always wrote.
 
 | Field | Type | Rules |
@@ -132,13 +132,13 @@ unbounded entry exactly as it reads an `@1` host. In addition:
 Across the resolved set, allow entries union per phase and deny entries
 union per phase; deny precedence applies to the merged result.
 
-Union widens, which is what it must do: a host one kit grants unbounded
-stays unbounded however narrowly another kit bounds it, because no kit
-controls what its neighbours were granted. Narrowing what another kit
-reaches is `deny`'s job, and one kit's deny is not defeated by another
-kit's allow.
+Union widens, which is what it must do: a host one Kit grants unbounded
+stays unbounded however narrowly another Kit bounds it, because no Kit
+controls what its neighbours were granted. Narrowing what another Kit
+reaches is `deny`'s job, and one Kit's deny is not defeated by another
+Kit's allow.
 
-A kit on `@1` contributes bare entries, so mixing versions across kits
+A Kit on `@1` contributes bare entries, so mixing versions across Kits
 composes without a conversion step.
 
 ## Gate
