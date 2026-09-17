@@ -929,13 +929,35 @@ func TestAPaddedNumericUserResolves(t *testing.T) {
 // A database no source will buffer leaves the identity unjudged, which
 // is not the same as an image that declared it wrongly.
 func TestAnUnreadableAccountFileIsAWarning(t *testing.T) {
+	tooLarge := fmt.Errorf("exceeds bytes: %w", assemble.ErrFileTooLarge)
+
 	a := sbxWorkload(t)
-	a.readErrs = map[string]error{
-		"/etc/passwd": fmt.Errorf("/etc/passwd exceeds bytes: %w", assemble.ErrFileTooLarge),
-	}
+	a.readErrs = map[string]error{"/etc/passwd": tooLarge}
 	got := findings(t, a)["sbx-platform-floor"]
 	require.Equal(t, report.Warn, got.Severity)
 	require.Contains(t, got.Detail, "could not be resolved here")
+
+	// The shells are their own MUSTs, and an unjudgeable identity says
+	// nothing about whether they are there.
+	a = sbxWorkload(t)
+	a.readErrs = map[string]error{"/etc/passwd": tooLarge}
+	delete(a.files, "/bin/bash")
+	got = findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "/bin/bash is missing")
+
+	// A group file is only read for a named group, so an unreadable one
+	// cannot spoil an identity that names none.
+	a = sbxWorkload(t)
+	a.readErrs = map[string]error{"/etc/group": tooLarge}
+	require.Empty(t, findings(t, a))
+
+	a = sbxWorkload(t)
+	a.readErrs = map[string]error{"/etc/group": tooLarge}
+	a.config.Config.User = "agent:agent"
+	got = findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Warn, got.Severity)
+	require.Contains(t, got.Detail, "/etc/group is larger")
 }
 
 // The host resolves the literal value, so a stray space is a user that

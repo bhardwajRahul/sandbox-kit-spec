@@ -739,6 +739,15 @@ func resolveLinkTarget(name string, entry assemble.FileEntry) string {
 }
 
 func (a *ociArtifact) readFileAt(ctx context.Context, name string, depth, upto int) ([]byte, bool, error) {
+	return a.readFileFrom(ctx, name, name, depth, upto, upto)
+}
+
+// readFileFrom locates name within layers up to find, resolves relative
+// link targets against alias, and follows them across layers up to upto.
+// The two bounds differ only under a hard link, whose captured inode
+// comes from below it while the link it may turn out to be still
+// resolves against the composed filesystem.
+func (a *ociArtifact) readFileFrom(ctx context.Context, name, alias string, depth, find, upto int) ([]byte, bool, error) {
 	if depth > maxLinkDepth {
 		return nil, false, fmt.Errorf("%s: links nest deeper than any kit should", name)
 	}
@@ -746,7 +755,7 @@ func (a *ociArtifact) readFileAt(ctx context.Context, name string, depth, upto i
 	if err != nil || hidden {
 		return nil, false, err
 	}
-	winner, err := a.winningLayer(ctx, name, upto)
+	winner, err := a.winningLayer(ctx, name, find)
 	if err != nil || winner < 0 {
 		return nil, false, err
 	}
@@ -768,9 +777,9 @@ func (a *ociArtifact) readFileAt(ctx context.Context, name string, depth, upto i
 		}
 		if entry.Hard {
 			return a.resolveHardLink(ctx, winner, upto,
-				name, "/"+strings.TrimPrefix(entry.Link, "/"), entry.Index, depth+1)
+				alias, "/"+strings.TrimPrefix(entry.Link, "/"), entry.Index, depth+1)
 		}
-		return a.readFileAt(ctx, resolveLinkTarget(name, entry), depth+1, upto)
+		return a.readFileAt(ctx, resolveLinkTarget(alias, entry), depth+1, upto)
 	}
 	return entry.Body, entry.OK, nil
 }
@@ -810,11 +819,15 @@ func (a *ociArtifact) resolveHardLink(ctx context.Context, winner, upto int, ali
 		return a.readFileAt(ctx, resolveLinkTarget(alias, prior), depth+1, upto)
 	default:
 		// Nothing earlier in this layer: the target came from below.
-		return a.readFileAt(ctx, target, depth+1, winner-1)
+		return a.readFileFrom(ctx, target, alias, depth+1, winner-1, upto)
 	}
 }
 
 func (a *ociArtifact) hasFileAt(ctx context.Context, name string, depth, upto int) (bool, error) {
+	return a.hasFileFrom(ctx, name, name, depth, upto, upto)
+}
+
+func (a *ociArtifact) hasFileFrom(ctx context.Context, name, alias string, depth, find, upto int) (bool, error) {
 	if depth > maxLinkDepth {
 		return false, fmt.Errorf("%s: links nest deeper than any kit should", name)
 	}
@@ -822,7 +835,7 @@ func (a *ociArtifact) hasFileAt(ctx context.Context, name string, depth, upto in
 	if err != nil || hidden {
 		return false, err
 	}
-	winner, err := a.winningLayer(ctx, name, upto)
+	winner, err := a.winningLayer(ctx, name, find)
 	if err != nil || winner < 0 {
 		return false, err
 	}
@@ -844,9 +857,9 @@ func (a *ociArtifact) hasFileAt(ctx context.Context, name string, depth, upto in
 		}
 		if entry.Hard {
 			return a.hasHardLink(ctx, winner, upto,
-				name, "/"+strings.TrimPrefix(entry.Link, "/"), entry.Index, depth+1)
+				alias, "/"+strings.TrimPrefix(entry.Link, "/"), entry.Index, depth+1)
 		}
-		return a.hasFileAt(ctx, resolveLinkTarget(name, entry), depth+1, upto)
+		return a.hasFileAt(ctx, resolveLinkTarget(alias, entry), depth+1, upto)
 	}
 	return entry.OK, nil
 }
@@ -859,6 +872,10 @@ func (a *ociArtifact) FileStat(ctx context.Context, name string) (FileStat, bool
 }
 
 func (a *ociArtifact) fileStatAt(ctx context.Context, name string, depth, upto int) (FileStat, bool, error) {
+	return a.fileStatFrom(ctx, name, name, depth, upto, upto)
+}
+
+func (a *ociArtifact) fileStatFrom(ctx context.Context, name, alias string, depth, find, upto int) (FileStat, bool, error) {
 	if depth > maxLinkDepth {
 		return FileStat{}, false, fmt.Errorf("%s: links nest deeper than any kit should", name)
 	}
@@ -866,7 +883,7 @@ func (a *ociArtifact) fileStatAt(ctx context.Context, name string, depth, upto i
 	if err != nil || hidden {
 		return FileStat{}, false, err
 	}
-	winner, err := a.winningLayer(ctx, name, upto)
+	winner, err := a.winningLayer(ctx, name, find)
 	if err != nil || winner < 0 {
 		return FileStat{}, false, err
 	}
@@ -886,9 +903,9 @@ func (a *ociArtifact) fileStatAt(ctx context.Context, name string, depth, upto i
 		}
 		if entry.Hard {
 			return a.hardLinkStat(ctx, winner, upto,
-				name, "/"+strings.TrimPrefix(entry.Link, "/"), entry.Index, depth+1)
+				alias, "/"+strings.TrimPrefix(entry.Link, "/"), entry.Index, depth+1)
 		}
-		return a.fileStatAt(ctx, resolveLinkTarget(name, entry), depth+1, upto)
+		return a.fileStatAt(ctx, resolveLinkTarget(alias, entry), depth+1, upto)
 	}
 	return FileStat{Mode: entry.Mode, Uid: entry.Uid, Gid: entry.Gid, Regular: entry.Regular}, entry.OK, nil
 }
@@ -920,7 +937,7 @@ func (a *ociArtifact) hardLinkStat(ctx context.Context, winner, upto int, alias,
 	case prior.OK:
 		return a.fileStatAt(ctx, resolveLinkTarget(alias, prior), depth+1, upto)
 	default:
-		return a.fileStatAt(ctx, target, depth+1, winner-1)
+		return a.fileStatFrom(ctx, target, alias, depth+1, winner-1, upto)
 	}
 }
 
@@ -952,7 +969,7 @@ func (a *ociArtifact) hasHardLink(ctx context.Context, winner, upto int, alias, 
 	case prior.OK:
 		return a.hasFileAt(ctx, resolveLinkTarget(alias, prior), depth+1, upto)
 	default:
-		return a.hasFileAt(ctx, target, depth+1, winner-1)
+		return a.hasFileFrom(ctx, target, alias, depth+1, winner-1, upto)
 	}
 }
 

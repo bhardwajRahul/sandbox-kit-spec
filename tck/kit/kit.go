@@ -247,6 +247,47 @@ func lookupGroup(groupFile, want string) (int64, bool) {
 	return 0, false
 }
 
+// resolveImageUser reads the identity the image declares out of its
+// account databases. An unreadable database leaves the identity unjudged
+// — a warning, since the image may be fine and the checker simply cannot
+// see — while a readable one that does not resolve is the image's fault.
+func resolveImageUser(ctx context.Context, a Artifact, user string) (passwdEntry, bool, []report.Finding, error) {
+	passwd, present, err := a.ReadFile(ctx, "/etc/passwd")
+	switch {
+	case errors.Is(err, assemble.ErrFileTooLarge):
+		return passwdEntry{}, false,
+			warn("/etc/passwd is larger than a checker will read, so user %q could not be resolved here", user), nil
+	case err != nil:
+		return passwdEntry{}, false, nil, fmt.Errorf("read /etc/passwd: %w", err)
+	case !present:
+		return passwdEntry{}, false,
+			fail("no /etc/passwd, so user %q resolves to nothing the host can read before the container exists", user), nil
+	}
+
+	// Only a named group is looked up, so an unreadable group file is
+	// irrelevant to an identity that does not name one.
+	var groupFile []byte
+	if _, group, ok := strings.Cut(user, ":"); ok {
+		if _, numeric := parseID(group); !numeric {
+			groupFile, _, err = a.ReadFile(ctx, "/etc/group")
+			switch {
+			case errors.Is(err, assemble.ErrFileTooLarge):
+				return passwdEntry{}, false,
+					warn("/etc/group is larger than a checker will read, so user %q could not be resolved here", user), nil
+			case err != nil:
+				return passwdEntry{}, false, nil, fmt.Errorf("read /etc/group: %w", err)
+			}
+		}
+	}
+
+	who, resolved := lookupPasswd(string(passwd), string(groupFile), user)
+	if !resolved {
+		return who, false,
+			fail("user %q does not resolve to a uid, gid and home; the host reads those from the image, before the container exists", user), nil
+	}
+	return who, true, nil, nil
+}
+
 var checks = []check{
 	{
 		name:        "descriptor-valid",
@@ -486,32 +527,9 @@ var checks = []check{
 			if strings.TrimSpace(user) == "" {
 				return fail("image config declares no user; declaring sbx@1 asks the host to honor an identity the image does not state")
 			}
-			passwd, present, err := s.artifact.ReadFile(ctx, "/etc/passwd")
-			if errors.Is(err, assemble.ErrFileTooLarge) {
-				// Bigger than any source will buffer: the identity
-				// cannot be judged here, which is not the same as an
-				// image that declared it wrongly.
-				return warn("/etc/passwd is larger than a checker will read, so user %q could not be resolved here", user)
-			}
+			who, resolved, findings, err := resolveImageUser(ctx, s.artifact, user)
 			if err != nil {
-				return fail("read /etc/passwd: %v", err)
-			}
-			if !present {
-				return fail("no /etc/passwd, so user %q resolves to nothing the host can read before the container exists", user)
-			}
-			// Absent /etc/group only matters for a named group, which
-			// lookupPasswd rejects when it cannot resolve.
-			groupFile, _, err := s.artifact.ReadFile(ctx, "/etc/group")
-			if errors.Is(err, assemble.ErrFileTooLarge) {
-				return warn("/etc/group is larger than a checker will read, so user %q could not be resolved here", user)
-			}
-			if err != nil {
-				return fail("read /etc/group: %v", err)
-			}
-			who, resolved := lookupPasswd(string(passwd), string(groupFile), user)
-			var findings []report.Finding
-			if !resolved {
-				findings = fail("user %q does not resolve to a uid, gid and home; the host reads those from the image, before the container exists", user)
+				return fail("%v", err)
 			}
 
 			for _, shell := range []string{"/bin/sh", "/bin/bash"} {

@@ -717,6 +717,35 @@ func TestFileStatOfAHardLinkIsTheInodeItCaptured(t *testing.T) {
 		require.Equal(t, FileStat{Mode: 0o750, Uid: 7, Gid: 9, Regular: true}, st)
 	})
 
+	// The captured inode may come from a lower layer, which bounds where
+	// it is found but not where following it may lead: a symlink still
+	// resolves against the alias and the final state.
+	t.Run("a link whose target is a symlink in a lower layer", func(t *testing.T) {
+		a := buildLayeredArtifact(t,
+			func(tw *tar.Writer) {
+				require.NoError(t, tw.WriteHeader(&tar.Header{
+					Name: "usr/bin/link", Typeflag: tar.TypeSymlink, Linkname: "real",
+				}))
+				writeFile(t, tw, "usr/bin/real", 0o750, 7, 9)
+			},
+			func(tw *tar.Writer) {
+				require.NoError(t, tw.WriteHeader(&tar.Header{
+					Name: "bin/sh", Typeflag: tar.TypeLink, Linkname: "usr/bin/link",
+				}))
+			},
+			// Higher than the link: reachable when resolution continues
+			// against the final state, invisible if it stops below.
+			func(tw *tar.Writer) {
+				writeFile(t, tw, "bin/real", 0o644, 0, 0)
+			})
+		c := a.(statChecker)
+
+		st, present, err := c.FileStat(ctx, "/bin/sh")
+		require.NoError(t, err)
+		require.True(t, present)
+		require.Equal(t, FileStat{Mode: 0o644, Regular: true}, st)
+	})
+
 	t.Run("a same-layer rewrite after the link", func(t *testing.T) {
 		a := buildLayerArtifact(t, func(tw *tar.Writer) {
 			writeFile(t, tw, "bin/real", 0o750, 7, 9)
