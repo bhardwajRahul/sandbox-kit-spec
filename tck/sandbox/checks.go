@@ -374,22 +374,17 @@ var checks = []check{
 					"declared file holds %q; the arg reference should have expanded to %q", body, "hello")}
 			}
 
-			// Whose file it is, not only that it is there: a runtime
-			// writing declared files as root puts them off the surface
-			// the capability grants, and the content reads the same
+			// Where it landed, not only that it arrived: a declared file
+			// the agent cannot write is off the trust plane this
+			// capability stays on, and its content reads the same
 			// either way.
-			owner, f := execOutput(ctx, e, id, "stat", "-c", "%u", "/home/agent/.config/kit-written")
-			if f != nil {
-				return []report.Finding{*f}
+			res, err := e.Adapter.Exec(ctx, id, "test", "-w", "/home/agent/.config/kit-written")
+			if err != nil {
+				return []report.Finding{report.Failf("probe the declared file: %v", err)}
 			}
-			agent, f := execOutput(ctx, e, id, "id", "-u")
-			if f != nil {
-				return []report.Finding{*f}
-			}
-			if strings.TrimSpace(owner) != strings.TrimSpace(agent) {
+			if res.ExitCode != 0 {
 				return []report.Finding{report.Failf(
-					"declared file is owned by uid %s while the agent runs as uid %s; files are written on the agent's write surface, and a path only root can write is an install hook's job",
-					strings.TrimSpace(owner), strings.TrimSpace(agent))}
+					"the declared file is not writable by the agent; whichever user a runtime writes as, a file entry lands on the agent's write surface — a path only root can write is an install hook's job")}
 			}
 			return nil
 		},

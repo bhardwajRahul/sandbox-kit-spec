@@ -84,11 +84,13 @@ A conforming runtime:
   restart, host reboot).
 - Hook authors MUST make `startup` hooks idempotent: every boot means <!-- tck: lifecycle@1/startup-idempotent-authors -->
   every boot.
-- **MUST** write `files` at start, on the agent's write surface: a file <!-- tck: lifecycle@1/files-written -->
-  entry carries no `user:`, and this capability grants no permission
-  surface precisely because its writes stay on the entrypoint's trust
-  plane. A path only root can write is an install hook's job, which is
-  what `install[].user` is for.
+- **MUST** write `files` at start, leaving each one writable by the <!-- tck: lifecycle@1/files-written -->
+  agent: a file entry carries no `user:`, and this capability grants no
+  permission surface precisely because its writes stay on the
+  entrypoint's trust plane. Which user the runtime writes as is
+  `default-users` below; whichever it picks, a file the agent cannot
+  write has landed off that plane, and a path only root can write is an
+  install hook's job — what `install[].user` is for.
 - **MUST** honor each file's `overwrite` declaration: an existing file <!-- tck: lifecycle@1/files-overwrite-honored -->
   stays unless the entry says otherwise.
 - **MUST** write `files` before the entrypoint runs, so the agent never <!-- tck: lifecycle@1/files-before-entrypoint -->

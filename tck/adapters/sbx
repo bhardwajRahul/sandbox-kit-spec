@@ -293,15 +293,23 @@ EOF
 # is the one the fixture declares, and the host is the one its network
 # policy allows. Best effort by design — the type is unclaimed by default,
 # and a runtime that cannot bind credentials should not claim it.
+# What has to hold before anything is written to the host. Checked first
+# because seeding leaves state behind, and a die after that would leave
+# it with nothing to take it back.
+check_prerequisites() {
+	if [ -n "${KIT_TCK_BOUND_SECRET:-}" ] && claims com.docker.sandbox/credential@1; then
+		# Binding writes a real secret into a real store under a name a
+		# user may keep one under. An app of its own is what makes that
+		# the suite's business rather than the default installation's.
+		[ -n "${SBX_TCK_APP_NAME:-}" ] ||
+			die "credential@1 binds the fixture's secret into the app's secret store; run under SBX_TCK_APP_NAME so the default installation's is left alone"
+	fi
+}
+
 bind_credential() {
 	local secret="${KIT_TCK_BOUND_SECRET:-}"
 	[ -n "$secret" ] || return 0
 	claims com.docker.sandbox/credential@1 || return 0
-	# This writes a real secret into a real store under a name a user may
-	# keep one under. An app of its own is what makes that the suite's
-	# business rather than the default installation's.
-	[ -n "${SBX_TCK_APP_NAME:-}" ] ||
-		die "credential@1 binds the fixture's secret into the app's secret store; run under SBX_TCK_APP_NAME so the default installation's is left alone"
 	local bound
 	# Captured for the same reason claims() is: a short-circuiting grep
 	# can leave the producer on a SIGPIPE that pipefail reads as no
@@ -349,6 +357,15 @@ kit_reference() {
 	esac
 }
 
+# Whether the daemon positively says a sandbox is not there. A listing it
+# could not produce is not an answer: unreachable is unknown, and unknown
+# is not absent.
+absent() {
+	local listing
+	listing="$(run_sbx ls --json 2>/dev/null)" || return 1
+	! grep -qF "\"$1\"" <<<"$listing"
+}
+
 # A name sbx accepts (letters, digits, hyphens) that says where it came
 # from, so a sandbox the suite could not remove is recognizable on sight.
 new_id() {
@@ -375,12 +392,7 @@ create_sandbox() {
 		# daemon may have made the sandbox and the CLI failed after it.
 		# The name is the adapter's own, so asking for its removal
 		# cannot reach anything of the user's.
-		if run_sbx inspect "$id" >/dev/null 2>&1 && ! run_sbx rm --force "$id" >/dev/null 2>&1; then
-			# Still there, so the record stays with it: a sandbox that
-			# outlived its create may still be reading what this run
-			# seeded, and no id reached the suite to remove it later.
-			echo "sbx-adapter: $id survived a failed create and could not be removed; its record and the host state it may be using are left in place" >&2
-		else
+		if run_sbx rm --force "$id" >/dev/null 2>&1 || absent "$id"; then
 			# §2.4 has the suite address only the ids create returned, so
 			# a create that returned none leaves nothing to recreate or
 			# remove and its bookkeeping goes with it.
@@ -389,6 +401,12 @@ create_sandbox() {
 			# arranged on the host has to be taken back here or not at
 			# all.
 			release_host_state
+		else
+			# Neither removed nor known to be gone — a daemon that
+			# cannot answer says nothing about whether the sandbox is
+			# there. The record stays with it, and so does the host
+			# state it may still be reading.
+			echo "sbx-adapter: $id survived a failed create and could not be removed; its record and the host state it may be using are left in place" >&2
 		fi
 		if grep -Eqi "$refusal_pattern" <<<"$output"; then
 			exit 2
@@ -408,7 +426,6 @@ create_sandbox() {
 
 verb="${1:-}"
 shift || true
-prepare_state
 
 case "$verb" in
 capabilities)
@@ -416,6 +433,8 @@ capabilities)
 	;;
 
 create)
+	# Only the verbs that keep records need one.
+	prepare_state
 	kits=()
 	kit_args=()
 	skills_mode=""
@@ -448,6 +467,7 @@ create)
 	# rather than inherited.
 	[ -n "$skills_mode" ] || skills_mode="readwrite"
 
+	check_prerequisites
 	seed_skill_store
 	bind_credential
 
@@ -498,6 +518,8 @@ start)
 	;;
 
 recreate)
+	# Only the verbs that keep records need one.
+	prepare_state
 	id="$1"
 	[ -f "$state/$id.create" ] ||
 		die "no create arguments remembered for $id; recreate needs the composition the sandbox was made from"
@@ -513,6 +535,8 @@ recreate)
 	;;
 
 rm)
+	# Only the verbs that keep records need one.
+	prepare_state
 	id="$1"
 	# --force because the contract forbids interactive input, and the
 	# suite removes sandboxes that may still be in use. The bookkeeping
