@@ -128,6 +128,11 @@ create)
   # closes afterwards.
   printf '%s' "reachable" >"$dir/install-egress"
   printf '%s' "closed" >"$dir/phase"
+  # Before the hook environment is written, because that is where the
+  # composed identity is first observed.
+  for kit in "${kits[@]}"; do
+    if [[ "$kit" == *sbx-workload* ]]; then : >"$dir/sbx"; fi
+  done
   # A hook sees its declared env and the platform baseline, nothing else.
   {
     echo "PATH=/usr/bin"
@@ -172,7 +177,6 @@ create)
     if [[ "$kit" == *credential-inject-only* ]]; then : >"$dir/inject-only"; fi
     if [[ "$kit" == *credential-inject-only-plain* ]]; then : >"$dir/inject-only-plain"; fi
     if [[ "$kit" == *credential-inject-only-install* ]]; then : >"$dir/inject-only-install"; fi
-    if [[ "$kit" == *sbx-workload* ]]; then : >"$dir/sbx"; fi
   done
   # The host's shared store is one directory at state level, seeded once
   # with the contract's marker. Every declared path is a view of it — a

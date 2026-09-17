@@ -712,6 +712,28 @@ var checks = []check{
 						want.what, want.expect, strings.TrimSpace(got)))
 				}
 			}
+
+			// The requirement covers hooks too, and a runtime can exec as
+			// one identity while running its own hooks as another. Only
+			// where the host claims lifecycle: without it there are no
+			// hooks to observe.
+			if !e.claims(capLifecycle) {
+				return findings
+			}
+			hookID, hookCleanup, err := e.sandbox(ctx, []string{fixtureSbxWorkload, fixtureHooks}, nil)
+			if err != nil {
+				return append(findings, report.Failf("create with hooks: %v", err))
+			}
+			defer hookCleanup()
+
+			hookEnv, f := execOutput(ctx, e, hookID, "cat", "/var/tmp/hook.env")
+			if f != nil {
+				return append(findings, *f)
+			}
+			if got := envVars(hookEnv)["HOME"]; got != "/home/sbxagent" {
+				findings = append(findings, report.Failf(
+					"the image declares home /home/sbxagent, but hooks ran with HOME %q; the identity is read from the image, not assumed", got))
+			}
 			return findings
 		},
 	},

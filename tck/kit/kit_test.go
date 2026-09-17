@@ -22,10 +22,10 @@ type fake struct {
 	layers      []ocispec.Descriptor
 	layersKnown bool
 	files       map[string][]byte
-	// modes overrides the permission bits a path reports; a file absent
-	// from it reads as executable, which is what the shells an image
-	// ships are.
-	modes    map[string]int64
+	// stats overrides the permission metadata a path reports; a file
+	// absent from it reads as root-owned and world-executable, which is
+	// what the shells an image ships are.
+	stats    map[string]FileStat
 	indexAnn map[string]string
 	hasIndex bool
 	// kits are the artifacts a merged set lists, keyed by reference,
@@ -53,14 +53,14 @@ func (f *fake) ReadFile(_ context.Context, name string) ([]byte, bool, error) {
 	return body, ok, nil
 }
 
-func (f *fake) FileMode(_ context.Context, name string) (int64, bool, error) {
+func (f *fake) FileStat(_ context.Context, name string) (FileStat, bool, error) {
 	if _, ok := f.files[name]; !ok {
-		return 0, false, nil
+		return FileStat{}, false, nil
 	}
-	if mode, ok := f.modes[name]; ok {
-		return mode, true, nil
+	if st, ok := f.stats[name]; ok {
+		return st, true, nil
 	}
-	return 0o755, true, nil
+	return FileStat{Mode: 0o755}, true, nil
 }
 
 func (f *fake) StagedStems(context.Context) ([]string, error) {
@@ -857,10 +857,43 @@ func TestAMalformedPasswdRowDoesNotResolve(t *testing.T) {
 // then fails at the first hook.
 func TestTheFloorNeedsTheShellsToBeExecutable(t *testing.T) {
 	a := sbxWorkload(t)
-	a.modes = map[string]int64{"/bin/bash": 0o644}
+	a.stats = map[string]FileStat{"/bin/bash": {Mode: 0o644}}
 	got := findings(t, a)["sbx-platform-floor"]
 	require.Equal(t, report.Fail, got.Severity)
 	require.Contains(t, got.Detail, "not executable")
+}
+
+// Which bit applies depends on who the image says will run it: bits that
+// leave the declared user out are no more usable than none at all.
+func TestTheFloorJudgesTheShellBitsAgainstTheDeclaredUser(t *testing.T) {
+	// Root-owned and root-only: the fixture's user is neither.
+	a := sbxWorkload(t)
+	a.stats = map[string]FileStat{"/bin/bash": {Mode: 0o100}}
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "not executable by agent")
+
+	// The same bits, reached through the group the user belongs to.
+	a = sbxWorkload(t)
+	a.stats = map[string]FileStat{"/bin/bash": {Mode: 0o010, Gid: 1000}}
+	require.Empty(t, findings(t, a))
+
+	// Root bypasses the bits entirely.
+	a = sbxWorkload(t)
+	a.config.Config.User = "root"
+	a.files["/etc/passwd"] = []byte("root:x:0:0:root:/root:/bin/bash\n")
+	a.stats = map[string]FileStat{"/bin/bash": {Mode: 0o100}}
+	require.Empty(t, findings(t, a))
+}
+
+// uid_t is 32-bit unsigned, so digits beyond it name an identity no host
+// can hold.
+func TestAnOutOfRangeIdDoesNotResolve(t *testing.T) {
+	a := sbxWorkload(t)
+	a.files["/etc/passwd"] = []byte("agent:x:99999999999999999999:1000::/home/agent:/bin/bash\n")
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
 }
 
 // Bash resolves a relative BASH_ENV from wherever the agent runs, which

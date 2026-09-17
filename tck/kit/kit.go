@@ -23,6 +23,8 @@ import (
 	"github.com/docker/sandbox-kit-spec/v3/resolve"
 	"github.com/docker/sandbox-kit-spec/v3/spec"
 	"github.com/docker/sandbox-kit-spec/v3/tck/report"
+	"math"
+	"strconv"
 )
 
 // StagedKitRoot is where every kit stages its own sources.
@@ -157,19 +159,27 @@ func warn(format string, args ...any) []report.Finding {
 // it must honor: the uid it execs as, the gid it chowns to, the login name
 // commands run under, and the home its file writes work from.
 type passwdEntry struct {
-	name, uid, gid, home string
+	name, home string
+	uid, gid   int64
 }
 
-func isNumeric(s string) bool {
+// parseID reads a uid or gid the way a runtime must be able to hold one:
+// uid_t and gid_t are 32-bit unsigned, so digits outside that range name
+// an identity no host can honor.
+func parseID(s string) (int64, bool) {
 	if s == "" {
-		return false
+		return 0, false
 	}
 	for _, r := range s {
 		if r < '0' || r > '9' {
-			return false
+			return 0, false
 		}
 	}
-	return true
+	id, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || id > math.MaxUint32 {
+		return 0, false
+	}
+	return id, true
 }
 
 // lookupPasswd resolves an image config user — a name, a uid, or either
@@ -180,22 +190,25 @@ func lookupPasswd(passwd, group, user string) (passwdEntry, bool) {
 	want, wantGroup, hasGroup := strings.Cut(user, ":")
 	// A runtime reads a numeric spelling as a uid, so resolution has to
 	// as well: a row merely named "1000" is not uid 1000.
-	numeric := isNumeric(want)
+	_, numeric := parseID(want)
 	for _, line := range strings.Split(passwd, "\n") {
 		fields := strings.Split(strings.TrimSpace(line), ":")
 		if len(fields) < 6 {
 			continue
 		}
-		e := passwdEntry{name: fields[0], uid: fields[2], gid: fields[3], home: fields[5]}
-		if (numeric && e.uid != want) || (!numeric && e.name != want) {
+		if (numeric && fields[2] != want) || (!numeric && fields[0] != want) {
 			continue
 		}
-		// Matching is not resolving: a row whose uid or gid is not a
-		// number, or whose home is not an absolute path, leaves the host
-		// without the values this capability promises it can read.
-		if e.name == "" || !isNumeric(e.uid) || !isNumeric(e.gid) || !strings.HasPrefix(e.home, "/") {
+		// Matching is not resolving: a row with no login name, whose uid
+		// or gid is not an id a host can hold, or whose home is not an
+		// absolute path, leaves the host without the values this
+		// capability promises it can read.
+		uid, uidOK := parseID(fields[2])
+		gid, gidOK := parseID(fields[3])
+		if fields[0] == "" || !uidOK || !gidOK || !strings.HasPrefix(fields[5], "/") {
 			return passwdEntry{}, false
 		}
+		e := passwdEntry{name: fields[0], home: fields[5], uid: uid, gid: gid}
 		if !hasGroup {
 			return e, true
 		}
@@ -212,21 +225,18 @@ func lookupPasswd(passwd, group, user string) (passwdEntry, bool) {
 }
 
 // lookupGroup resolves the group half of an image config user to a gid.
-func lookupGroup(groupFile, want string) (string, bool) {
-	if isNumeric(want) {
-		return want, true
+func lookupGroup(groupFile, want string) (int64, bool) {
+	if gid, ok := parseID(want); ok {
+		return gid, true
 	}
 	for _, line := range strings.Split(groupFile, "\n") {
 		fields := strings.Split(strings.TrimSpace(line), ":")
 		if len(fields) < 3 || fields[0] != want {
 			continue
 		}
-		if !isNumeric(fields[2]) {
-			return "", false
-		}
-		return fields[2], true
+		return parseID(fields[2])
 	}
-	return "", false
+	return 0, false
 }
 
 var checks = []check{
@@ -454,51 +464,58 @@ var checks = []check{
 				return fail("only a workload can carry the platform floor: a mixin's image config never becomes the composed image's, so nothing a host reads would come from here")
 			}
 
-			var findings []report.Finding
-			for _, shell := range []string{"/bin/sh", "/bin/bash"} {
-				present, err := hasFile(ctx, s.artifact, shell)
-				if err != nil {
-					return fail("read %s: %v", shell, err)
-				}
-				if !present {
-					findings = append(findings, fail("%s is missing; the host runs hooks through sh and launches the agent under bash", shell)...)
-					continue
-				}
-				// Occupying the path is not being a shell: a
-				// non-executable placeholder resolves here and then fails
-				// at the first hook.
-				exec, known, err := executable(ctx, s.artifact, shell)
-				if err != nil {
-					return fail("read %s mode: %v", shell, err)
-				}
-				if known && !exec {
-					findings = append(findings, fail("%s is not executable; the host runs hooks through sh and launches the agent under bash", shell)...)
-				}
-			}
-
+			// The identity comes first: which execute bit applies to a
+			// shell depends on who the image says will run it.
 			cfg, err := s.artifact.Config(ctx)
 			if err != nil {
-				return append(findings, fail("read image config: %v", err)...)
+				return fail("read image config: %v", err)
 			}
 			user := strings.TrimSpace(cfg.Config.User)
 			if user == "" {
-				return append(findings, fail("image config declares no user; declaring sbx@1 asks the host to honor an identity the image does not state")...)
+				return fail("image config declares no user; declaring sbx@1 asks the host to honor an identity the image does not state")
 			}
 			passwd, present, err := s.artifact.ReadFile(ctx, "/etc/passwd")
 			if err != nil {
-				return append(findings, fail("read /etc/passwd: %v", err)...)
+				return fail("read /etc/passwd: %v", err)
 			}
 			if !present {
-				return append(findings, fail("no /etc/passwd, so user %q resolves to nothing the host can read before the container exists", user)...)
+				return fail("no /etc/passwd, so user %q resolves to nothing the host can read before the container exists", user)
 			}
 			// Absent /etc/group only matters for a named group, which
 			// lookupPasswd rejects when it cannot resolve.
 			groupFile, _, err := s.artifact.ReadFile(ctx, "/etc/group")
 			if err != nil {
-				return append(findings, fail("read /etc/group: %v", err)...)
+				return fail("read /etc/group: %v", err)
 			}
-			if _, ok := lookupPasswd(string(passwd), string(groupFile), user); !ok {
-				return append(findings, fail("user %q does not resolve to a uid, gid and home; the host reads those from the image, before the container exists", user)...)
+			who, resolved := lookupPasswd(string(passwd), string(groupFile), user)
+			var findings []report.Finding
+			if !resolved {
+				findings = fail("user %q does not resolve to a uid, gid and home; the host reads those from the image, before the container exists", user)
+			}
+
+			for _, shell := range []string{"/bin/sh", "/bin/bash"} {
+				present, err := hasFile(ctx, s.artifact, shell)
+				if err != nil {
+					return append(findings, fail("read %s: %v", shell, err)...)
+				}
+				if !present {
+					findings = append(findings, fail("%s is missing; the host runs hooks through sh and launches the agent under bash", shell)...)
+					continue
+				}
+				if !resolved {
+					continue
+				}
+				// Occupying the path is not being a shell the declared
+				// user can run: a placeholder, or a binary whose bits
+				// leave this identity out, resolves here and then fails
+				// at the first hook.
+				exec, known, err := executableBy(ctx, s.artifact, shell, who)
+				if err != nil {
+					return append(findings, fail("read %s permissions: %v", shell, err)...)
+				}
+				if known && !exec {
+					findings = append(findings, fail("%s is not executable by %s, the user the image declares; the host runs hooks through sh and launches the agent under bash", shell, user)...)
+				}
 			}
 			return findings
 		},
@@ -926,25 +943,43 @@ type fileChecker interface {
 	HasFile(ctx context.Context, name string) (bool, error)
 }
 
-// modeChecker is a source that can report a path's permission bits. A
-// source that cannot leaves mode-dependent judgments unmade rather than
-// guessed.
-type modeChecker interface {
-	FileMode(ctx context.Context, name string) (int64, bool, error)
+// FileStat is a path's permission metadata: which execute bit applies
+// depends on who the image says will run it.
+type FileStat struct {
+	Mode     int64
+	Uid, Gid int
 }
 
-// executable reports whether a path is executable, and whether the source
-// could tell.
-func executable(ctx context.Context, a Artifact, name string) (exec, known bool, err error) {
-	c, ok := a.(modeChecker)
+// statChecker is a source that can report that metadata. A source that
+// cannot leaves permission judgments unmade rather than guessed.
+type statChecker interface {
+	FileStat(ctx context.Context, name string) (FileStat, bool, error)
+}
+
+// executableBy reports whether the identity the image declares can
+// execute a path, and whether the source could tell. The file's own bits
+// only: root bypasses them, and whether an ancestor directory can be
+// traversed is not something the layer inventory models.
+func executableBy(ctx context.Context, a Artifact, name string, who passwdEntry) (exec, known bool, err error) {
+	c, ok := a.(statChecker)
 	if !ok {
 		return false, false, nil
 	}
-	mode, present, err := c.FileMode(ctx, name)
+	st, present, err := c.FileStat(ctx, name)
 	if err != nil || !present {
 		return false, false, err
 	}
-	return mode&0o111 != 0, true, nil
+	if who.uid == 0 {
+		return st.Mode&0o111 != 0, true, nil
+	}
+	switch {
+	case int64(st.Uid) == who.uid:
+		return st.Mode&0o100 != 0, true, nil
+	case int64(st.Gid) == who.gid:
+		return st.Mode&0o010 != 0, true, nil
+	default:
+		return st.Mode&0o001 != 0, true, nil
+	}
 }
 
 func hasFile(ctx context.Context, a Artifact, name string) (bool, error) {

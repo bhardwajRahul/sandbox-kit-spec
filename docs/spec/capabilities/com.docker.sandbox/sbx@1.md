@@ -29,15 +29,15 @@ answers to one question, and one of them would go stale.
 
 A workload declaring this type:
 
-- **MUST** ship an executable POSIX shell at `/bin/sh`. The host runs <!-- tck: sbx@1/posix-shell-present -->
-  hooks, install steps, and its own idle process through it. Occupying
-  the path is not enough: a file without an execute bit resolves and then
-  fails at the first hook. A link counts when what it resolves to is
-  executable.
-- **MUST** ship an executable `bash` at `/bin/bash`. The agent is <!-- tck: sbx@1/bash-present -->
-  launched under bash specifically, because bash is what sources
-  `BASH_ENV`; a POSIX shell would start the agent without its persistent
-  environment.
+- **MUST** ship a POSIX shell at `/bin/sh` that the declared user can <!-- tck: sbx@1/posix-shell-present -->
+  execute. The host runs hooks, install steps, and its own idle process
+  through it. Occupying the path is not enough, and neither are bits that
+  leave the declared user out: either resolves here and then fails at the
+  first hook. A link counts when what it resolves to is executable.
+- **MUST** ship a `bash` at `/bin/bash` the declared user can execute. <!-- tck: sbx@1/bash-present -->
+  The agent is launched under bash specifically, because bash is what
+  sources `BASH_ENV`; a POSIX shell would start the agent without its
+  persistent environment.
 - **MUST** declare a non-empty `user` in its image config. An image that <!-- tck: sbx@1/image-declares-user -->
   declares none leaves the host nothing to honor, and the host would be
   back to assuming.
@@ -50,8 +50,9 @@ A workload declaring this type:
   Resolution follows what a runtime does with the spelling: a numeric
   user is a uid rather than a login name, a `user:group` suffix is the
   gid that applies instead of the passwd primary and resolves against
-  `/etc/group` when it is named, and a row whose uid or gid is not
-  numeric or whose home is not absolute has not resolved anything.
+  `/etc/group` when it is named, and a row with no login name, a uid or
+  gid outside the 32-bit range a host can hold, or a home that is not
+  absolute has not resolved anything.
 - **SHOULD** name the file by absolute path in `BASH_ENV` and ship it. <!-- tck: sbx@1/bash-env-names-a-shipped-file -->
   Without it the agent starts with whatever the image config carries and
   nothing the sandbox adds later, and a relative value resolves against

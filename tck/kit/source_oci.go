@@ -848,76 +848,76 @@ func (a *ociArtifact) hasFileAt(ctx context.Context, name string, depth, upto in
 	return entry.OK, nil
 }
 
-// FileMode is the permission bits the composed filesystem exposes at a
-// path, following links to whatever finally answers for it, and false
+// FileStat is the permission metadata the composed filesystem exposes at
+// a path, following links to whatever finally answers for it, and false
 // where nothing does.
-func (a *ociArtifact) FileMode(ctx context.Context, name string) (int64, bool, error) {
-	return a.fileModeAt(ctx, name, 0, len(a.manifest.Layers)-1)
+func (a *ociArtifact) FileStat(ctx context.Context, name string) (FileStat, bool, error) {
+	return a.fileStatAt(ctx, name, 0, len(a.manifest.Layers)-1)
 }
 
-func (a *ociArtifact) fileModeAt(ctx context.Context, name string, depth, upto int) (int64, bool, error) {
+func (a *ociArtifact) fileStatAt(ctx context.Context, name string, depth, upto int) (FileStat, bool, error) {
 	if depth > maxLinkDepth {
-		return 0, false, fmt.Errorf("%s: links nest deeper than any kit should", name)
+		return FileStat{}, false, fmt.Errorf("%s: links nest deeper than any kit should", name)
 	}
 	name, hidden, err := a.resolveAncestors(ctx, name, depth, upto)
 	if err != nil || hidden {
-		return 0, false, err
+		return FileStat{}, false, err
 	}
 	winner, err := a.winningLayer(ctx, name, upto)
 	if err != nil || winner < 0 {
-		return 0, false, err
+		return FileStat{}, false, err
 	}
 	layer := a.manifest.Layers[winner]
 	rc, err := a.fetcher.Fetch(ctx, layer)
 	if err != nil {
-		return 0, false, fmt.Errorf("fetch layer %s: %w", layer.Digest, err)
+		return FileStat{}, false, fmt.Errorf("fetch layer %s: %w", layer.Digest, err)
 	}
 	defer func() { _ = rc.Close() }()
 	entry, err := assemble.StatFileEntry(rc, name)
 	if err != nil {
-		return 0, false, err
+		return FileStat{}, false, err
 	}
 	if entry.Linked {
 		if entry.Link == "" {
-			return 0, false, nil
+			return FileStat{}, false, nil
 		}
 		if entry.Hard {
-			return a.hardLinkMode(ctx, winner, upto,
+			return a.hardLinkStat(ctx, winner, upto,
 				"/"+strings.TrimPrefix(entry.Link, "/"), entry.Index, depth+1)
 		}
-		return a.fileModeAt(ctx, resolveLinkTarget(name, entry), depth+1, upto)
+		return a.fileStatAt(ctx, resolveLinkTarget(name, entry), depth+1, upto)
 	}
-	return entry.Mode, entry.OK, nil
+	return FileStat{Mode: entry.Mode, Uid: entry.Uid, Gid: entry.Gid}, entry.OK, nil
 }
 
-// hardLinkMode is hasHardLink reporting the target's mode rather than
+// hardLinkStat is hasHardLink reporting the target's metadata rather than
 // only that it exists.
-func (a *ociArtifact) hardLinkMode(ctx context.Context, winner, upto int, target string, before, depth int) (int64, bool, error) {
+func (a *ociArtifact) hardLinkStat(ctx context.Context, winner, upto int, target string, before, depth int) (FileStat, bool, error) {
 	if depth > maxLinkDepth {
-		return 0, false, fmt.Errorf("%s: links nest deeper than any kit should", target)
+		return FileStat{}, false, fmt.Errorf("%s: links nest deeper than any kit should", target)
 	}
 	layer := a.manifest.Layers[winner]
 	rc, err := a.fetcher.Fetch(ctx, layer)
 	if err != nil {
-		return 0, false, fmt.Errorf("fetch layer %s: %w", layer.Digest, err)
+		return FileStat{}, false, fmt.Errorf("fetch layer %s: %w", layer.Digest, err)
 	}
 	defer func() { _ = rc.Close() }()
 	prior, err := assemble.StatFileEntryBefore(rc, target, before)
 	if err != nil {
-		return 0, false, err
+		return FileStat{}, false, err
 	}
 	switch {
 	case prior.OK && !prior.Linked:
-		return prior.Mode, true, nil
+		return FileStat{Mode: prior.Mode, Uid: prior.Uid, Gid: prior.Gid}, true, nil
 	case prior.OK && prior.Link == "":
-		return 0, false, nil
+		return FileStat{}, false, nil
 	case prior.OK && prior.Hard:
-		return a.hardLinkMode(ctx, winner, upto,
+		return a.hardLinkStat(ctx, winner, upto,
 			"/"+strings.TrimPrefix(prior.Link, "/"), prior.Index, depth+1)
 	case prior.OK:
-		return a.fileModeAt(ctx, resolveLinkTarget(target, prior), depth+1, upto)
+		return a.fileStatAt(ctx, resolveLinkTarget(target, prior), depth+1, upto)
 	default:
-		return a.fileModeAt(ctx, target, depth+1, winner-1)
+		return a.fileStatAt(ctx, target, depth+1, winner-1)
 	}
 }
 

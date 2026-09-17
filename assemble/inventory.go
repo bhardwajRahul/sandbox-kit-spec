@@ -164,10 +164,12 @@ type FileEntry struct {
 	// Index is the position of this (final) entry within its layer, which
 	// is what bounds a hard link's target lookup.
 	Index int
-	// Mode is the entry's permission bits. A link's own mode says
-	// nothing; follow the target and read that one's.
-	Mode int64
-	OK   bool
+	// Mode is the entry's permission bits, and Uid and Gid its owner:
+	// which bits apply depends on who is asking. A link's own metadata
+	// says nothing; follow the target and read that one's.
+	Mode     int64
+	Uid, Gid int
+	OK       bool
 }
 
 // ReadFileEntry returns one path's final entry from a layer blob,
@@ -245,10 +247,10 @@ func readEntry(tr *tar.Reader, path string, withBody bool, before int) (FileEntr
 		}
 		switch hdr.Typeflag {
 		case tar.TypeSymlink, tar.TypeLink:
-			entry = FileEntry{Linked: true, Link: hdr.Linkname, Hard: hdr.Typeflag == tar.TypeLink, Index: entryIndex, Mode: hdr.Mode, OK: true}
+			entry = FileEntry{Linked: true, Link: hdr.Linkname, Hard: hdr.Typeflag == tar.TypeLink, Index: entryIndex, Mode: hdr.Mode, Uid: hdr.Uid, Gid: hdr.Gid, OK: true}
 		default:
 			if !withBody {
-				entry = FileEntry{Index: entryIndex, Mode: hdr.Mode, OK: true}
+				entry = FileEntry{Index: entryIndex, Mode: hdr.Mode, Uid: hdr.Uid, Gid: hdr.Gid, OK: true}
 				continue
 			}
 			// Layers are untrusted input, and a tiny compressed layer can
@@ -263,7 +265,7 @@ func readEntry(tr *tar.Reader, path string, withBody bool, before int) (FileEntr
 			if len(body) > maxFileEntryBytes {
 				return FileEntry{}, fmt.Errorf("%s exceeds %d bytes; no staged descriptor is that large", path, maxFileEntryBytes)
 			}
-			entry = FileEntry{Body: body, Index: entryIndex, Mode: hdr.Mode, OK: true}
+			entry = FileEntry{Body: body, Index: entryIndex, Mode: hdr.Mode, Uid: hdr.Uid, Gid: hdr.Gid, OK: true}
 		}
 	}
 }

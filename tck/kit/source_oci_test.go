@@ -602,12 +602,13 @@ func buildLayerArtifact(t *testing.T, add func(tw *tar.Writer)) Artifact {
 	return artifact
 }
 
-// A shell is usually a link to whatever implements it, so the mode that
-// decides whether it can be executed is the target's, not the link's.
-func TestFileModeFollowsLinksToTheTarget(t *testing.T) {
+// A shell is usually a link to whatever implements it, so the metadata
+// that decides whether it can be executed is the target's, not the
+// link's.
+func TestFileStatFollowsLinksToTheTarget(t *testing.T) {
 	a := buildLayerArtifact(t, func(tw *tar.Writer) {
 		require.NoError(t, tw.WriteHeader(&tar.Header{
-			Name: "bin/busybox", Typeflag: tar.TypeReg, Mode: 0o755, Size: 3,
+			Name: "bin/busybox", Typeflag: tar.TypeReg, Mode: 0o750, Uid: 7, Gid: 9, Size: 3,
 		}))
 		_, err := tw.Write([]byte("elf"))
 		require.NoError(t, err)
@@ -618,20 +619,20 @@ func TestFileModeFollowsLinksToTheTarget(t *testing.T) {
 			Name: "bin/placeholder", Typeflag: tar.TypeReg, Mode: 0o644, Size: 0,
 		}))
 	})
-	c, ok := a.(modeChecker)
+	c, ok := a.(statChecker)
 	require.True(t, ok)
 
-	mode, present, err := c.FileMode(context.Background(), "/bin/sh")
+	st, present, err := c.FileStat(context.Background(), "/bin/sh")
 	require.NoError(t, err)
 	require.True(t, present)
-	require.NotZero(t, mode&0o111, "the link's target is executable")
+	require.Equal(t, FileStat{Mode: 0o750, Uid: 7, Gid: 9}, st, "the link's target answers")
 
-	mode, present, err = c.FileMode(context.Background(), "/bin/placeholder")
+	st, present, err = c.FileStat(context.Background(), "/bin/placeholder")
 	require.NoError(t, err)
 	require.True(t, present)
-	require.Zero(t, mode&0o111)
+	require.Zero(t, st.Mode&0o111)
 
-	_, present, err = c.FileMode(context.Background(), "/bin/absent")
+	_, present, err = c.FileStat(context.Background(), "/bin/absent")
 	require.NoError(t, err)
 	require.False(t, present)
 }
