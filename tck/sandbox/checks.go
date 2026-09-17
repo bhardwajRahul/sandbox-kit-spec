@@ -365,7 +365,7 @@ var checks = []check{
 			}
 			defer cleanup()
 
-			body, f := execOutput(ctx, e, id, "cat", "/etc/kit-written")
+			body, f := execOutput(ctx, e, id, "cat", "/home/agent/.config/kit-written")
 			if f != nil {
 				return []report.Finding{*f}
 			}

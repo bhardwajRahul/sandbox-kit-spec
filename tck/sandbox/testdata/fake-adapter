@@ -269,7 +269,7 @@ exec)
     /var/tmp/hook.env) cat "$dir/hook.env" ;;
     /var/tmp/skills-at-install) cat "$dir/skills-at-install" ;;
     /var/tmp/skills-rw-at-install) cat "$dir/skills-rw-at-install" ;;
-    /etc/kit-written) cat "$dir/kit-written" ;;
+    /home/agent/.config/kit-written) cat "$dir/kit-written" ;;
     /home/agent/AGENTS.md) cat "$dir/profile" ;;
     /home/sbxagent/AGENTS.md)
       if [ -f "$dir/sbx" ] && [ "$broken" != "workspace-at-fixed-path" ]; then

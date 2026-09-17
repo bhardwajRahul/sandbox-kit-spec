@@ -12,5 +12,9 @@ capabilities:
   - type: com.docker.sandbox/lifecycle@1
     config:
       files:
-        - path: /etc/kit-written
+        # On the agent's write surface, which is where a declared file
+        # belongs: this capability grants no permission surface, so files
+        # are written as the agent user on the entrypoint's trust plane.
+        # A root-owned path would need an install hook saying so.
+        - path: /home/agent/.config/kit-written
           content: '${{ kit.args.greeting }}'
