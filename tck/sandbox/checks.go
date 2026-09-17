@@ -373,6 +373,24 @@ var checks = []check{
 				return []report.Finding{report.Failf(
 					"declared file holds %q; the arg reference should have expanded to %q", body, "hello")}
 			}
+
+			// Whose file it is, not only that it is there: a runtime
+			// writing declared files as root puts them off the surface
+			// the capability grants, and the content reads the same
+			// either way.
+			owner, f := execOutput(ctx, e, id, "stat", "-c", "%u", "/home/agent/.config/kit-written")
+			if f != nil {
+				return []report.Finding{*f}
+			}
+			agent, f := execOutput(ctx, e, id, "id", "-u")
+			if f != nil {
+				return []report.Finding{*f}
+			}
+			if strings.TrimSpace(owner) != strings.TrimSpace(agent) {
+				return []report.Finding{report.Failf(
+					"declared file is owned by uid %s while the agent runs as uid %s; files are written on the agent's write surface, and a path only root can write is an install hook's job",
+					strings.TrimSpace(owner), strings.TrimSpace(agent))}
+			}
 			return nil
 		},
 	},

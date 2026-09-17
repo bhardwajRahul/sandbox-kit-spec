@@ -307,6 +307,17 @@ exec)
       ;;
     esac
     ;;
+  stat)
+    # Who a declared file belongs to. A runtime writing one as root
+    # leaves the agent a file on a surface this capability never granted,
+    # and its content reads the same either way.
+    case "$2 $3" in
+    "-c %u") ;;
+    *) echo "unsupported stat request: $2 $3" >&2; exit 1 ;;
+    esac
+    if [ "$broken" = "writes-files-as-root" ]; then echo 0; else echo 1000; fi
+    ;;
+
   id)
     # The identity comes from the image the sandbox was created from; the
     # fixture's is deliberately not the conventional uid 1000 / agent.

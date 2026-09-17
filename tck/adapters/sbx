@@ -181,7 +181,11 @@ release_host_state() {
 	if [ -f "$state/seeded-skill" ]; then
 		local name store
 		name="$(cat "$state/seeded-skill")"
-		store="$(skills_store)"
+		# Explicitly, because under set -e a failing skills_store would
+		# end cleanup here: the marker would go unmentioned, the
+		# credential unremoved, and rm would report a failure for a
+		# sandbox that is already gone.
+		store="$(skills_store 2>/dev/null)" || store=""
 		case "$name" in
 		"" | . | .. | */*)
 			# Nothing seeding could have written, so nothing to take
@@ -437,7 +441,10 @@ create)
 
 	# Remembered before the create runs, so a create that half-succeeded
 	# still leaves a recreate and a removal something to address.
-	printf '%s\n' "${argv[@]}" >"$state/$id.create"
+	# NUL-delimited: an argument value is an arbitrary string, and a
+	# newline inside one would come back from a line-delimited file as
+	# two arguments.
+	printf '%s\0' "${argv[@]}" >"$state/$id.create"
 	create_sandbox "$id" "${argv[@]}"
 	;;
 
@@ -478,7 +485,7 @@ recreate)
 	# it, it keeps deliberately.
 	run_sbx rm --force "$id" >&2
 	argv=()
-	while IFS= read -r line; do argv+=("$line"); done <"$state/$id.create"
+	while IFS= read -r -d '' arg; do argv+=("$arg"); done <"$state/$id.create"
 	create_sandbox "$id" "${argv[@]}" >/dev/null
 	;;
 

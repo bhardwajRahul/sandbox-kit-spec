@@ -92,14 +92,15 @@ func TestAConformingRuntimePasses(t *testing.T) {
 // requirement — the two network-policy versions state the same duty about
 // the host lists — and dropping it has to fail every one of them.
 var mutations = map[string][]string{
-	"install-twice":       {"lifecycle@1/install-once"},
-	"no-startup":          {"lifecycle@1/startup-every-boot"},
-	"ignores-files":       {"lifecycle@1/files-written"},
-	"leaks-env":           {"lifecycle@1/hook-env-restricted"},
-	"allows-everything":   {"network-policy@1/deny-by-default", "network-policy@2/deny-by-default"},
-	"ignores-http-method": {"network-policy@2/http-method-enforced"},
-	"ignores-http-path":   {"network-policy@2/http-path-enforced"},
-	"ignores-http-deny":   {"network-policy@2/http-deny-precedence"},
+	"install-twice":        {"lifecycle@1/install-once"},
+	"no-startup":           {"lifecycle@1/startup-every-boot"},
+	"ignores-files":        {"lifecycle@1/files-written"},
+	"writes-files-as-root": {"lifecycle@1/files-written"},
+	"leaks-env":            {"lifecycle@1/hook-env-restricted"},
+	"allows-everything":    {"network-policy@1/deny-by-default", "network-policy@2/deny-by-default"},
+	"ignores-http-method":  {"network-policy@2/http-method-enforced"},
+	"ignores-http-path":    {"network-policy@2/http-path-enforced"},
+	"ignores-http-deny":    {"network-policy@2/http-deny-precedence"},
 	"leaves-install-egress-open": {
 		"network-policy@1/install-phase-scoped",
 		"network-policy@2/install-phase-scoped",
