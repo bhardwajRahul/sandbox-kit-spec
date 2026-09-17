@@ -1,18 +1,18 @@
-# Introducing kits
+# Introducing Kits
 
-A kit packages a piece of a working environment — a tool, an agent, a
+A Kit packages a piece of a working environment — a tool, an agent, a
 service — so that a runtime can install it, grant it what it needs, and
-combine it with other kits without knowing anything about it in advance.
+combine it with other Kits without knowing anything about it in advance.
 
-This is the worked tour: a real kit, what its capabilities ask for, and
-how a set composes. The concepts behind it — what a kit is, the two kinds,
+This is the worked tour: a real Kit, what its capabilities ask for, and
+how a set composes. The concepts behind it — what a Kit is, the two kinds,
 and the tenets that decided the design — are on the
 [README](../README.md), and the normative rules are in
 [SPEC-v3.md](spec/SPEC-v3.md).
 
-## What a kit looks like
+## What a Kit looks like
 
-A kit is two files: the declarations and the recipe that produces the
+A Kit is two files: the declarations and the recipe that produces the
 content. Here is a mixin that adds the GitHub CLI to whatever workload it
 lands on.
 
@@ -53,7 +53,7 @@ capabilities:
 ```
 
 Note what is *absent*: no name, no image reference, no entrypoint, no env.
-A kit's identity is the reference you consume it by, and its runtime
+A Kit's identity is the reference you consume it by, and its runtime
 contract is the image config — where images already keep those things.
 `provides` states matchable identity, which is a different question from
 "what is this file called".
@@ -100,7 +100,7 @@ filesystem behind it. It depends on nothing in that workload: the nix
 closure carries every library `gh` needs, so the mixin cannot be broken by
 the distribution underneath it.
 
-And it sets an entrypoint despite being an overlay, because a kit is still
+And it sets an entrypoint despite being an overlay, because a Kit is still
 an image: `docker run` on this mixin alone runs `gh --help`. Composition
 ignores those fields — the workload anchors the runtime contract — so
 declaring them costs nothing and makes the artifact useful on its own.
@@ -111,9 +111,9 @@ That pin is the version authority — bumping `gh` means editing it — and
 declare `args`, which can be exposed to the build and expanded into fields
 like `provides`; see [§6](spec/SPEC-v3.md#6-args).
 
-## Capabilities: one list for everything the kit cannot supply
+## Capabilities: one list for everything the Kit cannot supply
 
-A kit declares what it needs from its host as typed, versioned requests:
+A Kit declares what it needs from its host as typed, versioned requests:
 
 ```yaml
 capabilities:
@@ -137,7 +137,7 @@ strictly decoded and documented one page each under
 [spec/capabilities/](spec/capabilities/com.docker.sandbox); unknown types are
 carried opaquely so a host can support its own.
 
-## Composing kits
+## Composing Kits
 
 You launch a set: one workload plus any number of mixins. A conforming
 runtime treats that set as **closed** — every `requires` must be satisfied
@@ -148,12 +148,12 @@ workload.
 
 Because the result is a pure function of the resolved set, it can be locked,
 reproduced, and cached as a single assembled image — and a set worth keeping
-can be published as one kit instead of a command line (below).
+can be published as one Kit instead of a command line (below).
 
 ## Sharing a whole set
 
-A set you have to retype is not really shareable, so a kit can take its
-content from other kits instead of from a Dockerfile:
+A set you have to retype is not really shareable, so a Kit can take its
+content from other Kits instead of from a Dockerfile:
 
 ```yaml
 # team-claude.yaml
@@ -172,20 +172,20 @@ kits:
 ```
 
 Building this resolves each one, checks the set is coherent, and merges
-their layers and declarations into **one ordinary kit** — so what you
-publish is a kit like any other, and `sbx run <your-set> .` needs no new
+their layers and declarations into **one ordinary Kit** — so what you
+publish is a Kit like any other, and `sbx run <your-set> .` needs no new
 machinery to run it. Their network rules union, their hooks concatenate in
 dependency order, and their guidance becomes one document. Two of them
 asking for incompatible things fails the build rather than picking a
 winner.
 
 `kind: set` never reaches a consumer: publishing derives `workload` or
-`mixin` from the kits it lists, because a merged set really is one or the
+`mixin` from the Kits it lists, because a merged set really is one or the
 other. What survives is the `kits:` list, pinned by digest — the record of
 how the content was produced, the way an inline `build:` block is.
 
 The trade is worth knowing. A merged set is a *pinned artifact*: one
-reference, one digest, one pull, and bumping one of its kits means
+reference, one digest, one pull, and bumping one of its Kits means
 republishing it. A set is also not a way to hide what is inside — each of
 their staged sources rides along in the filesystem, and the permission
 surface is the union of what they ask for, gated as usual.
@@ -199,12 +199,12 @@ or, for a set, a list of kits. How you connect them is your choice:
    stem. Dockerfile tooling keeps working on a file that is still just a
    Dockerfile.
 2. **Inline `build:` block** — the Dockerfile text embedded in the
-   descriptor, so a kit is a single file.
+   descriptor, so a Kit is a single file.
 3. **Comment descriptor** — a Dockerfile carrying its declarations in a
    `# kit:` comment block, so the file is both.
 4. **Kit set** — `kits:`, above.
 
-All of them produce ordinary kit images. A BuildKit frontend, dispatched by
+All of them produce ordinary Kit images. A BuildKit frontend, dispatched by
 the `# syntax=docker/sandbox-kit:3` line, validates the descriptor, builds
 the content, and publishes both as one image.
 
@@ -213,6 +213,6 @@ the content, and publishes both as one image.
 - [SPEC-v3.md](spec/SPEC-v3.md) — the normative specification.
 - [spec/capabilities/](spec/capabilities/com.docker.sandbox) — one page per
   well-known capability type, normative for runtimes implementing it.
-- [`examples/`](../examples) — working kits, from `hello` (the smallest
+- [`examples/`](../examples) — working Kits, from `hello` (the smallest
   possible workload) through `shell` plus agent mixins.
-- [README](../README.md) — building and running kits locally.
+- [README](../README.md) — building and running Kits locally.

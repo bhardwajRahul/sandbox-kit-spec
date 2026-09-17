@@ -24,13 +24,13 @@ A conforming runtime:
 - **MUST** run the sandbox with its platform's elevated-privilege mode when <!-- tck: privileged@1/elevation-granted -->
   granted (e.g. a privileged container).
 - **MAY** refuse. Refusal fails resolution for a required entry; an
-  optional entry is skipped and recorded, and the kit runs unprivileged.
+  optional entry is skipped and recorded, and the Kit runs unprivileged.
 - **SHOULD** require explicit, non-default consent to grant — this is the <!-- tck: privileged@1/explicit-consent -->
   one request that dissolves most of the boundary the sandbox exists for.
 
 ## Composition
 
-One kit requesting it makes the composition privileged. There is no
+One Kit requesting it makes the composition privileged. There is no
 narrower scope: privilege is per-sandbox.
 
 ## Gate

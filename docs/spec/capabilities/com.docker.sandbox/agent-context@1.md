@@ -31,14 +31,14 @@ one.
 
 | Field | Type | Rules |
 |---|---|---|
-| `filename` | string | The context-file profile the agent reads (`CLAUDE.md`, `AGENTS.md`, …). **Workload kits only** — the profile belongs to the kit that owns the environment; declaring it on a mixin is an error. |
+| `filename` | string | The context-file profile the agent reads (`CLAUDE.md`, `AGENTS.md`, …). **Workload Kits only** — the profile belongs to the Kit that owns the environment; declaring it on a mixin is an error. |
 | `contentFile` | string | Path to the context body. Authored as a path relative to the build context; the frontend stages the body into the image under `/usr/share/sandbox/kit/<stem>/` and **rewrites this field to the staged in-image path** in the published descriptor. Mutually exclusive with `content`. |
-| `content` | string | The body inline, for content-free kits with no layers to stage into. Mutually exclusive with `contentFile`. |
+| `content` | string | The body inline, for content-free Kits with no layers to stage into. Mutually exclusive with `contentFile`. |
 
 ## Publish behavior
 
 When `contentFile` is set, the frontend reads the authored file, stages it
-into the kit's image filesystem, and publishes the descriptor with
+into the Kit's image filesystem, and publishes the descriptor with
 `contentFile` pointing at the staged path. The published artifact is
 self-contained: consumers never resolve authored-relative paths.
 
@@ -46,12 +46,12 @@ self-contained: consumers never resolve authored-relative paths.
 
 A conforming runtime:
 
-- **MUST** treat the workload kit's `filename` as the profile file it <!-- tck: agent-context@1/workload-filename-is-profile -->
+- **MUST** treat the workload Kit's `filename` as the profile file it <!-- tck: agent-context@1/workload-filename-is-profile -->
   materializes for the agent (beside the workspace), seeded with the
   runtime's own guidance.
-- **MUST** surface each contributing kit's context **progressively**: the <!-- tck: agent-context@1/progressive-surfacing -->
+- **MUST** surface each contributing Kit's context **progressively**: the <!-- tck: agent-context@1/progressive-surfacing -->
   profile carries a per-kit index (a "Kits" section) telling the agent
-  which kit contributed what and where to read it on demand — stacking
+  which Kit contributed what and where to read it on demand — stacking
   mixins does not bloat the always-loaded profile.
 - For **staged** content (`contentFile`, published form): the body already
   sits in the assembled image's filesystem, so the runtime **points** the
@@ -66,4 +66,4 @@ A conforming runtime:
 
 The workload's entry provides the profile (`filename`) and its own body;
 each mixin contributes one body. Per-kit attribution survives composition —
-the index lists kits individually, in composition order.
+the index lists Kits individually, in composition order.

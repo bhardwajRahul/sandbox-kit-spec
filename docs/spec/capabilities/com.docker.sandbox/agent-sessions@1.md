@@ -5,7 +5,7 @@ drive the agent — run one prompt headlessly, list past sessions, resume or
 continue one. Not a grant: the host consumes it to operate the agent, the
 way it consumes the image config's entrypoint.
 
-- **Shape**: singleton. Workload kits in practice — the agent the verbs
+- **Shape**: singleton. Workload Kits in practice — the agent the verbs
   drive is the workload's.
 - **Permission surface**: **no** — a declaration about the workload's own
   CLI, on the entrypoint's trust plane.
@@ -64,5 +64,5 @@ A conforming runtime (or harness):
 
 ## Composition
 
-The workload kit's declaration governs. A mixin declaring agent-sessions
+The workload Kit's declaration governs. A mixin declaring agent-sessions
 has nothing to drive; composition keeps the workload's entry.

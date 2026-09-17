@@ -2,9 +2,55 @@
 
 # Docker Sandbox Kit Specification v3
 
-The kit v3 descriptor specification, its BuildKit frontend, and the
-conformance suites that judge both a published kit and a runtime that
+The Kit v3 descriptor specification, its BuildKit frontend, and the
+conformance suites that judge both a published Kit and a runtime that
 claims to support one.
+
+## From Dockerfile to Kit
+
+A Dockerfile answers everything about the software itself: how it is
+built, what gets packaged, and how it starts — entrypoint, command, user,
+environment. That answer was worth a decade of tooling, because the same
+bits build, pull, and run the same way on every machine that has ever
+heard of an OCI image.
+
+Then we started shipping agents, and an agent is not a static application
+workload. A container isolates an application: a thing that runs, does its
+job, and touches only what it was handed. An agent is an actor. It decides
+what to do next and then does it — to your filesystem, your network, your
+databases, your cloud account — with authority you granted on purpose.
+
+That authority is not a flaw to be closed off; it is the point. An agent
+that cannot install a dependency, reach an API, or hold a credential
+cannot do the job. But every grant trades away a piece of the isolation
+you were counting on, which is how the capabilities that make an agent
+useful end up dissolving the walls around it.
+
+So the boundary has to move out: from the container to the
+**containment** — the machine, the filesystem, the network, the
+credentials, everything the agent can reach or change. A sandbox supplies
+the part of that a model cannot argue with: its own kernel, a boundary
+that is enforced rather than agreed to. But an empty sandbox is not an
+environment. Something still has to say which harness runs, which tools
+and MCP servers it gets, which skills and instructions shape it, and
+exactly what it is allowed to touch.
+
+None of that is a Dockerfile's question. It specifies the inside of the
+image completely and the outside not at all, so the other half has lived
+in `docker run` flags, a Compose file, a CI config, an onboarding doc, and
+whatever the person who set it up still remembers — outside the artifact,
+unversioned, and unreviewable. A Kit brings it in: the content and the
+authority it asks for, in one image, under one digest.
+
+Which makes authority **diffable**. When the next version of an agent asks
+for another credential or another network destination, that is not a
+software update — it is a change in authority. It shows up in the diff, it
+can stop for approval, and it travels with the thing it describes wherever
+that thing runs. Which is also why this is a specification and not a
+product feature: a Kit that stops being useful because you ran it
+somewhere else is not a trust boundary, it is a lock-in.
+
+**Dockerfiles made software reproducible. Kits make authority reproducible.**
 
 > [!IMPORTANT]
 > **This specification is experimental.** It is published to be used and
@@ -13,30 +59,30 @@ claims to support one.
 > Moving is meant to stay additive. Capability types carry their own
 > version for exactly this reason: a contract that has to change ships as
 > `@2` alongside the `@1` it joins, both stay published, and a descriptor
-> names the one it was written against — so kits that resolve today are
+> names the one it was written against — so Kits that resolve today are
 > expected to keep resolving. A descriptor-wide `schemaVersion` bump is
 > the last resort for what that lever cannot express.
 >
 > A final version is targeted for **Q4 2026**, after community feedback.
-> That feedback is the point — if a kit you want to write cannot be
+> That feedback is the point — if a Kit you want to write cannot be
 > expressed, or a runtime duty is stated in a way you cannot implement or
 > check, please
 > [open an issue](https://github.com/docker/sandbox-kit-spec/issues/new/choose).
 
-## What a kit is
+## What a Kit is
 
-A kit packages a piece of a working environment — a tool, an agent, a
+A Kit packages a piece of a working environment — a tool, an agent, a
 service — so that a runtime can install it, grant it what it needs, and
-combine it with other kits without knowing anything about it in advance.
+combine it with other Kits without knowing anything about it in advance.
 
-There is no kit media type, no artifact type, no sidecar file. A kit is one
+There is no Kit media type, no artifact type, no sidecar file. A Kit is one
 OCI image where the manifest annotation
-`vnd.docker.sandbox.kit.descriptor` carries the kit's **declarations** and
+`vnd.docker.sandbox.kit.descriptor` carries the Kit's **declarations** and
 the layers carry its **content**.
 
-Everything follows from that. A kit pulls with `docker pull`, gets
+Everything follows from that. A Kit pulls with `docker pull`, gets
 inspected with `regctl`, and can be `FROM`ed like any other image. A
-registry that has never heard of kits stores one correctly, and an engine
+registry that has never heard of Kits stores one correctly, and an engine
 that ignores the annotation still runs it as an ordinary image. The
 declarations travel *with* the content, in the same artifact, under the
 same digest: there is no second place to look and nothing to keep in sync.
@@ -57,25 +103,25 @@ A few principles decided most of the design. They are worth reading before
 the details, because nearly every rule in the specification is one of these
 applied to a specific case.
 
-**Ride the ecosystem, don't extend it.** A kit introduces no new media type,
+**Ride the ecosystem, don't extend it.** A Kit introduces no new media type,
 no artifact type, and no sidecar file, so every registry, scanner, signer,
 and mirror already handles one correctly. The cost of a new artifact format
 is not writing it — it is the decade of tooling that does not know about it.
 
 **One artifact, one digest.** Declarations live in the manifest of the image
-they describe, so a kit cannot be half-updated: pinning the digest pins the
+they describe, so a Kit cannot be half-updated: pinning the digest pins the
 policy, the content, and the metadata together. A separate file describing
 an image is a second source of truth, and second sources drift.
 
 **Declare only what images cannot already express.** The descriptor carries
 no name, no image reference, no entrypoint or env. Identity is the reference
-you consume the kit by; the runtime contract is the image config. Restating
+you consume the Kit by; the runtime contract is the image config. Restating
 either would create two answers to one question, and one of them would be
 stale.
 
 **One model for every ask.** Resource grants and engine-executed behaviors
 are the same kind of request — a typed, versioned entry in `capabilities`.
-A host reviews one list to decide what a kit may do, and a kit has one way
+A host reviews one list to decide what a Kit may do, and a Kit has one way
 to ask, so support is a question with a single answer rather than a
 patchwork of unrelated fields.
 
@@ -85,7 +131,7 @@ capability the host cannot grant refuses the launch. A permission silently
 dropped is indistinguishable from one never requested, and the failure would
 surface as behavior instead of an error.
 
-**Composition is a function, not a sequence.** A resolved kit set is ordered
+**Composition is a function, not a sequence.** A resolved Kit set is ordered
 by its dependency graph rather than by the order arguments were typed, so
 the same set always composes to the same image. That is what makes a
 composition lockable, reproducible, and worth caching.
@@ -100,7 +146,7 @@ versions that type's config schema, so a capability can change shape without
 a descriptor grammar bump and hosts can support types the grammar has never
 heard of.
 
-For a worked tour — a real kit, its capabilities, and how a set composes —
+For a worked tour — a real Kit, its capabilities, and how a set composes —
 see [docs/kit-intro.md](docs/kit-intro.md).
 
 ## Layout
@@ -112,7 +158,7 @@ see [docs/kit-intro.md](docs/kit-intro.md).
   capability/version parsing. Import as
   `github.com/docker/sandbox-kit-spec/v3/spec`; this package is the single
   source of truth for the grammar, and the Docker Sandboxes runtime imports
-  it to read published kits.
+  it to read published Kits.
 - `schema/kit.schema.json` — the descriptor grammar as a JSON Schema, for
   editor validation and completion. Point the yaml-language-server at it
   with a modeline on the descriptor's second line (the `# syntax=` line
@@ -138,12 +184,12 @@ see [docs/kit-intro.md](docs/kit-intro.md).
 
 ## How to get started
 
-A guided tour from nothing to the local edit-and-run loop. Running kits
+A guided tour from nothing to the local edit-and-run loop. Running Kits
 takes the `sbx` CLI (public install via
 [Docker Docs](https://docs.docker.com/ai/sandboxes/install/) /
 [sbx-releases](https://github.com/docker/sbx-releases)), plus a
 registry namespace you can push to (Docker Hub works): the sandbox runtime
-resolves kit *images* from registries, so an image that only exists in
+resolves Kit *images* from registries, so an image that only exists in
 Docker Desktop's local store cannot run. (Kit *directories* can — that is
 the local loop in step 5, which needs no registry at all.)
 
@@ -159,7 +205,7 @@ brew install docker/tap/sbx@rc
 
 # Windows / Linux: download the matching RC artifacts from
 # https://github.com/docker/sbx-releases/releases
-# (stable WinGet / apt packages do not include kit v3 yet)
+# (stable WinGet / apt packages do not include Kit v3 yet)
 sbx login
 ```
 
@@ -174,9 +220,9 @@ export KIT_REGISTRY=docker.io/<your-hub-username>
 docker login
 ```
 
-**2. Push the hello kit and run it.** `hello` is the smallest workload
-kit: a full agent environment with a startup hook, guidance, and a network
-policy. `task kit:push` builds `examples/hello` with the kit frontend and
+**2. Push the hello Kit and run it.** `hello` is the smallest workload
+Kit: a full agent environment with a startup hook, guidance, and a network
+policy. `task kit:push` builds `examples/hello` with the Kit frontend and
 pushes it as an ordinary image:
 
 ```sh
@@ -184,7 +230,7 @@ task kit:push KIT=hello TAG=1.0.0 REGISTRY=$KIT_REGISTRY
 sbx run $KIT_REGISTRY/sbx-kit-hello:1.0.0 .
 ```
 
-Inside the sandbox, the kit is self-describing: `cat
+Inside the sandbox, the Kit is self-describing: `cat
 /usr/share/sandbox/kit/hello/kit.yaml` shows the published descriptor,
 `kit.dockerfile` the recipe that produced the content, and
 `cat /var/log/sbx-kit-startup.log` shows the startup hook's run.
@@ -192,7 +238,7 @@ Inside the sandbox, the kit is self-describing: `cat
 on a descriptor until it validates, but the result can't run in `sbx`
 until it is pushed or consumed as a directory.)
 
-**3. Add the tool kit — composition.** `tool` is a content-bearing mixin
+**3. Add the tool Kit — composition.** `tool` is a content-bearing mixin
 that `requires` hello: the resolver validates the set is coherent, orders
 provider before requirer, and the assembler merges the layers into one
 image (cached by the lock — the second run reuses it).
@@ -205,7 +251,7 @@ sbx run $KIT_REGISTRY/sbx-kit-hello:1.0.0 --kit $KIT_REGISTRY/sbx-kit-tool:1.0.0
 `cat /time.txt` inside the sandbox shows tool's startup hook ran on
 hello's filesystem.
 
-**4. Add the gh kit — binary content.** `gh` is a mixin whose overlay
+**4. Add the gh Kit — binary content.** `gh` is a mixin whose overlay
 carries the GitHub CLI as a pinned Nix closure, plus a phased network
 policy and a proxy-managed credential. Composing it drops a real binary
 into the workload's filesystem:
@@ -220,7 +266,7 @@ overlay's `/nix/store`), and with a `github` secret bound on the host
 (`sbx secret set -g github`), `gh api user` authenticates through the
 proxy — the container only ever sees a sentinel token.
 
-**5. The local loop — no registry, no push.** Point `sbx run` at the kit
+**5. The local loop — no registry, no push.** Point `sbx run` at the Kit
 directories and the runtime builds them on demand, keyed by source hash,
 and loads the results straight into the sandbox runtime:
 
@@ -230,28 +276,28 @@ sbx run ./hello --kit ./gh .
 ```
 
 Edit `hello/hello.yaml` (say, add an allow entry) and re-run: only hello
-rebuilds; unchanged kits reuse the cache. `SBX_KIT_BUILDER=sandbox` moves
+rebuilds; unchanged Kits reuse the cache. `SBX_KIT_BUILDER=sandbox` moves
 these builds into a dedicated builder sandbox (`sbx kit builder status`
-shows it) instead of the host engine. When a kit is ready to share, step
+shows it) instead of the host engine. When a Kit is ready to share, step
 2's `task kit:push` is the whole publishing story.
 
-## Building a kit
+## Building a Kit
 
 ```sh
 docker buildx build . -f claude.yaml -t registry.example.com/claude-kit:2.1.0
 ```
 
-A workload kit's companion must build on a base that provides the runtime's
+A workload Kit's companion must build on a base that provides the runtime's
 platform floor — bash, the `agent` user (uid 1000), git, a CA store — which
-the published `docker/sandbox-templates:*` images carry. A kit built on a
+the published `docker/sandbox-templates:*` images carry. A Kit built on a
 bare distro image builds fine but fails at agent launch.
 
-A kit's content recipe lives in one of three places: a companion
+A Kit's content recipe lives in one of three places: a companion
 `<stem>.dockerfile` next to the descriptor, an inline `build:` block in
 the descriptor carrying literal Dockerfile text (see `examples/motd` for
-the single-file form), or a `kits:` list naming other kits (see
+the single-file form), or a `kits:` list naming other Kits (see
 `examples/team` — `kind: set`, below). They are mutually exclusive; a
-`kind: mixin` kit with none of them is declaration-only.
+`kind: mixin` Kit with none of them is declaration-only.
 
 The frontend finds the companion `claude.dockerfile` by naming convention,
 builds it through `dockerfile.v0` (honoring the companion's own `# syntax=`
@@ -260,19 +306,19 @@ the resulting image, stages guidance content into the image, and attaches the
 published descriptor as a manifest annotation. A `kind: mixin` descriptor
 with no companion produces a declaration-only image whose single layer carries the published descriptor.
 
-Build-phase args are passed by their kit-arg name and validated before the
+Build-phase args are passed by their Kit-arg name and validated before the
 Dockerfile sees them under the declared `buildArg` name:
 
 ```sh
 docker buildx build . -f gh.yaml --build-arg version=2.99.0 -t gh-kit:2.99.0
 ```
 
-## Publishing a set as one kit
+## Publishing a set as one Kit
 
 A composition worth sharing does not have to stay a command line. A
-`kind: set` descriptor names other kits in `kits:`, and the frontend
+`kind: set` descriptor names other Kits in `kits:`, and the frontend
 resolves them, checks the set is coherent, and merges their layers and
-declarations into one ordinary kit:
+declarations into one ordinary Kit:
 
 ```yaml
 # syntax=docker/sandbox-kit:3
@@ -286,7 +332,7 @@ kits:
 ```
 
 ```sh
-# The registry the set is pushed to and the one it resolves its kits
+# The registry the set is pushed to and the one it resolves its Kits
 # from are separate answers: the first names where this artifact goes,
 # the second is baked into the references it merges.
 task kit:push KIT=team TAG=1.0.0 REGISTRY=$KIT_REGISTRY \
@@ -294,9 +340,9 @@ task kit:push KIT=team TAG=1.0.0 REGISTRY=$KIT_REGISTRY \
 sbx run $KIT_REGISTRY/sbx-kit-team:1.0.0 .
 ```
 
-The result is a kit like any other — nothing in the runtime knows it was a
+The result is a Kit like any other — nothing in the runtime knows it was a
 set — and `kind: set` never reaches consumers: publishing derives
-`workload` or `mixin` from the kits it lists. The `kits:` list survives in
+`workload` or `mixin` from the Kits it lists. The `kits:` list survives in
 the published descriptor, pinned by digest, so the artifact records what it
 was built from; inside the sandbox, `ls /usr/share/sandbox/kit/` enumerates
 each of their staged sources. They must be published references: the set
@@ -349,14 +395,14 @@ specifies what each one means. From this checkout, `task` runs the TCK via
 (linux/darwin/windows, amd64/arm64).
 
 ```sh
-task tck:kit REF=docker.io/me/sbx-kit-gh:1.0.0   # is this artifact a conforming kit?
+task tck:kit REF=docker.io/me/sbx-kit-gh:1.0.0   # is this artifact a conforming Kit?
 task tck:runtime ADAPTER=./my-adapter            # does this runtime behave as the pages require?
 ```
 
-The kit checks also run inside the frontend during `docker buildx build`,
-so a kit built here cannot be published malformed. Running them against a
+The Kit checks also run inside the frontend during `docker buildx build`,
+so a Kit built here cannot be published malformed. Running them against a
 published artifact catches what only the exporter and the registry can do
-to it — and judges kits this frontend did not build.
+to it — and judges Kits this frontend did not build.
 
 A registry on loopback is reached over plain HTTP without asking, so a
 throwaway `registry:2` works as a target while iterating; `kit-tck kit

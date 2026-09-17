@@ -30,8 +30,8 @@ A conforming runtime:
 
 - **MUST** publish the container port to the host when the entry is <!-- tck: port@1/published-when-granted -->
   granted.
-- **MUST** allocate the host side itself — a kit cannot pin a host port <!-- tck: port@1/host-side-allocated-by-host -->
-  (two kits requesting the same one would collide). Host binding SHOULD be <!-- tck: port@1/host-binding-default -->
+- **MUST** allocate the host side itself — a Kit cannot pin a host port <!-- tck: port@1/host-side-allocated-by-host -->
+  (two Kits requesting the same one would collide). Host binding SHOULD be <!-- tck: port@1/host-binding-default -->
   loopback with an ephemeral port; users pin host ports through the
   runtime's own UX, not the descriptor.
 - **SHOULD** surface `name` wherever published ports are listed. <!-- tck: port@1/name-surfaced -->
@@ -39,7 +39,7 @@ A conforming runtime:
 ## Composition
 
 Entries union across the set, deduplicated on (container, transport). Two
-kits publishing the same port is a single publication, not a conflict.
+Kits publishing the same port is a single publication, not a conflict.
 
 ## Gate
 

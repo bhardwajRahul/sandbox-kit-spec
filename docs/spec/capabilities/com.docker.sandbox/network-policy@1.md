@@ -1,6 +1,6 @@
 # `com.docker.sandbox/network-policy@1`
 
-Phase-scoped egress policy: what the sandbox may reach while the kit's
+Phase-scoped egress policy: what the sandbox may reach while the Kit's
 install hooks run, and what the agent may reach in steady state.
 
 - **Shape**: singleton — at most one entry per descriptor, and exclusive
@@ -8,7 +8,7 @@ install hooks run, and what the agent may reach in steady state.
 - **Permission surface**: yes — all four lists, direction-aware
   ([SPEC-v3 §7.4](../../SPEC-v3.md#74-permission-surface-and-the-gate)).
 
-This version remains valid and is what a kit that gates egress by host
+This version remains valid and is what a Kit that gates egress by host
 alone should state. [`@2`](network-policy@2.md) adds HTTP rules that
 narrow method and path over the connections these lists permit.
 
@@ -41,7 +41,7 @@ Entry patterns:
 | exact host | `api.example.com` | the host, any port unless one is stated |
 | host + port | `api.example.com:443` | the host on that port |
 | single-label wildcard | `*.example.com` | exactly one subdomain label |
-| everything | `*` or `**` | all egress (typical only for install phases of build-heavy kits) |
+| everything | `*` or `**` | all egress (typical only for install phases of build-heavy Kits) |
 
 The precise wildcard matcher is runtime-owned; the patterns above are the
 portable core. Port suffixes are ignored for allow-list membership checks
@@ -77,8 +77,8 @@ A conforming runtime:
 ## Composition
 
 Across the resolved set, allow lists union per phase and deny lists union
-per phase; deny precedence applies to the merged result. One kit's deny is
-not defeated by another kit's allow.
+per phase; deny precedence applies to the merged result. One Kit's deny is
+not defeated by another Kit's allow.
 
 ## Gate
 

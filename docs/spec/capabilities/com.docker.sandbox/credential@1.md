@@ -2,7 +2,7 @@
 
 One service the workload authenticates to, and how the runtime presents
 proof — never where the secret lives. The host's credential store is the
-sole source; a kit declares the need, the user's bindings answer it.
+sole source; a Kit declares the need, the user's bindings answer it.
 
 - **Shape**: instance — one entry per (service, phase); duplicates rejected.
 - **Permission surface**: yes — the service name, per phase.
@@ -44,7 +44,7 @@ sole source; a kit declares the need, the user's bindings answer it.
 | `apiKey` | object | conditional. At least one of `apiKey`/`oauth` MUST be declared. | <!-- tck: credential@1/one-of-apikey-oauth -->
 | `apiKey.name` | string | In-container env var name. Empty or omitted with `inject` rules present declares an inject-only credential: outbound rewrites with no environment presence, not even a sentinel. At least one of `name`/`inject` MUST be declared. | <!-- tck: credential@1/name-or-inject -->
 | `apiKey.proxyManaged` | bool | The real value stays on the host. A named key's variable carries a sentinel; an inject-only key has no in-container presence, and the boundary presents the real value outbound either way. |
-| `apiKey.inject[]` | list | Outbound rewrite rules. `domain` REQUIRED and MUST appear in the network policy's matching-phase allow list, whether the kit declares [`@1`](network-policy@1.md) or [`@2`](network-policy@2.md). | <!-- tck: credential@1/inject-domain-in-allow -->
+| `apiKey.inject[]` | list | Outbound rewrite rules. `domain` REQUIRED and MUST appear in the network policy's matching-phase allow list, whether the Kit declares [`@1`](network-policy@1.md) or [`@2`](network-policy@2.md). | <!-- tck: credential@1/inject-domain-in-allow -->
 | `apiKey.inject[].header` / `format` | string | Header to set; `format` renders the value (e.g. `"Bearer %s"`). |
 | `apiKey.inject[].scheme` / `username` | string | Non-header presentation, e.g. `basic` with `username` (credential as password). |
 | `oauth.tokenEndpoint` | object | `host` REQUIRED when `tokenEndpoint` is set. |
@@ -66,10 +66,10 @@ errors. Each placeholder renders in the target encoding's own type.
 A conforming runtime:
 
 - **MUST** resolve the credential from the host-side store keyed by <!-- tck: credential@1/resolved-from-host-store -->
-  `service`. Host environment variables never auto-inject; a kit cannot
+  `service`. Host environment variables never auto-inject; a Kit cannot
   name where a secret lives, only what it needs.
 - **MUST NOT** place the real secret in the container when `proxyManaged` <!-- tck: credential@1/secret-absent-in-sandbox -->
-  or OAuth sentinels are in play: where the kit names a variable or file,
+  or OAuth sentinels are in play: where the Kit names a variable or file,
   the container sees sentinel values there, and the boundary (proxy)
   substitutes the real credential on outbound requests matching the
   `inject` rules or `resourceHosts`.
@@ -80,17 +80,17 @@ A conforming runtime:
   install hooks run and is revoked before the workload's entrypoint starts;
   a `runtime` credential is the agent's steady state.
 - **MUST** fail resolution when a **required** entry has no binding; an <!-- tck: credential@1/required-without-binding-fails -->
-  **optional** entry with no binding is skipped and recorded, and the kit
+  **optional** entry with no binding is skipped and recorded, and the Kit
   runs unauthenticated.
 - **SHOULD** set the `apiKey.name` env var to a sentinel (not empty) when <!-- tck: credential@1/sentinel-not-empty -->
-  the credential is wired and the kit names one, so kit content can detect
+  the credential is wired and the Kit names one, so Kit content can detect
   wiring without seeing the secret.
 - **MUST** give an inject-only credential (no `name`) no environment <!-- tck: credential@1/inject-only-no-env -->
   presence at all: composing it adds no variable, sentinel or otherwise.
 
 ## Composition
 
-Entries union across the set. Two kits declaring the same (service, phase)
+Entries union across the set. Two Kits declaring the same (service, phase)
 is a composition conflict — one credential, one owner.
 
 ## Gate
