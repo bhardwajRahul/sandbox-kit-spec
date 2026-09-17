@@ -778,7 +778,7 @@ The spec library enforces, beyond per-field rules stated above:
 - **capabilities**: type matches
   `^[a-z0-9]([a-z0-9.-]*[a-z0-9])?/[a-z0-9]([a-z0-9-]*[a-z0-9])?@[1-9][0-9]*$`;
   singleton and dedup arity per [§7.1](#71-arity); config-less types
-  (`privileged@1`, `kit-registry@1`) reject any config; well-known configs
+  (`privileged@1`, `kit-registry@1`, `sbx@1`) reject any config; well-known configs
   decode strictly (unknown keys are errors) and pass their per-type rules
   (see the capability pages); **cross-entry**: every credential inject
   domain appears in the matching phase of the network policy's allow list

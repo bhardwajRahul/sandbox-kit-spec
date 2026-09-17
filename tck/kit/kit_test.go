@@ -918,6 +918,24 @@ func TestAnOutOfRangeIdDoesNotResolve(t *testing.T) {
 	}
 }
 
+// A commented record is not an account, however exactly it spells the
+// identity being looked for.
+func TestACommentedPasswdRecordIsNotAnAccount(t *testing.T) {
+	a := sbxWorkload(t)
+	a.files["/etc/passwd"] = []byte("#agent:x:1000:1000::/home/agent:/bin/bash\n")
+	a.config.Config.User = "1000"
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+
+	a = sbxWorkload(t)
+	a.files["/etc/group"] = []byte("#build:x:2000:\n")
+	a.config.Config.User = "agent:build"
+	got = findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+}
+
 // A runtime resolves a numeric user by value, so a padded spelling names
 // the same identity as the row it matches.
 func TestAPaddedNumericUserResolves(t *testing.T) {

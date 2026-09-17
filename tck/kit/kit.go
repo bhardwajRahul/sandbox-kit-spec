@@ -194,7 +194,13 @@ func lookupPasswd(passwd, group, user string) (passwdEntry, bool) {
 	// as well: a row merely named "1000" is not uid 1000, and 001000 is.
 	wantID, numeric := parseID(want)
 	for _, line := range strings.Split(passwd, "\n") {
-		fields := strings.Split(strings.TrimSpace(line), ":")
+		line = strings.TrimSpace(line)
+		// A commented record is not an account: resolvers skip these, so
+		// matching one would certify an identity the host cannot find.
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Split(line, ":")
 		if len(fields) < 6 {
 			continue
 		}
@@ -238,7 +244,11 @@ func lookupGroup(groupFile, want string) (int64, bool) {
 		return gid, true
 	}
 	for _, line := range strings.Split(groupFile, "\n") {
-		fields := strings.Split(strings.TrimSpace(line), ":")
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Split(line, ":")
 		if len(fields) < 3 || fields[0] != want {
 			continue
 		}
