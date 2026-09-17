@@ -22,8 +22,12 @@ type fake struct {
 	layers      []ocispec.Descriptor
 	layersKnown bool
 	files       map[string][]byte
-	indexAnn    map[string]string
-	hasIndex    bool
+	// modes overrides the permission bits a path reports; a file absent
+	// from it reads as executable, which is what the shells an image
+	// ships are.
+	modes    map[string]int64
+	indexAnn map[string]string
+	hasIndex bool
 	// kits are the artifacts a merged set lists, keyed by reference,
 	// so the declaration check has something to compare against.
 	kits map[string]Artifact
@@ -47,6 +51,16 @@ func (f *fake) Layers(context.Context) ([]ocispec.Descriptor, bool, error) {
 func (f *fake) ReadFile(_ context.Context, name string) ([]byte, bool, error) {
 	body, ok := f.files[name]
 	return body, ok, nil
+}
+
+func (f *fake) FileMode(_ context.Context, name string) (int64, bool, error) {
+	if _, ok := f.files[name]; !ok {
+		return 0, false, nil
+	}
+	if mode, ok := f.modes[name]; ok {
+		return mode, true, nil
+	}
+	return 0o755, true, nil
 }
 
 func (f *fake) StagedStems(context.Context) ([]string, error) {
@@ -837,6 +851,26 @@ func TestAMalformedPasswdRowDoesNotResolve(t *testing.T) {
 			require.Equal(t, report.Fail, got.Severity)
 		})
 	}
+}
+
+// Occupying the path is not being a shell: a placeholder resolves and
+// then fails at the first hook.
+func TestTheFloorNeedsTheShellsToBeExecutable(t *testing.T) {
+	a := sbxWorkload(t)
+	a.modes = map[string]int64{"/bin/bash": 0o644}
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "not executable")
+}
+
+// Bash resolves a relative BASH_ENV from wherever the agent runs, which
+// is not the artifact root the check would otherwise look in.
+func TestARelativeBashEnvIsWarned(t *testing.T) {
+	a := sbxWorkload(t)
+	a.config.Config.Env = []string{"BASH_ENV=.sandbox-persistent.sh"}
+	got := findings(t, a)["sbx-persistent-env"]
+	require.Equal(t, report.Warn, got.Severity)
+	require.Contains(t, got.Detail, "absolute path")
 }
 
 // A mixin's image config never becomes the composed image's, so the

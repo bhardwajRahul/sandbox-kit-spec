@@ -462,6 +462,17 @@ var checks = []check{
 				}
 				if !present {
 					findings = append(findings, fail("%s is missing; the host runs hooks through sh and launches the agent under bash", shell)...)
+					continue
+				}
+				// Occupying the path is not being a shell: a
+				// non-executable placeholder resolves here and then fails
+				// at the first hook.
+				exec, known, err := executable(ctx, s.artifact, shell)
+				if err != nil {
+					return fail("read %s mode: %v", shell, err)
+				}
+				if known && !exec {
+					findings = append(findings, fail("%s is not executable; the host runs hooks through sh and launches the agent under bash", shell)...)
 				}
 			}
 
@@ -517,6 +528,9 @@ var checks = []check{
 			}
 			if file == "" {
 				return warn("image config sets no BASH_ENV, so the agent starts without the sandbox's persistent environment")
+			}
+			if !path.IsAbs(file) {
+				return warn("BASH_ENV is %s, which bash resolves against whatever directory the agent happens to run from; name an absolute path", file)
 			}
 			present, err := hasFile(ctx, s.artifact, file)
 			if err != nil {
@@ -910,6 +924,27 @@ func effectiveContribution(k spec.Kit, d *spec.Descriptor) (*spec.Descriptor, er
 // content-read bounds that do not apply to it.
 type fileChecker interface {
 	HasFile(ctx context.Context, name string) (bool, error)
+}
+
+// modeChecker is a source that can report a path's permission bits. A
+// source that cannot leaves mode-dependent judgments unmade rather than
+// guessed.
+type modeChecker interface {
+	FileMode(ctx context.Context, name string) (int64, bool, error)
+}
+
+// executable reports whether a path is executable, and whether the source
+// could tell.
+func executable(ctx context.Context, a Artifact, name string) (exec, known bool, err error) {
+	c, ok := a.(modeChecker)
+	if !ok {
+		return false, false, nil
+	}
+	mode, present, err := c.FileMode(ctx, name)
+	if err != nil || !present {
+		return false, false, err
+	}
+	return mode&0o111 != 0, true, nil
 }
 
 func hasFile(ctx context.Context, a Artifact, name string) (bool, error) {

@@ -848,6 +848,79 @@ func (a *ociArtifact) hasFileAt(ctx context.Context, name string, depth, upto in
 	return entry.OK, nil
 }
 
+// FileMode is the permission bits the composed filesystem exposes at a
+// path, following links to whatever finally answers for it, and false
+// where nothing does.
+func (a *ociArtifact) FileMode(ctx context.Context, name string) (int64, bool, error) {
+	return a.fileModeAt(ctx, name, 0, len(a.manifest.Layers)-1)
+}
+
+func (a *ociArtifact) fileModeAt(ctx context.Context, name string, depth, upto int) (int64, bool, error) {
+	if depth > maxLinkDepth {
+		return 0, false, fmt.Errorf("%s: links nest deeper than any kit should", name)
+	}
+	name, hidden, err := a.resolveAncestors(ctx, name, depth, upto)
+	if err != nil || hidden {
+		return 0, false, err
+	}
+	winner, err := a.winningLayer(ctx, name, upto)
+	if err != nil || winner < 0 {
+		return 0, false, err
+	}
+	layer := a.manifest.Layers[winner]
+	rc, err := a.fetcher.Fetch(ctx, layer)
+	if err != nil {
+		return 0, false, fmt.Errorf("fetch layer %s: %w", layer.Digest, err)
+	}
+	defer func() { _ = rc.Close() }()
+	entry, err := assemble.StatFileEntry(rc, name)
+	if err != nil {
+		return 0, false, err
+	}
+	if entry.Linked {
+		if entry.Link == "" {
+			return 0, false, nil
+		}
+		if entry.Hard {
+			return a.hardLinkMode(ctx, winner, upto,
+				"/"+strings.TrimPrefix(entry.Link, "/"), entry.Index, depth+1)
+		}
+		return a.fileModeAt(ctx, resolveLinkTarget(name, entry), depth+1, upto)
+	}
+	return entry.Mode, entry.OK, nil
+}
+
+// hardLinkMode is hasHardLink reporting the target's mode rather than
+// only that it exists.
+func (a *ociArtifact) hardLinkMode(ctx context.Context, winner, upto int, target string, before, depth int) (int64, bool, error) {
+	if depth > maxLinkDepth {
+		return 0, false, fmt.Errorf("%s: links nest deeper than any kit should", target)
+	}
+	layer := a.manifest.Layers[winner]
+	rc, err := a.fetcher.Fetch(ctx, layer)
+	if err != nil {
+		return 0, false, fmt.Errorf("fetch layer %s: %w", layer.Digest, err)
+	}
+	defer func() { _ = rc.Close() }()
+	prior, err := assemble.StatFileEntryBefore(rc, target, before)
+	if err != nil {
+		return 0, false, err
+	}
+	switch {
+	case prior.OK && !prior.Linked:
+		return prior.Mode, true, nil
+	case prior.OK && prior.Link == "":
+		return 0, false, nil
+	case prior.OK && prior.Hard:
+		return a.hardLinkMode(ctx, winner, upto,
+			"/"+strings.TrimPrefix(prior.Link, "/"), prior.Index, depth+1)
+	case prior.OK:
+		return a.fileModeAt(ctx, resolveLinkTarget(target, prior), depth+1, upto)
+	default:
+		return a.fileModeAt(ctx, target, depth+1, winner-1)
+	}
+}
+
 // hasHardLink is resolveHardLink for existence only: no target body is
 // ever buffered, so no content bound applies to bulky staged files
 // reached through a link.

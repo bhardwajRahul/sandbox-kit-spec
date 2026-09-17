@@ -564,45 +564,83 @@ func TestASymlinkedStagedRootIsDiscovered(t *testing.T) {
 	require.Equal(t, body, got)
 }
 
+// buildLayerArtifact stores one layer as an OCI layout and opens it as
+// an artifact, so a test can state a filesystem as tar entries.
+func buildLayerArtifact(t *testing.T, add func(tw *tar.Writer)) Artifact {
+	dir := t.TempDir()
+	store, err := oci.New(dir)
+	require.NoError(t, err)
+	ctx := context.Background()
+	push := func(mediaType string, content []byte) ocispec.Descriptor {
+		d := ocispec.Descriptor{
+			MediaType: mediaType,
+			Digest:    digest.FromBytes(content),
+			Size:      int64(len(content)),
+		}
+		require.NoError(t, store.Push(ctx, d, bytes.NewReader(content)))
+		return d
+	}
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	add(tw)
+	require.NoError(t, tw.Close())
+	layerDesc := push(ocispec.MediaTypeImageLayer, buf.Bytes())
+	config, err := json.Marshal(ocispec.Image{})
+	require.NoError(t, err)
+	configDesc := push(ocispec.MediaTypeImageConfig, config)
+	manifest, err := json.Marshal(ocispec.Manifest{
+		Versioned: specsgo.Versioned{SchemaVersion: 2},
+		MediaType: ocispec.MediaTypeImageManifest,
+		Config:    configDesc,
+		Layers:    []ocispec.Descriptor{layerDesc},
+	})
+	require.NoError(t, err)
+	manifestDesc := push(ocispec.MediaTypeImageManifest, manifest)
+	require.NoError(t, store.Tag(ctx, manifestDesc, "kit"))
+	artifact, err := FromLayout(ctx, dir, "kit")
+	require.NoError(t, err)
+	return artifact
+}
+
+// A shell is usually a link to whatever implements it, so the mode that
+// decides whether it can be executed is the target's, not the link's.
+func TestFileModeFollowsLinksToTheTarget(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		require.NoError(t, tw.WriteHeader(&tar.Header{
+			Name: "bin/busybox", Typeflag: tar.TypeReg, Mode: 0o755, Size: 3,
+		}))
+		_, err := tw.Write([]byte("elf"))
+		require.NoError(t, err)
+		require.NoError(t, tw.WriteHeader(&tar.Header{
+			Name: "bin/sh", Typeflag: tar.TypeSymlink, Linkname: "busybox", Mode: 0o777,
+		}))
+		require.NoError(t, tw.WriteHeader(&tar.Header{
+			Name: "bin/placeholder", Typeflag: tar.TypeReg, Mode: 0o644, Size: 0,
+		}))
+	})
+	c, ok := a.(modeChecker)
+	require.True(t, ok)
+
+	mode, present, err := c.FileMode(context.Background(), "/bin/sh")
+	require.NoError(t, err)
+	require.True(t, present)
+	require.NotZero(t, mode&0o111, "the link's target is executable")
+
+	mode, present, err = c.FileMode(context.Background(), "/bin/placeholder")
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Zero(t, mode&0o111)
+
+	_, present, err = c.FileMode(context.Background(), "/bin/absent")
+	require.NoError(t, err)
+	require.False(t, present)
+}
+
 // An ancestor symlink with an empty target is dangling, and one targeting
 // the root must join canonically instead of producing a double slash no
 // archive path matches.
 func TestAncestorLinkEdgeCases(t *testing.T) {
-	build := func(t *testing.T, add func(tw *tar.Writer)) Artifact {
-		dir := t.TempDir()
-		store, err := oci.New(dir)
-		require.NoError(t, err)
-		ctx := context.Background()
-		push := func(mediaType string, content []byte) ocispec.Descriptor {
-			d := ocispec.Descriptor{
-				MediaType: mediaType,
-				Digest:    digest.FromBytes(content),
-				Size:      int64(len(content)),
-			}
-			require.NoError(t, store.Push(ctx, d, bytes.NewReader(content)))
-			return d
-		}
-		var buf bytes.Buffer
-		tw := tar.NewWriter(&buf)
-		add(tw)
-		require.NoError(t, tw.Close())
-		layerDesc := push(ocispec.MediaTypeImageLayer, buf.Bytes())
-		config, err := json.Marshal(ocispec.Image{})
-		require.NoError(t, err)
-		configDesc := push(ocispec.MediaTypeImageConfig, config)
-		manifest, err := json.Marshal(ocispec.Manifest{
-			Versioned: specsgo.Versioned{SchemaVersion: 2},
-			MediaType: ocispec.MediaTypeImageManifest,
-			Config:    configDesc,
-			Layers:    []ocispec.Descriptor{layerDesc},
-		})
-		require.NoError(t, err)
-		manifestDesc := push(ocispec.MediaTypeImageManifest, manifest)
-		require.NoError(t, store.Tag(ctx, manifestDesc, "kit"))
-		artifact, err := FromLayout(ctx, dir, "kit")
-		require.NoError(t, err)
-		return artifact
-	}
+	build := buildLayerArtifact
 
 	body := []byte(fixtureDescriptor)
 	staged := "usr/share/sandbox/kit/demo/" + stagedDescriptorName
