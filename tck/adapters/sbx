@@ -199,7 +199,7 @@ release_host_state() {
 		*)
 			if [ -z "$store" ]; then
 				echo "sbx-adapter: could not resolve the skills store; the marker skill $name outlived the run" >&2
-			elif ! marker_body "$name" | diff -q - "$store/$name/SKILL.md" >/dev/null 2>&1; then
+			elif ! only_seeded_marker "$store/$name" "$name"; then
 				# Already gone, or no longer exactly what seeding wrote:
 				# an edited skill belongs to whoever edited it.
 				rm -f "$state/seeded-skill"
@@ -280,6 +280,16 @@ seed_skill_store() {
 	# again rather than following a path out of a file into somewhere
 	# else.
 	printf '%s\n' "$name" >"$state/seeded-skill"
+}
+
+# Whether a marker directory still holds exactly what seeding wrote: one
+# SKILL.md with that body and nothing beside it. A support file someone
+# added is as much theirs as an edit to the body.
+only_seeded_marker() {
+	local dir="$1" name="$2" entries
+	entries="$(find "$dir" -mindepth 1 2>/dev/null)" || return 1
+	[ "$entries" = "$dir/SKILL.md" ] || return 1
+	marker_body "$name" | diff -q - "$dir/SKILL.md" >/dev/null 2>&1
 }
 
 # What seeding writes, and what cleanup expects to find unchanged.
@@ -554,17 +564,18 @@ rm)
 	prepare_state
 	id="$1"
 	# --force because the contract forbids interactive input, and the
-	# suite removes sandboxes that may still be in use. The bookkeeping
-	# goes whatever sbx says: it describes a sandbox nothing will address
-	# again, and keeping it would outlive the run it belonged to.
+	# suite removes sandboxes that may still be in use.
 	set +e
 	run_sbx rm --force "$id" >&2
 	status=$?
 	set -e
-	if [ "$status" -ne 0 ]; then
-		# The sandbox may still be alive and reading what the adapter
-		# seeded, so nothing is taken back yet and the bookkeeping stays
-		# with it: this is not the last sandbox until it is gone.
+	# A sandbox the daemon does not list is gone whatever the removal
+	# said: a recreate whose fresh create failed leaves the suite asking
+	# for an id that no longer exists, and that is cleaned up rather than
+	# leaked. Still there, or a daemon that cannot say, keeps both the
+	# bookkeeping and what the adapter seeded — this is not the last
+	# sandbox until it is gone.
+	if [ "$status" -ne 0 ] && ! absent "$id"; then
 		exit "$status"
 	fi
 	rm -f "$state/$id.create"
