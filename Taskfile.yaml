@@ -131,6 +131,19 @@ tasks:
     cmds:
       - go run ./cmd/kit-tck runtime --adapter {{.ADAPTER}}
 
+  tck:runtime:sbx:
+    desc: >-
+      The same suite against Docker Sandboxes, through the adapter in
+      tck/adapters/sbx. Needs the sbx CLI installed and signed in; the
+      suite drives it through hundreds of sandbox lifecycles, and the
+      first run also builds every fixture kit, which is why the deadline
+      is generous. Pass suite flags after --, as
+      `task tck:runtime:sbx -- --verbose`.
+    vars:
+      TIMEOUT: '{{.TIMEOUT | default "2h"}}'
+    cmds:
+      - go run ./cmd/kit-tck runtime --adapter {{.ROOT_DIR}}/tck/adapters/sbx --timeout {{.TIMEOUT}} {{.CLI_ARGS}}
+
   frontend:build:
     desc: >-
       Verify the frontend builds for both platforms. It produces no image:
