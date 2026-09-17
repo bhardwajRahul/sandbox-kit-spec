@@ -164,8 +164,9 @@ type passwdEntry struct {
 }
 
 // parseID reads a uid or gid the way a runtime must be able to hold one:
-// uid_t and gid_t are 32-bit unsigned, so digits outside that range name
-// an identity no host can honor.
+// uid_t and gid_t are 32-bit unsigned, and the top value is the
+// "leave this one alone" sentinel rather than an identity, so neither it
+// nor anything above it names a user a host can honor.
 func parseID(s string) (int64, bool) {
 	if s == "" {
 		return 0, false
@@ -176,7 +177,7 @@ func parseID(s string) (int64, bool) {
 		}
 	}
 	id, err := strconv.ParseInt(s, 10, 64)
-	if err != nil || id > math.MaxUint32 {
+	if err != nil || id >= math.MaxUint32 {
 		return 0, false
 	}
 	return id, true
@@ -189,14 +190,20 @@ func parseID(s string) (int64, bool) {
 func lookupPasswd(passwd, group, user string) (passwdEntry, bool) {
 	want, wantGroup, hasGroup := strings.Cut(user, ":")
 	// A runtime reads a numeric spelling as a uid, so resolution has to
-	// as well: a row merely named "1000" is not uid 1000.
-	_, numeric := parseID(want)
+	// as well: a row merely named "1000" is not uid 1000, and 001000 is.
+	wantID, numeric := parseID(want)
 	for _, line := range strings.Split(passwd, "\n") {
 		fields := strings.Split(strings.TrimSpace(line), ":")
 		if len(fields) < 6 {
 			continue
 		}
-		if (numeric && fields[2] != want) || (!numeric && fields[0] != want) {
+		if numeric {
+			// By value, not by text: a row's uid field and the image's
+			// spelling can differ and still be the same identity.
+			if rowID, ok := parseID(fields[2]); !ok || rowID != wantID {
+				continue
+			}
+		} else if fields[0] != want {
 			continue
 		}
 		// Matching is not resolving: a row with no login name, whose uid

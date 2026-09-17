@@ -886,14 +886,26 @@ func TestTheFloorJudgesTheShellBitsAgainstTheDeclaredUser(t *testing.T) {
 	require.Empty(t, findings(t, a))
 }
 
-// uid_t is 32-bit unsigned, so digits beyond it name an identity no host
-// can hold.
+// uid_t is 32-bit unsigned and its top value is the "leave this one
+// alone" sentinel, so neither names an identity a host can hold.
 func TestAnOutOfRangeIdDoesNotResolve(t *testing.T) {
+	for _, uid := range []string{"99999999999999999999", "4294967295"} {
+		t.Run(uid, func(t *testing.T) {
+			a := sbxWorkload(t)
+			a.files["/etc/passwd"] = []byte("agent:x:" + uid + ":1000::/home/agent:/bin/bash\n")
+			got := findings(t, a)["sbx-platform-floor"]
+			require.Equal(t, report.Fail, got.Severity)
+			require.Contains(t, got.Detail, "does not resolve")
+		})
+	}
+}
+
+// A runtime resolves a numeric user by value, so a padded spelling names
+// the same identity as the row it matches.
+func TestAPaddedNumericUserResolves(t *testing.T) {
 	a := sbxWorkload(t)
-	a.files["/etc/passwd"] = []byte("agent:x:99999999999999999999:1000::/home/agent:/bin/bash\n")
-	got := findings(t, a)["sbx-platform-floor"]
-	require.Equal(t, report.Fail, got.Severity)
-	require.Contains(t, got.Detail, "does not resolve")
+	a.config.Config.User = "001000"
+	require.Empty(t, findings(t, a))
 }
 
 // Bash resolves a relative BASH_ENV from wherever the agent runs, which
