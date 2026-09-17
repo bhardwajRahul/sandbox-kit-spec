@@ -24,19 +24,28 @@
 #   SBX_TCK_APP_NAME             --app-name for every call, which moves
 #                                sandboxes, the skills store, secrets and
 #                                policy onto state of their own. Needs its
-#                                own `sbx --app-name <name> login`.
+#                                own `sbx --app-name <name> login`, and is
+#                                required when credential@1 is claimed.
 #   SBX_TCK_STATE                where the adapter remembers each
-#                                sandbox's create arguments, for recreate
+#                                sandbox's create arguments, for recreate.
+#                                It has to be a directory only this user
+#                                can write: cleanup acts on what it says.
 #   SBX_TCK_REFUSAL_PATTERN      extended regex deciding which failures
 #                                are deliberate refusals (exit 2)
 #   SBX_TCK_SHARE_SKILLS_STORE   seed the marker skill into a store that
-#                                already holds skills of its own. The
-#                                marker is removed with the last sandbox
-#                                either way.
+#                                already holds skills of its own. Only an
+#                                entry this run created is removed with
+#                                the last sandbox; one that was already
+#                                there is left as it was found.
 set -euo pipefail
 
 sbx_bin="${SBX:-sbx}"
-state="${SBX_TCK_STATE:-${TMPDIR:-/tmp}/kit-tck-sbx}"
+state="${SBX_TCK_STATE:-${TMPDIR:-/tmp}/kit-tck-sbx-$(id -u)}"
+
+# The line seeding writes into the marker's SKILL.md, and cleanup looks
+# for before removing anything: a directory that does not carry it is
+# somebody else's skill under the same name.
+marker_line="Placed by tck/adapters/sbx"
 
 # What this runtime claims to implement. A partial implementation is
 # conforming for what it claims, so the honest list is the one whose
@@ -47,7 +56,9 @@ state="${SBX_TCK_STATE:-${TMPDIR:-/tmp}/kit-tck-sbx}"
 #   §2.3 says an adapter that cannot bind credentials should not claim
 #   the type rather than fail its checks. bind_credential below does the
 #   binding on a best-effort basis, so adding the type here is enough to
-#   try it.
+#   try it — under SBX_TCK_APP_NAME, because the secret is a real one in
+#   a real store and the default installation's is not the run's to
+#   write.
 #
 #   volume@1 is absent because sbx mounts nothing at a declared volume
 #   path: the fixture asks for /data, the sandbox has no such mount, and
@@ -130,6 +141,61 @@ die() {
 	exit 1
 }
 
+# An exact claim rather than a substring: a narrowed or custom list must
+# not arrange host state for a type it does not name, and
+# `not-agent-skills@1` or `agent-skills@10` contain one that it does.
+claims() {
+	capabilities | grep -qxF "$1"
+}
+
+# stat's spellings differ between the BSD and GNU tools.
+stat_owner() { stat -f '%u' "$1" 2>/dev/null || stat -c '%u' "$1"; }
+stat_mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
+
+# The adapter reads cleanup targets out of this directory and acts on
+# them, so a directory anyone else can write is a way to aim a removal.
+# Checked rather than assumed, because the default path is predictable.
+prepare_state() {
+	if [ ! -d "$state" ]; then
+		mkdir -p "$(dirname "$state")"
+		mkdir -m 700 "$state"
+	fi
+	[ ! -L "$state" ] || die "$state is a symlink; the adapter's state has to be a directory it owns"
+	[ "$(stat_owner "$state")" = "$(id -u)" ] ||
+		die "$state belongs to another user; set SBX_TCK_STATE to a directory of this one's"
+	[ "$(stat_mode "$state")" = 700 ] ||
+		die "$state is writable beyond its owner; the adapter acts on what this directory says"
+}
+
+# Host state the adapter created, taken back once the last sandbox it
+# holds is gone. Only what seeding recorded, and only while it still
+# looks like what seeding wrote — a skill a user installed is never the
+# adapter's to remove.
+release_host_state() {
+	if ls "$state"/*.create >/dev/null 2>&1; then
+		return 0
+	fi
+	if [ -f "$state/seeded-skill" ]; then
+		local name store
+		name="$(cat "$state/seeded-skill")"
+		store="$(skills_store)"
+		case "$name" in
+		"" | . | .. | */*) ;;
+		*)
+			if [ -n "$store" ] && grep -qF "$marker_line" "$store/$name/SKILL.md" 2>/dev/null; then
+				rm -rf "${store:?}/${name:?}"
+			fi
+			;;
+		esac
+		rm -f "$state/seeded-skill"
+	fi
+	if [ -f "$state/bound-credential" ]; then
+		run_sbx secret rm kit-tck -f >/dev/null 2>&1 ||
+			echo "sbx-adapter: the kit-tck credential outlived the run; remove it with 'sbx secret rm kit-tck'" >&2
+		rm -f "$state/bound-credential"
+	fi
+}
+
 # The host's shared skills store, as sbx itself resolves it: the path is
 # app-scoped and platform-specific, and asking is the only way to seed
 # the store the sandbox will actually be given.
@@ -149,10 +215,7 @@ seed_skill_store() {
 	# the claim is what decides whether the store is touched at all: a
 	# run that narrowed its claims has no skills checks to answer and no
 	# business writing to a store on their behalf.
-	case "$(capabilities)" in
-	*com.docker.sandbox/agent-skills@1*) ;;
-	*) return 0 ;;
-	esac
+	claims com.docker.sandbox/agent-skills@1 || return 0
 	store="$(skills_store)"
 	[ -n "$store" ] || die "could not resolve the skills store from 'sbx skills ls --json'"
 
@@ -171,19 +234,23 @@ seed_skill_store() {
 		done
 	fi
 
-	mkdir -p "$store/$name"
-	# Remembered so it can be taken back out: the marker is the
-	# adapter's, not the user's, and a store that was clean before a run
-	# should be clean after it. The rm verb removes it with the last
-	# sandbox.
-	printf '%s\n' "$store/$name" >"$state/seeded-skill"
+	# mkdir without -p is the claim: it succeeds only if this run created
+	# the entry, so an entry that was already there is left as it was
+	# found and never recorded as the adapter's to remove.
+	mkdir -p "$store"
+	if ! mkdir "$store/$name" 2>/dev/null; then
+		return 0
+	fi
+	# The name, not the path: cleanup resolves the store again rather
+	# than following a path out of a file into somewhere else.
+	printf '%s\n' "$name" >"$state/seeded-skill"
 	cat >"$store/$name/SKILL.md" <<EOF
 ---
 name: $name
 description: Marker skill the conformance suite looks for in the shared store
 ---
 
-Placed by tck/adapters/sbx so a mounted store is distinguishable from an
+$marker_line so a mounted store is distinguishable from an
 empty one. Safe to delete.
 EOF
 }
@@ -197,19 +264,31 @@ EOF
 bind_credential() {
 	local secret="${KIT_TCK_BOUND_SECRET:-}"
 	[ -n "$secret" ] || return 0
-	case "$(capabilities)" in
-	*com.docker.sandbox/credential@1*) ;;
-	*) return 0 ;;
-	esac
+	claims com.docker.sandbox/credential@1 || return 0
+	# This writes a real secret into a real store under a name a user may
+	# keep one under. An app of its own is what makes that the suite's
+	# business rather than the default installation's.
+	[ -n "${SBX_TCK_APP_NAME:-}" ] ||
+		die "credential@1 binds the fixture's secret into the app's secret store; run under SBX_TCK_APP_NAME so the default installation's is left alone"
+	if run_sbx secret ls --json 2>/dev/null | grep -q '"kit-tck"'; then
+		echo "sbx-adapter: a kit-tck secret is already bound; leaving it, and its checks will report what the sandbox saw" >&2
+		return 0
+	fi
 	# example.com is the host the fixture's credential injects into at
 	# runtime, and binding any other one would present the sandbox a
 	# sentinel the proxy never substitutes.
-	run_sbx secret set-custom \
+	if run_sbx secret set-custom \
 		--name kit-tck \
 		--host example.com \
 		--env KIT_TCK_TOKEN \
-		--value "$secret" >/dev/null 2>&1 ||
+		--value "$secret" >/dev/null 2>&1; then
+		# Remembered for the same reason the marker skill is: the
+		# binding is the run's, and the store should hold what it held
+		# before once the last sandbox is gone.
+		: >"$state/bound-credential"
+	else
 		echo "sbx-adapter: binding the kit-tck credential failed; its checks will report what the sandbox saw" >&2
+	fi
 }
 
 capabilities() {
@@ -253,10 +332,18 @@ create_sandbox() {
 	# narration goes where diagnostics go.
 	printf '%s\n' "$output" >&2
 	if [ "$status" -ne 0 ]; then
+		# A non-zero create is not proof that nothing was created: the
+		# daemon may have made the sandbox and the CLI failed after it.
+		# The name is the adapter's own, so asking for its removal
+		# cannot reach anything of the user's.
+		run_sbx rm --force "$id" >/dev/null 2>&1 || true
 		# §2.4 has the suite address only the ids create returned, so a
 		# create that returned none leaves nothing to recreate or remove
 		# and its bookkeeping goes with it.
 		rm -f "$state/$id.create"
+		# No id means no cleanup callback, so what this create arranged
+		# on the host has to be taken back here or not at all.
+		release_host_state
 		if printf '%s' "$output" | grep -Eqi "$refusal_pattern"; then
 			exit 2
 		fi
@@ -275,7 +362,7 @@ create_sandbox() {
 
 verb="${1:-}"
 shift || true
-mkdir -p "$state"
+prepare_state
 
 case "$verb" in
 capabilities)
@@ -386,17 +473,18 @@ rm)
 	run_sbx rm --force "$id" >&2
 	status=$?
 	set -e
-	rm -f "$state/$id.create"
-	# The seeded marker goes with the last sandbox the adapter holds:
-	# nothing is left to read the store, and leaving it would grow a
-	# user's store by an entry per run. Only the path seeding recorded is
-	# removed, so a skill the user installed is never touched.
-	if [ -f "$state/seeded-skill" ] && ! ls "$state"/*.create >/dev/null 2>&1; then
-		seeded="$(cat "$state/seeded-skill")"
-		[ -n "$seeded" ] && rm -rf "$seeded"
-		rm -f "$state/seeded-skill"
+	if [ "$status" -ne 0 ]; then
+		# The sandbox may still be alive and reading what the adapter
+		# seeded, so nothing is taken back yet and the bookkeeping stays
+		# with it: this is not the last sandbox until it is gone.
+		exit "$status"
 	fi
-	exit "$status"
+	rm -f "$state/$id.create"
+	# What the adapter arranged on the host goes with the last sandbox it
+	# holds: nothing is left to read the store, and leaving it would grow
+	# a user's store by an entry per run.
+	release_host_state
+	exit 0
 	;;
 
 version | --version | -version)
