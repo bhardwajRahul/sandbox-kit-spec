@@ -918,6 +918,22 @@ func TestAPaddedNumericUserResolves(t *testing.T) {
 	require.Empty(t, findings(t, a))
 }
 
+// The host resolves the literal value, so a stray space is a user that
+// does not exist rather than the one it resembles.
+func TestTheFloorResolvesTheUserTheImageLiterallyDeclares(t *testing.T) {
+	a := sbxWorkload(t)
+	a.config.Config.User = " agent"
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+
+	a = sbxWorkload(t)
+	a.config.Config.User = "   "
+	got = findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "declares no user")
+}
+
 // Bash resolves a relative BASH_ENV from wherever the agent runs, which
 // is not the artifact root the check would otherwise look in.
 func TestARelativeBashEnvIsWarned(t *testing.T) {

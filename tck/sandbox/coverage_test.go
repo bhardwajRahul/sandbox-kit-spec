@@ -99,7 +99,10 @@ var kitCovers = map[string][]string{
 	// The floor a workload promises by declaring sbx@1 is a property of
 	// the artifact, so the kit suite is where it is judged: the shells
 	// the host runs things through, and an identity it can resolve out
-	// of the image before the container exists.
+	// of the image before the container exists. For the shells that is
+	// presence, kind, and permission for the declared user; behaving
+	// like a shell is not something an artifact can be asked, and shows
+	// up wherever the host uses one.
 	"sbx-platform-floor": {
 		"sbx@1/posix-shell-present",
 		"sbx@1/bash-present",

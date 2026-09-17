@@ -60,6 +60,14 @@ A workload declaring this type:
   whatever directory the agent happens to run from rather than against
   the image.
 
+A kit artifact is judged without being run, so what the two shells are held to
+before publication is presence, kind, and permission for the declared
+user — an ordinary file at the path with an execute bit that identity
+can use. Whether what is there behaves as `sh` or as `bash` is not
+something image metadata can state, and an image that puts something
+else at either path fails wherever the host uses it: hooks, install
+steps, and the agent's own launch.
+
 ## Runtime behavior
 
 A conforming runtime:

@@ -477,8 +477,12 @@ var checks = []check{
 			if err != nil {
 				return fail("read image config: %v", err)
 			}
-			user := strings.TrimSpace(cfg.Config.User)
-			if user == "" {
+			// Not trimmed: the host resolves the literal value, so an
+			// image declaring " agent" is asking for a user that does
+			// not exist, and certifying it against "agent" would hide
+			// exactly that.
+			user := cfg.Config.User
+			if strings.TrimSpace(user) == "" {
 				return fail("image config declares no user; declaring sbx@1 asks the host to honor an identity the image does not state")
 			}
 			passwd, present, err := s.artifact.ReadFile(ctx, "/etc/passwd")
