@@ -1,0 +1,615 @@
+#!/usr/bin/env bash
+# An adapter that drives Docker Sandboxes — the `sbx` CLI — through the
+# conformance contract in docs/spec/conformance.md:
+#
+#   kit-tck runtime --adapter tck/adapters/sbx   (or: task tck:runtime:sbx)
+#
+# Every verb maps onto a published sbx command, with two exceptions worth
+# knowing before reading a report:
+#
+#   - `recreate` has no sbx command. It is an `sbx rm` followed by a
+#     create under the same name from the arguments the first create
+#     used — the closest sbx offers to replacing a container in place.
+#     Whether declared volume state survives that is exactly what the
+#     volume check judges, so the adapter neither arranges nor pretends.
+#   - `capabilities` is a claim, not a discovery: sbx has no command that
+#     reports which capability types it implements, so the list lives
+#     here. Claiming one sbx does not implement produces failures rather
+#     than silence, which is the direction the default errs in.
+#
+# Environment:
+#   SBX                          the CLI to drive (default: sbx)
+#   SBX_TCK_CAPABILITIES         comma- or newline-separated claim list,
+#                                replacing the default below
+#   SBX_TCK_APP_NAME             --app-name for every call, which moves
+#                                sandboxes, the skills store, secrets and
+#                                policy onto state of their own. Needs its
+#                                own `sbx --app-name <name> login`, and is
+#                                required when credential@1 is claimed —
+#                                which also passes the fixture's secret
+#                                through sbx's argv, since set-custom
+#                                takes no protected input.
+#   SBX_TCK_STATE                where the adapter remembers each
+#                                sandbox's create arguments, for recreate.
+#                                It has to be a directory only this user
+#                                can write: cleanup acts on what it says.
+#   SBX_TCK_REFUSAL_PATTERN      extended regex deciding which failures
+#                                are deliberate refusals (exit 2)
+#   SBX_TCK_SHARE_SKILLS_STORE   seed the marker skill into a store that
+#                                already holds skills of its own. Only an
+#                                entry this run created is removed with
+#                                the last sandbox; one that was already
+#                                there is left as it was found.
+set -euo pipefail
+
+sbx_bin="${SBX:-sbx}"
+state="${SBX_TCK_STATE:-${TMPDIR:-/tmp}/kit-tck-sbx-$(id -u)${SBX_TCK_APP_NAME:+-$SBX_TCK_APP_NAME}}"
+
+# The line seeding writes into the marker's SKILL.md, and cleanup looks
+# for before removing anything: a directory that does not carry it is
+# somebody else's skill under the same name.
+marker_line="Placed by tck/adapters/sbx"
+
+# What this runtime claims to implement. A partial implementation is
+# conforming for what it claims, so the honest list is the one whose
+# checks sbx can actually answer:
+#
+#   credential@1 is absent because binding the fixture's `kit-tck`
+#   service means storing a secret sbx has no built-in service for, and
+#   §2.3 says an adapter that cannot bind credentials should not claim
+#   the type rather than fail its checks. bind_credential below does the
+#   binding on a best-effort basis, so adding the type here is enough to
+#   try it — under SBX_TCK_APP_NAME, because the secret is a real one in
+#   a real store and the default installation's is not the run's to
+#   write.
+#
+#   volume@1 is absent because sbx mounts nothing at a declared volume
+#   path: the fixture asks for /data, the sandbox has no such mount, and
+#   a write there fails outright — so no observation about persistence
+#   can be made at all. The recreate this adapter offers, a remove and a
+#   fresh create, does discard the writable layer that check needs
+#   discarded, so the type becomes claimable the day the mount arrives.
+#
+#   port@1, usb-device@1, agent-sessions@1 and kit-registry@1 are absent
+#   because the contract gives the suite no host-side observation for
+#   them; they are skipped either way, and claiming a type nothing can
+#   judge states more than a report can support.
+#
+#   sbx@1 is present for the opposite reason: it is the platform contract
+#   this runtime is named for, so a duty it does not meet is a finding
+#   worth reading rather than a type to pass over.
+default_capabilities="\
+com.docker.sandbox/sbx@1
+com.docker.sandbox/lifecycle@1
+com.docker.sandbox/network-policy@1
+com.docker.sandbox/network-policy@2
+com.docker.sandbox/agent-context@1
+com.docker.sandbox/agent-skills@1
+com.docker.sandbox/resources@1
+com.docker.sandbox/privileged@1"
+
+# Which failures are refusals. The distinction is load-bearing: several
+# requirements are satisfied only by refusing something, and an adapter
+# that called every non-zero status a refusal would satisfy them all
+# while being unable to create a sandbox at all. sbx reports a policy
+# decision and a breakage the same way — a non-zero status and an ERROR
+# line — so the difference has to be read out of the message. Every
+# token below is one sbx emits; a phrase it never prints would be dead
+# weight at best, and at worst would grow into one it does print for a
+# breakage.
+#
+# The daemon draws the distinction itself where it answers over HTTP: a
+# request it understood and declined comes back 400, and one that broke
+# on the way comes back 500 — a kit requiring the skills store while the
+# host has skills off is the former, a hook that could not write its file
+# is the latter. The remaining patterns are the CLI's own refusals, which
+# never reach the daemon. All of them are narrow on purpose: a refusal
+# reported as an error fails a check loudly, while an error reported as a
+# refusal passes one quietly.
+refusal_pattern="${SBX_TCK_REFUSAL_PATTERN:-\
+request failed: 400|\
+does not support|\
+does not implement|\
+exceeds the number of available CPUs}"
+
+# The suite hands the adapter a HOME that reaches the real one through a
+# sentinel-named symlink (§2.3), so a runtime copying the value into a
+# hook betrays where it came from. sbx cannot be driven through it: its
+# daemon socket lives under HOME, and the extra path components push that
+# socket past the 104-byte sun_path limit, so every call tries to start a
+# second daemon instead of talking to the running one. The physical path
+# is what sbx gets.
+#
+# The cost, stated where a reader of the report will find it: a runtime
+# that copies the host's HOME into a hook environment leaks an unmarked
+# path, which lifecycle@1/hook-env-restricted then cannot attribute to
+# the host. Every other decorated value still carries the sentinel —
+# KIT_TCK_HOST_SENTINEL itself, TERM, HOSTNAME, SHLVL, OLDPWD, _, the
+# PATH component, and PWD, which this leaves alone.
+real_home="$(cd -P "${HOME:-/}" 2>/dev/null && pwd -P)" || real_home="${HOME:-}"
+
+# Every call carries --app-name when one is configured, so an isolated
+# run cannot reach the sandboxes, secrets, skills or policy of the
+# default installation.
+run_sbx() {
+	if [ -n "${SBX_TCK_APP_NAME:-}" ]; then
+		HOME="$real_home" command "$sbx_bin" --app-name "$SBX_TCK_APP_NAME" "$@"
+	else
+		HOME="$real_home" command "$sbx_bin" "$@"
+	fi
+}
+
+die() {
+	echo "sbx-adapter: $*" >&2
+	exit 1
+}
+
+# An exact claim rather than a substring: a narrowed or custom list must
+# not arrange host state for a type it does not name, and
+# `not-agent-skills@1` or `agent-skills@10` contain one that it does.
+claims() {
+	local list
+	# Captured, not piped: grep -q stops reading at the first match, and
+	# under pipefail the producer's SIGPIPE would come back as no match.
+	list="$(capabilities)"
+	grep -qxF "$1" <<<"$list"
+}
+
+# stat's spellings differ between the GNU and BSD tools. GNU first,
+# because GNU stat reads -f as "report on the filesystem" and succeeds:
+# the BSD spelling tried first would return a filesystem report here
+# rather than failing over.
+stat_owner() { stat -c '%u' "$1" 2>/dev/null || stat -f '%u' "$1"; }
+stat_mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
+
+# The adapter reads cleanup targets out of this directory and acts on
+# them, so a directory anyone else can write is a way to aim a removal.
+# Checked rather than assumed, because the default path is predictable.
+prepare_state() {
+	if [ ! -d "$state" ]; then
+		mkdir -p "$(dirname "$state")"
+		mkdir -m 700 "$state"
+	fi
+	[ ! -L "$state" ] || die "$state is a symlink; the adapter's state has to be a directory it owns"
+	[ "$(stat_owner "$state")" = "$(id -u)" ] ||
+		die "$state belongs to another user; set SBX_TCK_STATE to a directory of this one's"
+	[ "$(stat_mode "$state")" = 700 ] ||
+		die "$state is writable beyond its owner; the adapter acts on what this directory says"
+}
+
+# Host state the adapter created, taken back once the last sandbox it
+# holds is gone. Only what seeding recorded, and only while it still
+# looks like what seeding wrote — a skill a user installed is never the
+# adapter's to remove.
+release_host_state() {
+	if ls "$state"/*.create >/dev/null 2>&1; then
+		return 0
+	fi
+	if [ -f "$state/seeded-skill" ]; then
+		local name store
+		name="$(cat "$state/seeded-skill")"
+		# Explicitly, because under set -e a failing skills_store would
+		# end cleanup here: the marker would go unmentioned, the
+		# credential unremoved, and rm would report a failure for a
+		# sandbox that is already gone.
+		store="$(skills_store 2>/dev/null)" || store=""
+		case "$name" in
+		"" | . | .. | */*)
+			# Nothing seeding could have written, so nothing to take
+			# back and nothing to remember.
+			rm -f "$state/seeded-skill"
+			;;
+		*)
+			if [ -z "$store" ]; then
+				echo "sbx-adapter: could not resolve the skills store; the marker skill $name outlived the run" >&2
+			elif ! only_seeded_marker "$store/$name" "$name"; then
+				# Already gone, or no longer exactly what seeding wrote:
+				# an edited skill belongs to whoever edited it.
+				rm -f "$state/seeded-skill"
+			elif rm -rf "${store:?}/${name:?}"; then
+				rm -f "$state/seeded-skill"
+			else
+				echo "sbx-adapter: the marker skill $store/$name outlived the run; remove it by hand" >&2
+			fi
+			;;
+		esac
+	fi
+	# A binding the adapter stranded is remembered until a person takes
+	# it out, and said again every time cleanup runs. Remembered rather
+	# than retried: the removal already failed once, and by the next
+	# attempt the name could hold a binding someone repaired or replaced,
+	# which nothing here can tell from this one.
+	if [ -f "$state/stranded-credential" ]; then
+		echo "sbx-adapter: a kit-tck binding an earlier run could not remove is still in the store; 'sbx secret rm kit-tck' takes it out, then delete $state/stranded-credential" >&2
+	fi
+	if [ -f "$state/bound-credential" ]; then
+		if run_sbx secret rm kit-tck -f >/dev/null 2>&1; then
+			rm -f "$state/bound-credential"
+		else
+			mv -f "$state/bound-credential" "$state/stranded-credential"
+			echo "sbx-adapter: the kit-tck credential outlived the run; 'sbx secret rm kit-tck' takes it out, then delete $state/stranded-credential" >&2
+		fi
+	fi
+}
+
+# The host's shared skills store, as sbx itself resolves it: the path is
+# app-scoped and platform-specific, and asking is the only way to seed
+# the store the sandbox will actually be given.
+skills_store() {
+	run_sbx skills ls --json | sed -n 's/.*"store"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+}
+
+# §2.3 requires a known entry in the store before agent-skills@1 is
+# claimed: the capability permits no mount when the store is empty, so
+# without a marker the suite cannot tell a mounted store from an empty
+# directory. Written directly rather than through `sbx skills add`, which
+# installs from a git repository.
+seed_skill_store() {
+	local name="${KIT_TCK_SKILL_NAME:-}" store
+	[ -n "$name" ] || return 0
+	# The suite arranges the known values whatever a runtime claims, so
+	# the claim is what decides whether the store is touched at all: a
+	# run that narrowed its claims has no skills checks to answer and no
+	# business writing to a store on their behalf.
+	claims com.docker.sandbox/agent-skills@1 || return 0
+	store="$(skills_store)"
+	[ -n "$store" ] || die "could not resolve the skills store from 'sbx skills ls --json'"
+
+	# §2.3 also says a runtime should not point these fixtures at a store
+	# a user depends on. Seeding a store that holds someone's skills is
+	# that, so it takes saying so — SBX_TCK_APP_NAME is the way to get a
+	# store of one's own.
+	if [ -z "${SBX_TCK_SHARE_SKILLS_STORE:-}" ] && [ -d "$store" ]; then
+		local entry
+		for entry in "$store"/*; do
+			[ -d "$entry" ] || continue
+			case "${entry##*/}" in
+			"$name") ;;
+			*) die "the skills store $store already holds $(basename "$entry"); run under SBX_TCK_APP_NAME for a store of its own, or set SBX_TCK_SHARE_SKILLS_STORE=1 to seed this one" ;;
+			esac
+		done
+	fi
+
+	# mkdir without -p is the claim: it succeeds only if this run created
+	# the entry, so an entry that was already there is left as it was
+	# found and never recorded as the adapter's to remove.
+	mkdir -p "$store"
+	if ! mkdir "$store/$name" 2>/dev/null; then
+		# Already there is fine and stays untouched; anything else is
+		# this run failing to arrange what its claim promises.
+		[ -d "$store/$name" ] ||
+			die "could not create the marker skill at $store/$name"
+		return 0
+	fi
+	if ! marker_body "$name" >"$store/$name/SKILL.md"; then
+		rm -rf "${store:?}/${name:?}"
+		die "could not write the marker skill at $store/$name"
+	fi
+	# Recorded once it exists, and by name: cleanup resolves the store
+	# again rather than following a path out of a file into somewhere
+	# else.
+	printf '%s\n' "$name" >"$state/seeded-skill"
+}
+
+# Whether a marker directory still holds exactly what seeding wrote: one
+# SKILL.md with that body and nothing beside it. A support file someone
+# added is as much theirs as an edit to the body.
+only_seeded_marker() {
+	local dir="$1" name="$2" entries
+	entries="$(find "$dir" -mindepth 1 2>/dev/null)" || return 1
+	[ "$entries" = "$dir/SKILL.md" ] || return 1
+	marker_body "$name" | diff -q - "$dir/SKILL.md" >/dev/null 2>&1
+}
+
+# What seeding writes, and what cleanup expects to find unchanged.
+marker_body() {
+	cat <<EOF
+---
+name: $1
+description: Marker skill the conformance suite looks for in the shared store
+---
+
+$marker_line so a mounted store is distinguishable from an
+empty one. Safe to delete.
+EOF
+}
+
+# §2.3 requires the fixture credential service's secret to be bound on the
+# host, and the sandbox to see a sentinel rather than the value. sbx has
+# no built-in `kit-tck` service, so this is a custom secret: the env name
+# is the one the fixture declares, and the host is the one its network
+# policy allows. Best effort by design — the type is unclaimed by default,
+# and a runtime that cannot bind credentials should not claim it.
+# What has to hold before anything is written to the host. Checked first
+# because seeding leaves state behind, and a die after that would leave
+# it with nothing to take it back.
+check_prerequisites() {
+	if [ -n "${KIT_TCK_BOUND_SECRET:-}" ] && claims com.docker.sandbox/credential@1; then
+		# Binding writes a real secret into a real store under a name a
+		# user may keep one under. An app of its own is what makes that
+		# the suite's business rather than the default installation's.
+		[ -n "${SBX_TCK_APP_NAME:-}" ] ||
+			die "credential@1 binds the fixture's secret into the app's secret store; run under SBX_TCK_APP_NAME so the default installation's is left alone"
+	fi
+}
+
+bind_credential() {
+	local secret="${KIT_TCK_BOUND_SECRET:-}"
+	[ -n "$secret" ] || return 0
+	claims com.docker.sandbox/credential@1 || return 0
+	local bound
+	# Captured for the same reason claims() is: a short-circuiting grep
+	# can leave the producer on a SIGPIPE that pipefail reads as no
+	# match, and this one decides whether a real secret is replaced.
+	if ! bound="$(run_sbx secret ls --json 2>/dev/null)"; then
+		# Fail closed: a listing that could not be read says nothing
+		# about what is in the store, and this is the only thing
+		# standing between the fixture's secret and a binding of the
+		# user's.
+		echo "sbx-adapter: could not list secrets, so the kit-tck binding is left alone; its checks will report what the sandbox saw" >&2
+		return 0
+	fi
+	if grep -q '"kit-tck"' <<<"$bound"; then
+		echo "sbx-adapter: a kit-tck secret is already bound; leaving it, and its checks will report what the sandbox saw" >&2
+		return 0
+	fi
+	# example.com is the host the fixture's credential injects into at
+	# runtime, and binding any other one would present the sandbox a
+	# sentinel the proxy never substitutes.
+	#
+	# --value puts the secret in sbx's argv, where a process of this
+	# user's can read it while the command runs. set-custom offers no
+	# protected input — --token carries the same warning, and --command
+	# is re-run by the daemon, which does not have the suite's
+	# environment — so the exposure is stated rather than hidden: this is
+	# the suite's throwaway fixture value, and credential@1 stays
+	# unclaimed by default.
+	if run_sbx secret set-custom \
+		--name kit-tck \
+		--host example.com \
+		--env KIT_TCK_TOKEN \
+		--value "$secret" >/dev/null 2>&1; then
+		# Remembered for the same reason the marker skill is: the
+		# binding is the run's, and the store should hold what it held
+		# before once the last sandbox is gone.
+		: >"$state/bound-credential"
+	else
+		echo "sbx-adapter: binding the kit-tck credential failed; its checks will report what the sandbox saw" >&2
+	fi
+}
+
+capabilities() {
+	# Unset takes the default; set-and-empty is a runtime claiming
+	# nothing, which the contract allows and :- could not express.
+	printf '%s\n' "${SBX_TCK_CAPABILITIES-$default_capabilities}" | tr ',' '\n' |
+		sed '/^[[:space:]]*$/d;s/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+# §2.5 leaves the reference form to the runtime, and sbx reads a bare
+# relative path as a repository on Docker Hub — a local kit has to say so
+# with ./ or an absolute path. The suite resolves its fixture root
+# absolutely, so this only matters for a hand-typed run, where being
+# silently sent to a registry is a confusing way to learn the rule.
+kit_reference() {
+	case "$1" in
+	/* | ./* | ../*) printf '%s\n' "$1" ;;
+	*)
+		if [ -e "$1" ]; then printf './%s\n' "$1"; else printf '%s\n' "$1"; fi
+		;;
+	esac
+}
+
+# Whether the daemon positively says a sandbox is not there. A listing it
+# could not produce is not an answer: unreachable is unknown, and unknown
+# is not absent.
+absent() {
+	local listing
+	listing="$(run_sbx ls --json 2>/dev/null)" || return 1
+	! grep -qF "\"$1\"" <<<"$listing"
+}
+
+# A name sbx accepts (letters, digits, hyphens) that says where it came
+# from, so a sandbox the suite could not remove is recognizable on sight.
+new_id() {
+	printf 'kit-tck-%s\n' "$(od -An -tx1 -N5 /dev/urandom | tr -d ' \n')"
+}
+
+# One create, from the argument list a later recreate can replay. The
+# refusal classification lives here because create is where policy
+# decisions happen: an unsatisfiable requirement, a capability the
+# runtime declines, a host setting that withholds what a kit requires.
+create_sandbox() {
+	local id="$1"
+	shift
+	local output status
+	set +e
+	output="$(run_sbx "$@" 2>&1)"
+	status=$?
+	set -e
+	# sbx narrates a create on stdout; only the id belongs there, so the
+	# narration goes where diagnostics go.
+	printf '%s\n' "$output" >&2
+	if [ "$status" -ne 0 ]; then
+		# A non-zero create is not proof that nothing was created: the
+		# daemon may have made the sandbox and the CLI failed after it.
+		# The name is the adapter's own, so asking for its removal
+		# cannot reach anything of the user's.
+		if run_sbx rm --force "$id" >/dev/null 2>&1 || absent "$id"; then
+			# §2.4 has the suite address only the ids create returned, so
+			# a create that returned none leaves nothing to recreate or
+			# remove and its bookkeeping goes with it.
+			rm -f "$state/$id.create"
+			# No id means no cleanup callback, so what this create
+			# arranged on the host has to be taken back here or not at
+			# all.
+			release_host_state
+		else
+			# Neither removed nor known to be gone — a daemon that
+			# cannot answer says nothing about whether the sandbox is
+			# there. The record stays with it, and so does the host
+			# state it may still be reading.
+			echo "sbx-adapter: $id survived a failed create and could not be removed; its record and the host state it may be using are left in place" >&2
+		fi
+		if grep -Eqi "$refusal_pattern" <<<"$output"; then
+			exit 2
+		fi
+		# Exit 2 is the contract's word for a refusal, so passing sbx's
+		# own 2 through would report one where nothing was refused, and
+		# every requirement satisfied by refusing something would be
+		# satisfied by this breakage instead. An unclassified failure is
+		# a failure, whatever number it arrived as.
+		if [ "$status" -eq 2 ]; then
+			status=1
+		fi
+		exit "$status"
+	fi
+	printf '%s\n' "$id"
+}
+
+verb="${1:-}"
+shift || true
+
+case "$verb" in
+capabilities)
+	capabilities
+	;;
+
+create)
+	# Only the verbs that keep records need one.
+	prepare_state
+	kits=()
+	kit_args=()
+	skills_mode=""
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--arg)
+			# The contract's name=value is sbx's own --kit-arg spelling,
+			# which applies the value to every kit that declares the
+			# argument.
+			kit_args+=("--kit-arg" "$2")
+			shift 2
+			;;
+		--skills-host-mode)
+			skills_mode="$2"
+			shift 2
+			;;
+		*)
+			kits+=("$1")
+			shift
+			;;
+		esac
+	done
+	[ "${#kits[@]}" -gt 0 ] || die "create needs at least one kit reference"
+
+	# §2.3: an adapter claiming agent-skills@1 must default the host's
+	# setting to its most permissive value, because access is the
+	# narrower of the host's setting and the kit's — a restrictive
+	# default would leave the kit's half unobservable. sbx defaults to
+	# readonly (or skills.defaultMode), so the default is stated here
+	# rather than inherited.
+	[ -n "$skills_mode" ] || skills_mode="readwrite"
+
+	check_prerequisites
+	seed_skill_store
+	bind_credential
+
+	id="$(new_id)"
+	# The first reference is the sandbox kit and the rest are mixins,
+	# which is both what the suite passes and the only shape sbx's CLI
+	# takes. A set that named them in another order would fail with sbx
+	# saying so, rather than being silently rearranged here.
+	argv=(create --name "$id" --quiet --skills "$skills_mode" --pull missing "$(kit_reference "${kits[0]}")")
+	for kit in "${kits[@]:1}"; do
+		argv+=(--kit "$(kit_reference "$kit")")
+	done
+	argv+=(${kit_args[@]+"${kit_args[@]}"})
+
+	# Remembered before the create runs, so a create that half-succeeded
+	# still leaves a recreate and a removal something to address.
+	# NUL-delimited: an argument value is an arbitrary string, and a
+	# newline inside one would come back from a line-delimited file as
+	# two arguments.
+	printf '%s\0' "${argv[@]}" >"$state/$id.create"
+	create_sandbox "$id" "${argv[@]}"
+	;;
+
+exec)
+	id="$1"
+	shift
+	[ "${1:-}" = "--" ] && shift
+	# The argv passes through unmodified and the status proxies back:
+	# checks compare bytes and read exit codes, so neither may be
+	# rewritten here. sbx allocates no TTY unless asked, which is what
+	# the contract requires.
+	set +e
+	run_sbx exec "$id" "$@"
+	status=$?
+	set -e
+	exit "$status"
+	;;
+
+stop)
+	run_sbx stop "$1" >&2
+	;;
+
+start)
+	# `sbx run` is how a stopped sandbox comes back; --detached starts it
+	# and returns instead of opening an agent session, and the name alone
+	# identifies it — the kit set comes from the sandbox's own spec.
+	run_sbx run --name "$1" --detached >&2
+	;;
+
+recreate)
+	# Only the verbs that keep records need one.
+	prepare_state
+	id="$1"
+	[ -f "$state/$id.create" ] ||
+		die "no create arguments remembered for $id; recreate needs the composition the sandbox was made from"
+	# sbx has no verb that replaces a sandbox's container in place, so
+	# this is the two operations that come closest: the writable layer
+	# goes with the old sandbox, and the new one is built from the
+	# arguments that built the first. Anything the runtime keeps across
+	# it, it keeps deliberately.
+	run_sbx rm --force "$id" >&2
+	argv=()
+	while IFS= read -r -d '' arg; do argv+=("$arg"); done <"$state/$id.create"
+	create_sandbox "$id" "${argv[@]}" >/dev/null
+	;;
+
+rm)
+	# Only the verbs that keep records need one.
+	prepare_state
+	id="$1"
+	# --force because the contract forbids interactive input, and the
+	# suite removes sandboxes that may still be in use.
+	set +e
+	run_sbx rm --force "$id" >&2
+	status=$?
+	set -e
+	# A sandbox the daemon does not list is gone whatever the removal
+	# said: a recreate whose fresh create failed leaves the suite asking
+	# for an id that no longer exists, and that is cleaned up rather than
+	# leaked. Still there, or a daemon that cannot say, keeps both the
+	# bookkeeping and what the adapter seeded — this is not the last
+	# sandbox until it is gone.
+	if [ "$status" -ne 0 ] && ! absent "$id"; then
+		exit "$status"
+	fi
+	rm -f "$state/$id.create"
+	# What the adapter arranged on the host goes with the last sandbox it
+	# holds: nothing is left to read the store, and leaving it would grow
+	# a user's store by an entry per run.
+	release_host_state
+	exit 0
+	;;
+
+version | --version | -version)
+	echo "sbx-adapter for $(run_sbx version 2>&1 | head -1)"
+	;;
+
+*)
+	# Not exit 2: an unknown verb is this adapter failing to understand
+	# the suite, not the runtime declining something it understood.
+	die "unknown verb ${verb:-<none>}"
+	;;
+esac

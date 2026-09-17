@@ -2,6 +2,11 @@
 # workload ships the probes those checks call. They live here, in the kit
 # under test, because the contract passes exec argv through unmodified: an
 # adapter cannot be expected to provide them.
+#
+# Each probe carries its mode on the COPY rather than earning it from a
+# later RUN chmod: the platform floor runs builds as the unprivileged
+# agent user, which cannot chmod what COPY laid down as root, so a build
+# step would fail on every conforming base image.
 FROM docker/sandbox-templates:claude-code-docker
 
 # Reports whether a URL is reachable. Exit 0 is reachable; 7 is a refusal
@@ -19,7 +24,7 @@ FROM docker/sandbox-templates:claude-code-docker
 # succeeded in the same sandbox, ruling out a general outage. The residual
 # ambiguity — the origin itself failing — is exactly an origin outage, and
 # no probe against a public origin can see through that.
-COPY <<'PROBE' /usr/local/bin/kit-tck-probe
+COPY --chmod=0755 <<'PROBE' /usr/local/bin/kit-tck-probe
 #!/bin/sh
 body=$(curl --silent --max-time 10 "$1")
 status=$?
@@ -51,7 +56,7 @@ PROBE
 #
 # Curl's own exit 7 (failed to connect) is remapped so it cannot be read
 # as this probe's sentinel; 101 is outside curl's range.
-COPY <<'HTTPPROBE' /usr/local/bin/kit-tck-http-probe
+COPY --chmod=0755 <<'HTTPPROBE' /usr/local/bin/kit-tck-http-probe
 #!/bin/sh
 # Reached-the-origin is proven by the IANA page's content, the same marker
 # kit-tck-probe uses: a 403 alone could be the origin's own answer (POST
@@ -81,13 +86,13 @@ HTTPPROBE
 
 # Writes a file, so volume persistence is observable without a shell
 # redirect the adapter would have to quote.
-COPY <<'WRITE' /usr/local/bin/kit-tck-write
+COPY --chmod=0755 <<'WRITE' /usr/local/bin/kit-tck-write
 #!/bin/sh
 mkdir -p "$(dirname "$1")" && printf '%s' "$2" > "$1"
 WRITE
 
 # Reports the memory limit the sandbox runs under, across cgroup v2 and v1.
-COPY <<'MEM' /usr/local/bin/kit-tck-memory-limit
+COPY --chmod=0755 <<'MEM' /usr/local/bin/kit-tck-memory-limit
 #!/bin/sh
 if [ -r /sys/fs/cgroup/memory.max ]; then cat /sys/fs/cgroup/memory.max
 elif [ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then cat /sys/fs/cgroup/memory/memory.limit_in_bytes
@@ -100,7 +105,7 @@ MEM
 # does NOT have — negated in the IAB set — so grepping its output for a
 # name reports yes in an unprivileged sandbox. Reading /proc also avoids
 # depending on capsh being installed at all.
-COPY <<'PRIV' /usr/local/bin/kit-tck-privileged
+COPY --chmod=0755 <<'PRIV' /usr/local/bin/kit-tck-privileged
 #!/bin/sh
 # The BOUNDING set, not the effective one: a sandbox running as a
 # non-root user has no effective capabilities whether or not it is
@@ -121,18 +126,16 @@ has() { [ $(( (dec >> $1) & 1 )) -eq 1 ]; }
 if has 21 && has 16 && has 17 && [ "${seccomp:-0}" = "0" ]; then echo yes; else echo no; fi
 PRIV
 
-RUN chmod 0755 /usr/local/bin/kit-tck-probe /usr/local/bin/kit-tck-http-probe \
-      /usr/local/bin/kit-tck-write \
-      /usr/local/bin/kit-tck-memory-limit /usr/local/bin/kit-tck-privileged
 # A bare `bash` reads stdin, and the contract promises the adapter neither
 # a TTY nor anything on it, so it can exit at EOF — leaving a
 # process-based runtime with an already-stopped sandbox and failing every
 # exec check for reasons that have nothing to do with capabilities. The
 # fixture waits instead, and waits without spinning.
 # The suite's checks read the agent-context profile beside the workspace,
-# so the workload pins its workspace where the contract says the suite
-# will look: a runtime placing the profile beside the workload's own
-# workdir lands exactly there.
+# so the workload pins its workdir where the contract says the suite will
+# look: a runtime placing the profile beside the workload's own workdir
+# writes it as this directory's sibling, which is exactly where the suite
+# reads.
 # The canary the inject-only check compares by value: the image owns it,
 # so it is identical in every composition, and a runtime smuggling a
 # credential into an existing variable is judged against a variable the

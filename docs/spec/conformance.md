@@ -78,6 +78,9 @@ under-provisioned.
 
 `exec` **MUST** proxy the command's exit status as its own, and **MUST
 NOT** allocate a TTY. The argv after `--` is passed through unmodified.
+It **MUST** run the command as the sandbox's agent identity: several
+requirements are about who the sandbox does things as, and an `exec` of
+the runtime's choosing would answer for a user the agent never is.
 
 `stop` followed by `start` **MUST** preserve the sandbox's filesystem.
 This pair is what separates the lifecycle phases: `install` hooks run once
@@ -100,7 +103,7 @@ anything:
 |---|---|
 | `KIT_TCK_HOST_SENTINEL` | A host-side value. A runtime that leaks its own environment into a lifecycle hook leaks this with it, which is how "a hook sees only its declared env" is judged. The adapter does nothing with it beyond letting it be inherited. The suite also decorates baseline variables in the adapter's environment — `TERM`, `HOSTNAME`, `OLDPWD`, `SHLVL`, and `_` carry the sentinel, and `PATH` gains a sentinel component — so a runtime copying a host baseline value into a hook is caught by the same scan; baseline values must derive from the image and sandbox. `HOME` and `PWD` are both: they point through a sentinel-named symlink to the real home, functional for credential helpers and relative paths while still betraying host provenance when copied. |
 | `KIT_TCK_BOUND_SECRET` | The secret the adapter **MUST** bind for the fixture credential service `kit-tck`. The container **MUST NOT** see this value; a proxy-managed credential with a declared name presents a sentinel in that variable, and an inject-only credential (no name) presents nothing at all. |
-| `KIT_TCK_SKILL_NAME` | A skill the adapter **MUST** place in the host's shared skills store before claiming `com.docker.sandbox/agent-skills@1`. The capability permits no mount when the store is empty or skills are off, so without a known entry the suite cannot tell a mounted store from an empty directory. |
+| `KIT_TCK_SKILL_NAME` | A skill the adapter **MUST** place in the host's shared skills store before the first `create`, when it claims `com.docker.sandbox/agent-skills@1`. The capability permits no mount when the store is empty or skills are off, so without a known entry the suite cannot tell a mounted store from an empty directory. Before the create rather than before the claim: `capabilities` observes nothing and writes nothing, and a query that seeded a user's store would leave an entry behind on every run that asked what a runtime implements. |
 
 An adapter claiming `com.docker.sandbox/agent-skills@1` **MUST** default
 skills to their **most permissive** setting. Access is the narrower of the
@@ -120,9 +123,10 @@ runtime **SHOULD NOT** point these fixtures at a store a user depends on.
 
 The workload fixture declares its working directory as
 `/home/agent/workspace`, and the suite reads the agent-context profile
-there. A runtime is free to place workspaces wherever it likes for its own
-workloads; for THIS workload, the declared workdir is the workspace, so
-the profile lands at a path the suite can name.
+beside it, at `/home/agent/AGENTS.md`. A runtime is free to place
+workspaces wherever it likes for its own workloads; for THIS workload, the
+declared workdir is the workspace, so the profile's place beside it is a
+path the suite can name.
 
 An adapter that cannot bind credentials **SHOULD NOT** claim
 `com.docker.sandbox/credential@1`, in which case its checks are skipped.

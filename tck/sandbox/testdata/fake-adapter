@@ -269,9 +269,9 @@ exec)
     /var/tmp/hook.env) cat "$dir/hook.env" ;;
     /var/tmp/skills-at-install) cat "$dir/skills-at-install" ;;
     /var/tmp/skills-rw-at-install) cat "$dir/skills-rw-at-install" ;;
-    /etc/kit-written) cat "$dir/kit-written" ;;
-    /home/agent/workspace/AGENTS.md) cat "$dir/profile" ;;
-    /home/sbxagent/workspace/AGENTS.md)
+    /home/agent/.config/kit-written) cat "$dir/kit-written" ;;
+    /home/agent/AGENTS.md) cat "$dir/profile" ;;
+    /home/sbxagent/AGENTS.md)
       if [ -f "$dir/sbx" ] && [ "$broken" != "workspace-at-fixed-path" ]; then
         cat "$dir/profile"
       else
@@ -307,6 +307,28 @@ exec)
       ;;
     esac
     ;;
+  stat)
+    # Who a declared file belongs to. A runtime leaving one root-owned
+    # puts it off the plane this capability stays on, and its content
+    # reads the same either way.
+    case "$2 $3" in
+    "-c %u") ;;
+    *) echo "unsupported stat request: $2 $3" >&2; exit 1 ;;
+    esac
+    if [ "$broken" = "writes-files-as-root" ]; then echo 0; else echo 1000; fi
+    ;;
+
+  test)
+    # Whether the agent can change what was declared for it. Owning a
+    # file it cannot write leaves the entry as unusable as one it does
+    # not own.
+    case "$2" in
+    -w) ;;
+    *) echo "unsupported test: $2" >&2; exit 1 ;;
+    esac
+    [ "$broken" != "writes-files-read-only" ]
+    ;;
+
   id)
     # The identity comes from the image the sandbox was created from; the
     # fixture's is deliberately not the conventional uid 1000 / agent.

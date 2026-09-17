@@ -68,10 +68,10 @@ const (
 
 	// ProfilePath is where the workload fixture's agent-context filename
 	// lands: the fixture declares WORKDIR /home/agent/workspace, and the
-	// contract states the suite reads the profile beside that declared
-	// workspace — a fixture-pinned location, not an assumption about
-	// where the runtime keeps workspaces in general.
-	ProfilePath = "/home/agent/workspace/AGENTS.md"
+	// profile sits beside that workspace rather than inside it, so it is
+	// the workspace directory's sibling — a fixture-pinned location, not
+	// an assumption about where the runtime keeps workspaces in general.
+	ProfilePath = "/home/agent/AGENTS.md"
 
 	// ContextBody is what the context fixture stages, so the check can
 	// verify the body behind the profile's reference and not just the

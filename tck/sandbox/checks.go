@@ -365,13 +365,42 @@ var checks = []check{
 			}
 			defer cleanup()
 
-			body, f := execOutput(ctx, e, id, "cat", "/etc/kit-written")
+			body, f := execOutput(ctx, e, id, "cat", "/home/agent/.config/kit-written")
 			if f != nil {
 				return []report.Finding{*f}
 			}
 			if body != "hello" {
 				return []report.Finding{report.Failf(
 					"declared file holds %q; the arg reference should have expanded to %q", body, "hello")}
+			}
+
+			// Whose it is, not only that it arrived: a declared file the
+			// agent does not own is off the trust plane this capability
+			// stays on, and its content reads the same either way. Both
+			// answers come from exec, which runs as the agent.
+			owner, f := execOutput(ctx, e, id, "stat", "-c", "%u", "/home/agent/.config/kit-written")
+			if f != nil {
+				return []report.Finding{*f}
+			}
+			agent, f := execOutput(ctx, e, id, "id", "-u")
+			if f != nil {
+				return []report.Finding{*f}
+			}
+			if strings.TrimSpace(owner) != strings.TrimSpace(agent) {
+				return []report.Finding{report.Failf(
+					"the declared file belongs to uid %s while the agent is uid %s; whichever user writes it, a file entry ends up the agent's — a path only root can own is an install hook's job",
+					strings.TrimSpace(owner), strings.TrimSpace(agent))}
+			}
+
+			// Owning it is not the same as being able to change it, and
+			// this entry declares no mode to explain a read-only one.
+			res, err := e.Adapter.Exec(ctx, id, "test", "-w", "/home/agent/.config/kit-written")
+			if err != nil {
+				return []report.Finding{report.Failf("probe the declared file: %v", err)}
+			}
+			if res.ExitCode != 0 {
+				return []report.Finding{report.Failf(
+					"the declared file is not writable by the agent, and its entry declares no mode asking for that")}
 			}
 			return nil
 		},
@@ -755,14 +784,19 @@ var checks = []check{
 			}
 			defer cleanup()
 
-			const profile = "/home/sbxagent/workspace/AGENTS.md"
+			// Beside the declared workdir, where agent-context@1 puts a
+			// profile. The location is still derived from what the image
+			// says: a runtime hard-coding the conventional identity
+			// writes beside /home/agent/workspace instead, which is a
+			// different path and no file here.
+			const profile = "/home/sbxagent/AGENTS.md"
 			res, err := e.Adapter.Exec(ctx, id, "cat", profile)
 			if err != nil {
 				return []report.Finding{report.Failf("read profile: %v", err)}
 			}
 			if res.ExitCode != 0 {
 				return []report.Finding{report.Failf(
-					"the image declares its working directory as /home/sbxagent/workspace, but nothing is at %s; the workspace goes where the image says, not at a fixed path", profile)}
+					"the image declares its working directory as /home/sbxagent/workspace, but nothing is at %s beside it; the workspace goes where the image says, not at a fixed path", profile)}
 			}
 			return nil
 		},
