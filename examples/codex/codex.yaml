@@ -29,6 +29,11 @@ provides: ["codex@${{ kit.args.version }}"]
 dockerfile: ./codex.dockerfile
 
 capabilities:
+  # This workload is an agent sandbox: the host launches the agent rather
+  # than running the image's entrypoint as PID 1, and honors the identity
+  # the image config declares instead of assuming one.
+  - type: com.docker.sandbox/sbx@1
+
   # Every domain the credential injects into or routes to, plus the
   # non-credential domains codex itself needs and the template's apt
   # mirrors (a workload owns its base, so the mirrors ride here).

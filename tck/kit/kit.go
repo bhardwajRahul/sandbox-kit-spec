@@ -14,12 +14,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/docker/sandbox-kit-spec/v3/assemble"
 	"github.com/docker/sandbox-kit-spec/v3/resolve"
 	"github.com/docker/sandbox-kit-spec/v3/spec"
 	"github.com/docker/sandbox-kit-spec/v3/tck/report"
@@ -147,6 +150,191 @@ func fail(format string, args ...any) []report.Finding {
 
 func skip(format string, args ...any) []report.Finding {
 	return []report.Finding{report.Skipf(format, args...)}
+}
+
+func warn(format string, args ...any) []report.Finding {
+	return []report.Finding{report.Warnf(format, args...)}
+}
+
+// passwdEntry is what a host reads out of the image to learn the identity
+// it must honor: the uid it execs as, the gid it chowns to, the login name
+// commands run under, and the home its file writes work from.
+type passwdEntry struct {
+	name, home string
+	uid, gid   int64
+}
+
+// allDigits reports that a spelling is numeric, which is what decides
+// whether a runtime reads it as an id at all — separately from whether
+// the value is one a host can hold.
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// parseID reads a uid or gid the way a runtime must be able to hold one:
+// uid_t and gid_t are 32-bit unsigned, and the top value is the
+// "leave this one alone" sentinel rather than an identity, so neither it
+// nor anything above it names a user a host can honor.
+func parseID(s string) (int64, bool) {
+	if !allDigits(s) {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || id >= math.MaxUint32 {
+		return 0, false
+	}
+	return id, true
+}
+
+// explicitGroup is the group half of an image config user, when it
+// overrides the passwd primary. "agent:" overrides nothing, so the two
+// places that care — resolution, and deciding whether /etc/group is
+// worth reading at all — ask the same question here.
+func explicitGroup(user string) (string, bool) {
+	_, group, ok := strings.Cut(user, ":")
+	return group, ok && group != ""
+}
+
+// lookupPasswd resolves an image config user — a name, a uid, or either
+// with a group suffix — against /etc/passwd and /etc/group content. Both
+// spellings have to resolve, because the host needs the half the image
+// did not state.
+func lookupPasswd(passwd, group, user string) (passwdEntry, bool) {
+	want, _, _ := strings.Cut(user, ":")
+	wantGroup, hasGroup := explicitGroup(user)
+	// A runtime reads a numeric spelling as a uid, so resolution has to
+	// as well: a row merely named "1000" is not uid 1000, and 001000 is.
+	// A numeric spelling the host cannot hold is not a login name to
+	// fall back on either — it resolves to nothing.
+	numeric := allDigits(want)
+	wantID, inRange := parseID(want)
+	if numeric && !inRange {
+		return passwdEntry{}, false
+	}
+	for _, line := range strings.Split(passwd, "\n") {
+		// Only the line terminator comes off: whitespace inside a record
+		// is part of the field, and normalizing it would resolve " agent"
+		// as the agent the host will look for and not find.
+		line = strings.TrimSuffix(line, "\r")
+		// A commented record is not an account: resolvers skip these, so
+		// matching one would certify an identity the host cannot find.
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		// A passwd record is seven fields. A short line is malformed, and
+		// a resolver reads past it rather than making an account out of
+		// what it can see.
+		fields := strings.Split(line, ":")
+		if len(fields) != 7 {
+			continue
+		}
+		if numeric {
+			// By value, not by text: a row's uid field and the image's
+			// spelling can differ and still be the same identity.
+			if rowID, ok := parseID(fields[2]); !ok || rowID != wantID {
+				continue
+			}
+		} else if fields[0] != want {
+			continue
+		}
+		// Matching is not resolving: a row with no login name, whose uid
+		// or gid is not an id a host can hold, or whose home is not an
+		// absolute path, leaves the host without the values this
+		// capability promises it can read. Skipped rather than fatal,
+		// because a resolver passes over a malformed record and a later
+		// one may be the account.
+		uid, uidOK := parseID(fields[2])
+		gid, gidOK := parseID(fields[3])
+		if fields[0] == "" || !uidOK || !gidOK || !strings.HasPrefix(fields[5], "/") {
+			continue
+		}
+		e := passwdEntry{name: fields[0], home: fields[5], uid: uid, gid: gid}
+		if !hasGroup {
+			return e, true
+		}
+		// An explicit group overrides the passwd primary, so it is the
+		// gid the host would honor and the one that has to resolve.
+		gid, ok := lookupGroup(group, wantGroup)
+		if !ok {
+			return passwdEntry{}, false
+		}
+		e.gid = gid
+		return e, true
+	}
+	return passwdEntry{}, false
+}
+
+// lookupGroup resolves the group half of an image config user to a gid.
+func lookupGroup(groupFile, want string) (int64, bool) {
+	if allDigits(want) {
+		// Numeric, so it is a gid whether or not it is a usable one; a
+		// group merely named "4294967295" is not it.
+		return parseID(want)
+	}
+	for _, line := range strings.Split(groupFile, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		// A group record is four fields, the last being the member list.
+		fields := strings.Split(line, ":")
+		if len(fields) != 4 || fields[0] != want {
+			continue
+		}
+		if gid, ok := parseID(fields[2]); ok {
+			return gid, true
+		}
+	}
+	return 0, false
+}
+
+// resolveImageUser reads the identity the image declares out of its
+// account databases. An unreadable database leaves the identity unjudged
+// — a warning, since the image may be fine and the checker simply cannot
+// see — while a readable one that does not resolve is the image's fault.
+func resolveImageUser(ctx context.Context, a Artifact, user string) (passwdEntry, bool, []report.Finding, error) {
+	passwd, present, err := a.ReadFile(ctx, "/etc/passwd")
+	switch {
+	case errors.Is(err, assemble.ErrFileTooLarge):
+		return passwdEntry{}, false,
+			warn("/etc/passwd is larger than a checker will read, so user %q could not be resolved here", user), nil
+	case err != nil:
+		return passwdEntry{}, false, nil, fmt.Errorf("read /etc/passwd: %w", err)
+	case !present:
+		return passwdEntry{}, false,
+			fail("no /etc/passwd, so user %q resolves to nothing the host can read before the container exists", user), nil
+	}
+
+	// Only a named group is looked up, so an unreadable group file is
+	// irrelevant to an identity that does not name one.
+	var groupFile []byte
+	if group, ok := explicitGroup(user); ok {
+		if !allDigits(group) {
+			groupFile, _, err = a.ReadFile(ctx, "/etc/group")
+			switch {
+			case errors.Is(err, assemble.ErrFileTooLarge):
+				return passwdEntry{}, false,
+					warn("/etc/group is larger than a checker will read, so user %q could not be resolved here", user), nil
+			case err != nil:
+				return passwdEntry{}, false, nil, fmt.Errorf("read /etc/group: %w", err)
+			}
+		}
+	}
+
+	who, resolved := lookupPasswd(string(passwd), string(groupFile), user)
+	if !resolved {
+		return who, false,
+			fail("user %q does not resolve to a uid, gid and home; the host reads those from the image, before the container exists", user), nil
+	}
+	return who, true, nil, nil
 }
 
 var checks = []check{
@@ -354,6 +542,107 @@ var checks = []check{
 			argv := append(append([]string{}, cfg.Config.Entrypoint...), cfg.Config.Cmd...)
 			if len(argv) == 0 || argv[0] == "" {
 				return fail("a workload runs under a bare docker run, so its config needs a runnable entrypoint or cmd")
+			}
+			return nil
+		},
+	},
+	{
+		// The floor a workload promises by declaring sbx@1: the shells the
+		// host runs things through, and an identity it can resolve without
+		// assuming one. Judged from the artifact, so a kit that cannot be
+		// operated this way is caught at publish rather than at the first
+		// failed hook.
+		name:        "sbx-platform-floor",
+		requirement: "sbx@1",
+		run: func(ctx context.Context, s *state) []report.Finding {
+			if !spec.HasCapability(s.descriptor.Capabilities, spec.CapabilitySbx) {
+				return nil
+			}
+			if s.descriptor.Kind != spec.KindWorkload {
+				return fail("only a workload can carry the platform floor: a mixin's image config never becomes the composed image's, so nothing a host reads would come from here")
+			}
+
+			// The identity comes first: which execute bit applies to a
+			// shell depends on who the image says will run it.
+			cfg, err := s.artifact.Config(ctx)
+			if err != nil {
+				return fail("read image config: %v", err)
+			}
+			// Not trimmed: the host resolves the literal value, so an
+			// image declaring " agent" is asking for a user that does
+			// not exist, and certifying it against "agent" would hide
+			// exactly that.
+			user := cfg.Config.User
+			if strings.TrimSpace(user) == "" {
+				return fail("image config declares no user; declaring sbx@1 asks the host to honor an identity the image does not state")
+			}
+			who, resolved, findings, err := resolveImageUser(ctx, s.artifact, user)
+			if err != nil {
+				return fail("%v", err)
+			}
+
+			for _, shell := range []string{"/bin/sh", "/bin/bash"} {
+				present, err := hasFile(ctx, s.artifact, shell)
+				if err != nil {
+					return append(findings, fail("read %s: %v", shell, err)...)
+				}
+				if !present {
+					findings = append(findings, fail("%s is missing; the host runs hooks through sh and launches the agent under bash", shell)...)
+					continue
+				}
+				if !resolved {
+					continue
+				}
+				// Occupying the path is not being a shell the declared
+				// user can run: a placeholder, or a binary whose bits
+				// leave this identity out, resolves here and then fails
+				// at the first hook.
+				exec, known, err := executableBy(ctx, s.artifact, shell, who)
+				if err != nil {
+					return append(findings, fail("read %s permissions: %v", shell, err)...)
+				}
+				if known && !exec {
+					findings = append(findings, fail("%s is not executable by %s, the user the image declares; the host runs hooks through sh and launches the agent under bash", shell, user)...)
+				}
+			}
+			return findings
+		},
+	},
+	{
+		// BASH_ENV is the only thing that loads the sandbox's persistent
+		// environment into the agent, which is started from neither a
+		// login nor an interactive shell. SHOULD, so a kit that names no
+		// file is warned rather than failed.
+		name:        "sbx-persistent-env",
+		requirement: "sbx@1",
+		run: func(ctx context.Context, s *state) []report.Finding {
+			if !spec.HasCapability(s.descriptor.Capabilities, spec.CapabilitySbx) ||
+				s.descriptor.Kind != spec.KindWorkload {
+				return nil
+			}
+			cfg, err := s.artifact.Config(ctx)
+			if err != nil {
+				return fail("read image config: %v", err)
+			}
+			const key = "BASH_ENV="
+			var file string
+			for _, e := range cfg.Config.Env {
+				if strings.HasPrefix(e, key) {
+					file = strings.TrimPrefix(e, key)
+				}
+			}
+			if file == "" {
+				return warn("image config sets no BASH_ENV, so the agent starts without the sandbox's persistent environment")
+			}
+			if !path.IsAbs(file) {
+				return warn("BASH_ENV is %s, which bash resolves against whatever directory the agent happens to run from; name an absolute path", file)
+			}
+			present, err := hasFile(ctx, s.artifact, file)
+			if err != nil {
+				return fail("read %s: %v", file, err)
+			}
+			if !present {
+				return warn("BASH_ENV names %s, which the image does not ship", file)
 			}
 			return nil
 		},
@@ -740,6 +1029,52 @@ func effectiveContribution(k spec.Kit, d *spec.Descriptor) (*spec.Descriptor, er
 // content-read bounds that do not apply to it.
 type fileChecker interface {
 	HasFile(ctx context.Context, name string) (bool, error)
+}
+
+// FileStat is a path's permission metadata: which execute bit applies
+// depends on who the image says will run it, and only an ordinary file
+// can be run at all.
+type FileStat struct {
+	Mode     int64
+	Uid, Gid int
+	Regular  bool
+}
+
+// statChecker is a source that can report that metadata. A source that
+// cannot leaves permission judgments unmade rather than guessed.
+type statChecker interface {
+	FileStat(ctx context.Context, name string) (FileStat, bool, error)
+}
+
+// executableBy reports whether the identity the image declares can
+// execute a path, and whether the source could tell. The file's own bits
+// only: root bypasses them, and whether an ancestor directory can be
+// traversed is not something the layer inventory models.
+func executableBy(ctx context.Context, a Artifact, name string, who passwdEntry) (exec, known bool, err error) {
+	c, ok := a.(statChecker)
+	if !ok {
+		return false, false, nil
+	}
+	st, present, err := c.FileStat(ctx, name)
+	if err != nil || !present {
+		return false, false, err
+	}
+	// execve runs ordinary files. A FIFO, socket, or device node can
+	// carry every execute bit there is and run none of them.
+	if !st.Regular {
+		return false, true, nil
+	}
+	if who.uid == 0 {
+		return st.Mode&0o111 != 0, true, nil
+	}
+	switch {
+	case int64(st.Uid) == who.uid:
+		return st.Mode&0o100 != 0, true, nil
+	case int64(st.Gid) == who.gid:
+		return st.Mode&0o010 != 0, true, nil
+	default:
+		return st.Mode&0o001 != 0, true, nil
+	}
 }
 
 func hasFile(ctx context.Context, a Artifact, name string) (bool, error) {

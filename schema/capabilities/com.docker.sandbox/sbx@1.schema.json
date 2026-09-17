@@ -1,0 +1,6 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "com.docker.sandbox/sbx@1",
+  "description": "The sandbox-agent-platform declaration takes no config: the identity the host must honor is the image config's user, which images already express, so restating it here would create a second answer. The request is present or absent. This schema rejects every config value accordingly.",
+  "not": {}
+}

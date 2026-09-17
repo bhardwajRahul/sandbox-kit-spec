@@ -156,6 +156,34 @@
           ]
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "mixin"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "capabilities": {
+            "items": {
+              "properties": {
+                "type": {
+                  "not": {
+                    "const": "com.docker.sandbox/sbx@1"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "description": "com.docker.sandbox/sbx@1 is workload-only: a mixin's image config never becomes the composed image's, so the identity it would promise is not the one a host reads."
     }
   ],
   "definitions": {
@@ -394,6 +422,25 @@
             "properties": {
               "config": {
                 "$ref": "capabilities/com.docker.sandbox/privileged@1.schema.json"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "com.docker.sandbox/sbx@1"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "config": {
+                "$ref": "capabilities/com.docker.sandbox/sbx@1.schema.json"
               }
             }
           }

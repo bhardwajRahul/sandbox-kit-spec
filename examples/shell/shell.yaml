@@ -29,6 +29,11 @@ provides:
   - gcc
 
 capabilities:
+  # This workload is an agent sandbox: the host launches the agent rather
+  # than running the image's entrypoint as PID 1, and honors the identity
+  # the image config declares instead of assuming one.
+  - type: com.docker.sandbox/sbx@1
+
   # Apt sources on shell-docker (Debian trixie / DHI):
   #   deb.debian.org/debian, deb.debian.org/debian-security, dhi.io/deb/...
   - type: com.docker.sandbox/network-policy@1

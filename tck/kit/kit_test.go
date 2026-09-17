@@ -3,6 +3,7 @@ package kit
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/require"
 
+	"github.com/docker/sandbox-kit-spec/v3/assemble"
 	"github.com/docker/sandbox-kit-spec/v3/spec"
 	"github.com/docker/sandbox-kit-spec/v3/tck/report"
 )
@@ -22,8 +24,15 @@ type fake struct {
 	layers      []ocispec.Descriptor
 	layersKnown bool
 	files       map[string][]byte
-	indexAnn    map[string]string
-	hasIndex    bool
+	// stats overrides the permission metadata a path reports; a file
+	// absent from it reads as root-owned and world-executable, which is
+	// what the shells an image ships are.
+	stats map[string]FileStat
+	// readErrs makes a path unreadable rather than absent, which is how
+	// a source reports what it will not buffer.
+	readErrs map[string]error
+	indexAnn map[string]string
+	hasIndex bool
 	// kits are the artifacts a merged set lists, keyed by reference,
 	// so the declaration check has something to compare against.
 	kits map[string]Artifact
@@ -45,8 +54,21 @@ func (f *fake) Layers(context.Context) ([]ocispec.Descriptor, bool, error) {
 }
 
 func (f *fake) ReadFile(_ context.Context, name string) ([]byte, bool, error) {
+	if err, ok := f.readErrs[name]; ok {
+		return nil, false, err
+	}
 	body, ok := f.files[name]
 	return body, ok, nil
+}
+
+func (f *fake) FileStat(_ context.Context, name string) (FileStat, bool, error) {
+	if _, ok := f.files[name]; !ok {
+		return FileStat{}, false, nil
+	}
+	if st, ok := f.stats[name]; ok {
+		return st, true, nil
+	}
+	return FileStat{Mode: 0o755, Regular: true}, true, nil
 }
 
 func (f *fake) StagedStems(context.Context) ([]string, error) {
@@ -682,4 +704,424 @@ func TestTheDeclarationCheckJudgesReExports(t *testing.T) {
 	require.NoError(t, err)
 	a.annotations[spec.AnnotationDescriptor] = string(published)
 	require.NotContains(t, findings(t, a), "merged-set-declarations")
+}
+
+// sbxWorkload is a workload declaring the platform capability whose
+// filesystem satisfies the floor, so each test below can remove exactly
+// one thing and see that removal reported.
+func sbxWorkload(t *testing.T) *fake {
+	t.Helper()
+	authored := "schemaVersion: \"3\"\nkind: workload\ndisplayName: Demo\nprovides: [\"demo@1.0.0\"]\n" +
+		"capabilities:\n  - type: com.docker.sandbox/sbx@1\n"
+	d, err := spec.Decode([]byte(authored))
+	require.NoError(t, err)
+	published, err := json.Marshal(d)
+	require.NoError(t, err)
+
+	ann := map[string]string{
+		spec.AnnotationDescriptor:    string(published),
+		spec.AnnotationSchemaVersion: "3",
+	}
+	for k, v := range spec.OCIAnnotations(d) {
+		ann[k] = v
+	}
+	// The index annotation is derived, and the annotation check compares
+	// it against the descriptor; a fake that omitted it would fail on
+	// that rather than on the floor.
+	ann[spec.AnnotationCapabilities] = spec.CapabilityTypes(d.Capabilities)
+	a := &fake{
+		annotations: ann,
+		layers:      []ocispec.Descriptor{{Digest: "sha256:aaaa"}},
+		layersKnown: true,
+		files: map[string][]byte{
+			path.Join(StagedKitRoot, stem, stagedDescriptorName): []byte(authored),
+			"/bin/sh":                    []byte("elf"),
+			"/bin/bash":                  []byte("elf"),
+			"/etc/passwd":                []byte("root:x:0:0:root:/root:/bin/bash\nagent:x:1000:1000::/home/agent:/bin/bash\n"),
+			"/etc/sandbox-persistent.sh": []byte(""),
+		},
+	}
+	a.config.Config.User = "agent"
+	a.config.Config.Env = []string{"BASH_ENV=/etc/sandbox-persistent.sh"}
+	a.config.Config.Entrypoint = []string{"/usr/local/bin/agent"}
+	return a
+}
+
+func TestASbxWorkloadSatisfyingTheFloorReportsNothing(t *testing.T) {
+	require.Empty(t, findings(t, sbxWorkload(t)))
+}
+
+// Without the capability the floor is not this kit's promise, so the same
+// gaps must go unreported rather than being imposed on every workload.
+func TestTheFloorIsJudgedOnlyWhenTheCapabilityIsDeclared(t *testing.T) {
+	a := sbxWorkload(t)
+	authored := "schemaVersion: \"3\"\nkind: workload\ndisplayName: Demo\nprovides: [\"demo@1.0.0\"]\n"
+	d, err := spec.Decode([]byte(authored))
+	require.NoError(t, err)
+	published, err := json.Marshal(d)
+	require.NoError(t, err)
+	a.annotations[spec.AnnotationDescriptor] = string(published)
+	delete(a.annotations, spec.AnnotationCapabilities)
+	a.files[path.Join(StagedKitRoot, stem, stagedDescriptorName)] = []byte(authored)
+	delete(a.files, "/bin/bash")
+	a.config.Config.User = ""
+
+	require.Empty(t, findings(t, a))
+}
+
+func TestTheFloorNeedsBothShells(t *testing.T) {
+	for _, shell := range []string{"/bin/sh", "/bin/bash"} {
+		t.Run(shell, func(t *testing.T) {
+			a := sbxWorkload(t)
+			delete(a.files, shell)
+
+			got := findings(t, a)["sbx-platform-floor"]
+			require.Equal(t, report.Fail, got.Severity)
+			require.Contains(t, got.Detail, shell)
+		})
+	}
+}
+
+// An image that names no user leaves the host nothing to honor, which is
+// exactly the assumption this capability exists to remove.
+func TestTheFloorNeedsTheImageToDeclareAUser(t *testing.T) {
+	a := sbxWorkload(t)
+	a.config.Config.User = ""
+
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "declares no user")
+}
+
+// Both spellings have to resolve: the host reads whichever half the image
+// did not state out of passwd, before the container exists.
+func TestTheFloorResolvesTheUserByNameOrUid(t *testing.T) {
+	for _, user := range []string{"agent", "1000", "1000:1000"} {
+		t.Run(user, func(t *testing.T) {
+			a := sbxWorkload(t)
+			a.config.Config.User = user
+			require.Empty(t, findings(t, a))
+		})
+	}
+
+	a := sbxWorkload(t)
+	a.config.Config.User = "nobody-here"
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+}
+
+// A runtime reads a numeric spelling as a uid, so a row merely named
+// "1000" is not the uid the image asked for.
+func TestANumericUserResolvesByUidNotName(t *testing.T) {
+	a := sbxWorkload(t)
+	a.files["/etc/passwd"] = []byte("1000:x:2000:2000::/home/odd:/bin/bash\n")
+	a.config.Config.User = "1000"
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+
+	a = sbxWorkload(t)
+	a.files["/etc/passwd"] = []byte("odd:x:1000:1000::/home/odd:/bin/bash\n")
+	a.config.Config.User = "1000"
+	require.Empty(t, findings(t, a))
+}
+
+// An explicit group overrides the passwd primary, so it is the gid the
+// host would honor and the one that has to resolve.
+func TestAGroupSuffixHasToResolve(t *testing.T) {
+	a := sbxWorkload(t)
+	a.files["/etc/group"] = []byte("agent:x:1000:\nbuild:x:2000:\n")
+	a.config.Config.User = "agent:build"
+	require.Empty(t, findings(t, a))
+
+	a = sbxWorkload(t)
+	a.files["/etc/group"] = []byte("agent:x:1000:\n")
+	a.config.Config.User = "agent:no-such-group"
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+}
+
+// A row the host cannot read a uid, gid and home out of has not resolved
+// anything, however well its name matches.
+func TestAMalformedPasswdRowDoesNotResolve(t *testing.T) {
+	for _, row := range []string{
+		"agent:x:notanumber:1000::/home/agent:/bin/bash",
+		"agent:x:1000:notanumber::/home/agent:/bin/bash",
+		"agent:x:1000:1000::relative/home:/bin/bash",
+		"agent:x:1000:1000:::/bin/bash",
+		":x:1000:1000::/home/agent:/bin/bash",
+	} {
+		t.Run(row, func(t *testing.T) {
+			a := sbxWorkload(t)
+			a.files["/etc/passwd"] = []byte(row + "\n")
+			got := findings(t, a)["sbx-platform-floor"]
+			require.Equal(t, report.Fail, got.Severity)
+		})
+	}
+}
+
+// Occupying the path is not being a shell: a placeholder resolves and
+// then fails at the first hook.
+func TestTheFloorNeedsTheShellsToBeExecutable(t *testing.T) {
+	a := sbxWorkload(t)
+	a.stats = map[string]FileStat{"/bin/bash": {Mode: 0o644, Regular: true}}
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "not executable")
+}
+
+// Which bit applies depends on who the image says will run it: bits that
+// leave the declared user out are no more usable than none at all.
+func TestTheFloorJudgesTheShellBitsAgainstTheDeclaredUser(t *testing.T) {
+	// Root-owned and root-only: the fixture's user is neither.
+	a := sbxWorkload(t)
+	a.stats = map[string]FileStat{"/bin/bash": {Mode: 0o100, Regular: true}}
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "not executable by agent")
+
+	// The same bits, reached through the group the user belongs to.
+	a = sbxWorkload(t)
+	a.stats = map[string]FileStat{"/bin/bash": {Mode: 0o010, Gid: 1000, Regular: true}}
+	require.Empty(t, findings(t, a))
+
+	// Root bypasses the bits entirely.
+	a = sbxWorkload(t)
+	a.config.Config.User = "root"
+	a.files["/etc/passwd"] = []byte("root:x:0:0:root:/root:/bin/bash\n")
+	a.stats = map[string]FileStat{"/bin/bash": {Mode: 0o100, Regular: true}}
+	require.Empty(t, findings(t, a))
+}
+
+// execve runs ordinary files: a FIFO, socket, or device node occupies the
+// path with every bit set and runs none of them.
+func TestTheFloorNeedsTheShellsToBeOrdinaryFiles(t *testing.T) {
+	a := sbxWorkload(t)
+	a.stats = map[string]FileStat{"/bin/sh": {Mode: 0o777}}
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "/bin/sh is not executable")
+}
+
+// uid_t is 32-bit unsigned and its top value is the "leave this one
+// alone" sentinel, so neither names an identity a host can hold.
+func TestAnOutOfRangeIdDoesNotResolve(t *testing.T) {
+	for _, uid := range []string{"99999999999999999999", "4294967295"} {
+		t.Run(uid, func(t *testing.T) {
+			a := sbxWorkload(t)
+			a.files["/etc/passwd"] = []byte("agent:x:" + uid + ":1000::/home/agent:/bin/bash\n")
+			got := findings(t, a)["sbx-platform-floor"]
+			require.Equal(t, report.Fail, got.Severity)
+			require.Contains(t, got.Detail, "does not resolve")
+		})
+	}
+}
+
+// A resolver passes over a malformed record and keeps reading, so one
+// cannot hide the account that follows it.
+func TestAMalformedRecordDoesNotHideALaterOne(t *testing.T) {
+	a := sbxWorkload(t)
+	a.files["/etc/passwd"] = []byte(
+		"agent:x:notanumber:1000::/home/agent:/bin/bash\n" +
+			"agent:x:1000:1000::/home/agent:/bin/bash\n")
+	require.Empty(t, findings(t, a))
+
+	a = sbxWorkload(t)
+	a.files["/etc/group"] = []byte("build:x:notanumber:\nbuild:x:2000:\n")
+	a.config.Config.User = "agent:build"
+	require.Empty(t, findings(t, a))
+}
+
+// An empty group suffix overrides nothing: the passwd primary applies,
+// as it does for a user named without one — including the decision not
+// to read a group file at all.
+func TestAnEmptyGroupSuffixIsNoOverride(t *testing.T) {
+	a := sbxWorkload(t)
+	a.files["/etc/group"] = nil
+	a.config.Config.User = "agent:"
+	require.Empty(t, findings(t, a))
+
+	a = sbxWorkload(t)
+	a.readErrs = map[string]error{
+		"/etc/group": fmt.Errorf("exceeds bytes: %w", assemble.ErrFileTooLarge),
+	}
+	a.config.Config.User = "agent:"
+	require.Empty(t, findings(t, a))
+}
+
+// A record is its full shape: a passwd line is seven fields and a group
+// line four, and a resolver skips what is short of that.
+func TestAShortRecordIsNotAnAccount(t *testing.T) {
+	a := sbxWorkload(t)
+	a.files["/etc/passwd"] = []byte("agent:x:1000:1000::/home/agent\n")
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+
+	a = sbxWorkload(t)
+	a.files["/etc/group"] = []byte("build:x:2000\n")
+	a.config.Config.User = "agent:build"
+	got = findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+}
+
+// Whitespace inside a record belongs to the field: " agent" is not the
+// agent a host looks for.
+func TestARecordsFieldsAreLiteral(t *testing.T) {
+	a := sbxWorkload(t)
+	a.files["/etc/passwd"] = []byte(" agent:x:1000:1000::/home/agent:/bin/bash\n")
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+
+	a = sbxWorkload(t)
+	a.files["/etc/group"] = []byte(" build:x:2000:\n")
+	a.config.Config.User = "agent:build"
+	got = findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+
+	// A CRLF database still resolves: the terminator is not a field.
+	a = sbxWorkload(t)
+	a.files["/etc/passwd"] = []byte("agent:x:1000:1000::/home/agent:/bin/bash\r\n")
+	require.Empty(t, findings(t, a))
+}
+
+// A commented record is not an account, however exactly it spells the
+// identity being looked for.
+func TestACommentedPasswdRecordIsNotAnAccount(t *testing.T) {
+	a := sbxWorkload(t)
+	a.files["/etc/passwd"] = []byte("#agent:x:1000:1000::/home/agent:/bin/bash\n")
+	a.config.Config.User = "1000"
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+
+	a = sbxWorkload(t)
+	a.files["/etc/group"] = []byte("#build:x:2000:\n")
+	a.config.Config.User = "agent:build"
+	got = findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+}
+
+// A numeric spelling is an id, usable or not: it never falls back to
+// being a login name.
+func TestAnOutOfRangeNumericIsNotALoginName(t *testing.T) {
+	a := sbxWorkload(t)
+	a.files["/etc/passwd"] = []byte("4294967295:x:1000:1000::/home/agent:/bin/bash\n")
+	a.config.Config.User = "4294967295"
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+
+	a = sbxWorkload(t)
+	a.files["/etc/group"] = []byte("4294967295:x:2000:\n")
+	a.config.Config.User = "agent:4294967295"
+	got = findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+}
+
+// A runtime resolves a numeric user by value, so a padded spelling names
+// the same identity as the row it matches.
+func TestAPaddedNumericUserResolves(t *testing.T) {
+	a := sbxWorkload(t)
+	a.config.Config.User = "001000"
+	require.Empty(t, findings(t, a))
+}
+
+// A database no source will buffer leaves the identity unjudged, which
+// is not the same as an image that declared it wrongly.
+func TestAnUnreadableAccountFileIsAWarning(t *testing.T) {
+	tooLarge := fmt.Errorf("exceeds bytes: %w", assemble.ErrFileTooLarge)
+
+	a := sbxWorkload(t)
+	a.readErrs = map[string]error{"/etc/passwd": tooLarge}
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Warn, got.Severity)
+	require.Contains(t, got.Detail, "could not be resolved here")
+
+	// The shells are their own MUSTs, and an unjudgeable identity says
+	// nothing about whether they are there.
+	a = sbxWorkload(t)
+	a.readErrs = map[string]error{"/etc/passwd": tooLarge}
+	delete(a.files, "/bin/bash")
+	got = findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "/bin/bash is missing")
+
+	// A group file is only read for a named group, so an unreadable one
+	// cannot spoil an identity that names none.
+	a = sbxWorkload(t)
+	a.readErrs = map[string]error{"/etc/group": tooLarge}
+	require.Empty(t, findings(t, a))
+
+	a = sbxWorkload(t)
+	a.readErrs = map[string]error{"/etc/group": tooLarge}
+	a.config.Config.User = "agent:agent"
+	got = findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Warn, got.Severity)
+	require.Contains(t, got.Detail, "/etc/group is larger")
+}
+
+// The host resolves the literal value, so a stray space is a user that
+// does not exist rather than the one it resembles.
+func TestTheFloorResolvesTheUserTheImageLiterallyDeclares(t *testing.T) {
+	a := sbxWorkload(t)
+	a.config.Config.User = " agent"
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+
+	a = sbxWorkload(t)
+	a.config.Config.User = "   "
+	got = findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "declares no user")
+}
+
+// Bash resolves a relative BASH_ENV from wherever the agent runs, which
+// is not the artifact root the check would otherwise look in.
+func TestARelativeBashEnvIsWarned(t *testing.T) {
+	a := sbxWorkload(t)
+	a.config.Config.Env = []string{"BASH_ENV=.sandbox-persistent.sh"}
+	got := findings(t, a)["sbx-persistent-env"]
+	require.Equal(t, report.Warn, got.Severity)
+	require.Contains(t, got.Detail, "absolute path")
+}
+
+// A mixin's image config never becomes the composed image's, so the
+// declaration would describe an identity no host reads.
+func TestTheFloorIsWorkloadOnly(t *testing.T) {
+	authored := "schemaVersion: \"3\"\nkind: mixin\ndisplayName: Demo\nprovides: [\"demo@1.0.0\"]\n" +
+		"capabilities:\n  - type: com.docker.sandbox/sbx@1\n"
+	d, err := spec.Decode([]byte(authored))
+	require.NoError(t, err)
+	published, err := json.Marshal(d)
+	require.NoError(t, err)
+
+	a := sbxWorkload(t)
+	a.annotations[spec.AnnotationDescriptor] = string(published)
+	a.files[path.Join(StagedKitRoot, stem, stagedDescriptorName)] = []byte(authored)
+
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "only a workload")
+}
+
+// SHOULD, so a missing persistent-environment file is a warning: the kit
+// still runs, just without whatever the sandbox would have added.
+func TestAMissingPersistentEnvIsAWarning(t *testing.T) {
+	a := sbxWorkload(t)
+	a.config.Config.Env = nil
+	require.Equal(t, report.Warn, findings(t, a)["sbx-persistent-env"].Severity)
+
+	a = sbxWorkload(t)
+	delete(a.files, "/etc/sandbox-persistent.sh")
+	got := findings(t, a)["sbx-persistent-env"]
+	require.Equal(t, report.Warn, got.Severity)
+	require.Contains(t, got.Detail, "does not ship")
 }

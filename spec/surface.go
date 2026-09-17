@@ -143,12 +143,15 @@ func SurfaceOf(d *Descriptor) Surface {
 		case CapabilityResources:
 			// Resource limits constrain the kit rather than grant it
 			// anything; they are not permission surface.
-		case CapabilityAgentSessions, CapabilityLifecycle, CapabilityAgentContext:
+		case CapabilityAgentSessions, CapabilityLifecycle, CapabilityAgentContext, CapabilitySbx:
 			// Content-trust declarations, not grants: session verbs,
 			// lifecycle hooks, and files run inside the sandbox on the
 			// entrypoint's trust plane, and agent context is instruction
 			// text the agent reads. Nothing crosses the boundary the
-			// gate guards by declaring them.
+			// gate guards by declaring them. sbx@1 is the same: it asks
+			// the host to launch the agent the platform's way and to
+			// honor the identity the image already states, which grants
+			// access to nothing.
 		default:
 			s.Services = append(s.Services, capabilitySurfaceEntry(n))
 		}

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // Create-phase args may parameterize capability configs. The authored and
@@ -570,11 +571,47 @@ func TestValidateNeedEntries(t *testing.T) {
 	_, err = Validate(base(Capability{Type: CapabilityKitRegistry}, Capability{Type: CapabilityKitRegistry}))
 	require.ErrorContains(t, err, "already declared")
 
+	// A capability's own fields stay strictly decoded: recording config
+	// presence must not open the struct to typos.
+	_, err = Decode([]byte("schemaVersion: \"3\"\nkind: workload\ndisplayName: Demo\n" +
+		"provides: [\"demo@1.0.0\"]\ncapabilities:\n  - type: " + CapabilityPrivileged + "\n    optionl: true\n"))
+	require.ErrorContains(t, err, "optionl")
+
+	// Merge unions a set into one workload-kinded descriptor, so a
+	// mixin's platform claim would be indistinguishable from the
+	// workload's own by the time an artifact is judged.
+	mixin := base(Capability{Type: CapabilitySbx})
+	mixin.Kind = KindMixin
+	_, err = Validate(mixin)
+	require.ErrorContains(t, err, "workload-only")
+
+	set := base(Capability{Type: CapabilitySbx})
+	set.Kind = KindSet
+	set.Kits = []Kit{{Ref: "example.com/demo:1"}}
+	_, err = Validate(set)
+	require.NoError(t, err, "a set's kind is derived from its members later")
+
 	// Config-less types take no config.
 	_, err = Validate(base(Capability{Type: CapabilityKitRegistry, Config: map[string]any{"x": 1}}))
 	require.ErrorContains(t, err, "takes no config")
 	_, err = Validate(base(Capability{Type: CapabilityPrivileged, Config: map[string]any{"x": 1}}))
 	require.ErrorContains(t, err, "takes no config")
+
+	// The empty and null spellings are config values too, which these
+	// types' schemas reject; both decode to something the map alone
+	// cannot tell from an omitted key, so Go would otherwise accept a
+	// descriptor JSON Schema refuses.
+	for _, spelling := range []string{"{}", "null", `{"x": 1}`} {
+		var c Capability
+		require.NoError(t, yaml.Unmarshal([]byte("type: "+CapabilityPrivileged+"\nconfig: "+spelling+"\n"), &c))
+		_, err = Validate(base(c))
+		require.ErrorContains(t, err, "takes no config", "yaml config: %s", spelling)
+
+		var j Capability
+		require.NoError(t, json.Unmarshal([]byte(`{"type":"`+CapabilityPrivileged+`","config":`+spelling+`}`), &j))
+		_, err = Validate(base(j))
+		require.ErrorContains(t, err, "takes no config", "json config: %s", spelling)
+	}
 
 	// Known configs decode strictly: an unknown field is an error, not
 	// silently ignored — this is where a typo in a permission surfaces.
@@ -621,6 +658,14 @@ func TestNeedSurfaceAndGate(t *testing.T) {
 	ws := DiffWidenings(withCfg, SurfaceOf(&Descriptor{Capabilities: []Capability{{Type: "com.example/thing@1", Config: map[string]any{"path": "/other"}}}}))
 	require.Len(t, ws, 1)
 	require.Equal(t, "services", ws[0].Category)
+
+	// The platform type asks the host to launch the workload a
+	// particular way and to read an identity the image already states,
+	// so it grants nothing and never stops an update for approval.
+	sbx := SurfaceOf(&Descriptor{Capabilities: []Capability{{Type: CapabilitySbx}}})
+	require.Empty(t, sbx.Services)
+	require.Equal(t, Surface{}, sbx)
+	require.Empty(t, DiffWidenings(SurfaceOf(&Descriptor{}), sbx))
 
 	// Well-known types keep their direction-aware fields: privilege is a
 	// boolean, network allows diff per entry.

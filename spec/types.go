@@ -12,6 +12,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+
+	"gopkg.in/yaml.v3"
 )
 
 // SchemaVersion is the only schema version this package decodes.
@@ -261,9 +263,55 @@ type Capability struct {
 	// changes gate like any widening.
 	Config map[string]any `json:"config,omitempty" yaml:"config,omitempty"`
 
+	// configSet records that the document carried a `config` key, which
+	// the decoded map cannot express: an explicit null and an omitted key
+	// both decode to nil, while the config-less types' schemas reject any
+	// value including null and {}.
+	configSet bool
+
 	// Description is shown wherever the request is listed or prompted.
 	Description string `json:"description,omitempty" yaml:"description,omitempty"`
 }
+
+// UnmarshalYAML records whether the document stated a config at all,
+// which the decoded map cannot distinguish from an omitted key. The
+// callback form, not the node form: a node decodes through a fresh
+// decoder that does not inherit KnownFields, which would silently accept
+// misspelled capability fields.
+func (c *Capability) UnmarshalYAML(unmarshal func(any) error) error {
+	type plain Capability
+	if err := unmarshal((*plain)(c)); err != nil {
+		return err
+	}
+	var keys map[string]yaml.Node
+	if err := unmarshal(&keys); err != nil {
+		return err
+	}
+	_, c.configSet = keys["config"]
+	return nil
+}
+
+// UnmarshalJSON records config presence for the JSON spelling. Decoding
+// is strict, as every other well-known config is — a custom unmarshaler
+// does not inherit the caller's DisallowUnknownFields.
+func (c *Capability) UnmarshalJSON(data []byte) error {
+	type plain Capability
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode((*plain)(c)); err != nil {
+		return err
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(data, &keys); err != nil {
+		return err
+	}
+	_, c.configSet = keys["config"]
+	return nil
+}
+
+// ConfigStated reports whether the document carried a `config` key,
+// including the null and empty spellings the decoded map loses.
+func (c Capability) ConfigStated() bool { return c.configSet || c.Config != nil }
 
 // Well-known capability types. Policy-shaped types appear at most once
 // per descriptor; instance-shaped types (credential, volume, port,
@@ -333,6 +381,17 @@ const (
 	// consumes the image config's entrypoint. Workload kits only in
 	// practice — the agent the verbs drive is the workload's.
 	CapabilityAgentSessions = "com.docker.sandbox/agent-sessions@1"
+
+	// CapabilitySbx declares that a workload targets the sandbox agent
+	// platform: the host launches the agent rather than letting the image
+	// entrypoint be PID 1, honors the identity the image config states,
+	// and provides the persistent-environment file the image names. The
+	// kit's half is the floor that makes those duties performable — a
+	// shell, bash, and a resolvable user — which the kit conformance
+	// suite judges from the artifact. Not a grant: nothing crosses the
+	// boundary the gate guards. No config; the identity lives in the
+	// image config, where images already express it.
+	CapabilitySbx = "com.docker.sandbox/sbx@1"
 
 	// CapabilityKitRegistry requests the runtime's kit registry — the daemon's
 	// registry facade over the engine image store, where kit builds push

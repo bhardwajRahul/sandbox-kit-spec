@@ -55,7 +55,7 @@ func allCapabilityTypes() []string {
 		CapabilityVolume, CapabilityPort,
 		CapabilityUSBDevice, CapabilityResources, CapabilityPrivileged, CapabilityKitRegistry,
 		CapabilityAgentSessions, CapabilityLifecycle, CapabilityAgentContext,
-		CapabilityAgentSkills,
+		CapabilityAgentSkills, CapabilitySbx,
 	}
 }
 
@@ -83,6 +83,23 @@ func TestSchemaMatchesSpecConstants(t *testing.T) {
 		excludedFields = append(excludedFields, branch.(map[string]any)["required"].([]any)...)
 	}
 	require.ElementsMatch(t, []any{any("build"), any("dockerfile")}, excludedFields)
+
+	// The workload-only rule exists twice for the same reason, so the
+	// schema's verdict is pinned to the validator's.
+	var mixinRule map[string]any
+	for _, rule := range setRules {
+		r := rule.(map[string]any)
+		cond, ok := r["if"].(map[string]any)["properties"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if kind, ok := cond["kind"].(map[string]any); ok && kind["const"] == KindMixin {
+			mixinRule = r
+		}
+	}
+	require.NotNil(t, mixinRule, "the schema states no mixin rule")
+	require.Equal(t, CapabilitySbx,
+		at(t, mixinRule, "then", "properties", "capabilities", "items", "properties", "type", "not")["const"])
 
 	// The reference pattern rejects what validateKits rejects: a local
 	// path names a kit that may not be published at all.
@@ -245,7 +262,9 @@ func TestPerTypeCapabilitySchemas(t *testing.T) {
 	}
 	require.ElementsMatch(t, allCapabilityTypes(), keys(refByType))
 
-	configless := map[string]bool{CapabilityPrivileged: true, CapabilityKitRegistry: true}
+	// The same set validate.go enforces, so a type cannot be config-less
+	// in one place and config-bearing in the other.
+	configless := configlessCapabilities
 	for _, typ := range allCapabilityTypes() {
 		require.Equal(t, "capabilities/"+typ+".schema.json", refByType[typ],
 			"kit.schema.json must reference %s's own schema file", typ)

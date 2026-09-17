@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
@@ -12,6 +13,7 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/docker/sandbox-kit-spec/v3/assemble"
 	"github.com/docker/sandbox-kit-spec/v3/spec"
 	tckkit "github.com/docker/sandbox-kit-spec/v3/tck/kit"
 )
@@ -43,12 +45,21 @@ func (a *buildArtifact) ReadFile(ctx context.Context, name string) ([]byte, bool
 	if a.ref == nil {
 		return nil, false, nil
 	}
-	body, err := a.ref.ReadFile(ctx, gwclient.ReadRequest{Filename: name})
+	// Bounded like the post-export source: an untrusted base image's
+	// enormous file must not make the builder allocate without limit,
+	// and the two sides have to agree on what is readable.
+	body, err := a.ref.ReadFile(ctx, gwclient.ReadRequest{
+		Filename: name,
+		Range:    &gwclient.FileRange{Length: assemble.MaxFileEntryBytes + 1},
+	})
 	if err != nil {
 		if isNotExist(err) {
 			return nil, false, nil
 		}
 		return nil, false, err
+	}
+	if len(body) > assemble.MaxFileEntryBytes {
+		return nil, false, fmt.Errorf("%s exceeds %d bytes: %w", name, assemble.MaxFileEntryBytes, assemble.ErrFileTooLarge)
 	}
 	return body, true, nil
 }
@@ -59,13 +70,43 @@ func (a *buildArtifact) HasFile(ctx context.Context, name string) (bool, error) 
 	if a.ref == nil {
 		return false, nil
 	}
-	if _, err := a.ref.StatFile(ctx, gwclient.StatRequest{Path: name}); err != nil {
+	st, err := a.ref.StatFile(ctx, gwclient.StatRequest{Path: name})
+	if err != nil {
 		if isNotExist(err) {
 			return false, nil
 		}
 		return false, err
 	}
-	return true, nil
+	// A directory at the path is not a file there, which is what the
+	// post-export source reports; the two sides of publication have to
+	// agree on what is present.
+	return !os.FileMode(st.Mode).IsDir(), nil
+}
+
+// FileStat reports the permission metadata of the filesystem about to be
+// exported, so an image whose shells the declared user cannot run is
+// refused here rather than after publication.
+func (a *buildArtifact) FileStat(ctx context.Context, name string) (tckkit.FileStat, bool, error) {
+	if a.ref == nil {
+		return tckkit.FileStat{}, false, nil
+	}
+	// StatFile resolves the path within the root, final symlink
+	// included, so what it reports is the target's, as the OCI source
+	// reports after export.
+	st, err := a.ref.StatFile(ctx, gwclient.StatRequest{Path: name})
+	if err != nil {
+		if isNotExist(err) {
+			return tckkit.FileStat{}, false, nil
+		}
+		return tckkit.FileStat{}, false, err
+	}
+	mode := os.FileMode(st.Mode)
+	return tckkit.FileStat{
+		Mode:    int64(mode.Perm()),
+		Uid:     int(st.Uid),
+		Gid:     int(st.Gid),
+		Regular: mode.IsRegular(),
+	}, true, nil
 }
 
 // StagedStems enumerates the staged root of the filesystem about to be

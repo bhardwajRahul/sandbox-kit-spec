@@ -401,6 +401,7 @@ var singletonCapabilities = map[string]bool{
 	CapabilityAgentSessions:   true,
 	CapabilityLifecycle:       true,
 	CapabilityAgentContext:    true,
+	CapabilitySbx:             true,
 }
 
 // argvContains reports whether any argv element contains the substring
@@ -418,6 +419,7 @@ func argvContains(argv []string, sub string) bool {
 var configlessCapabilities = map[string]bool{
 	CapabilityPrivileged:  true,
 	CapabilityKitRegistry: true,
+	CapabilitySbx:         true,
 }
 
 // validateCapabilityEntries checks the typed capability list. Type syntax and
@@ -432,6 +434,16 @@ var configlessCapabilities = map[string]bool{
 // domain the phase cannot reach.
 func validateCapabilityEntries(d *Descriptor) error {
 	needs := d.Capabilities
+	// The platform contract is about the image config a workload's layers
+	// come with, and a mixin's config never becomes the composed image's.
+	// Rejected here rather than only in the kit suite because Merge
+	// unions a set's declarations into one workload-kinded descriptor:
+	// by the time an artifact is judged, a mixin's claim is
+	// indistinguishable from the workload's own. A set is exempt — its
+	// kind is derived from its members later.
+	if d.Kind == KindMixin && HasCapability(needs, CapabilitySbx) {
+		return fieldErrorf("capabilities", "%s is workload-only: a mixin's image config never becomes the composed image's, so the identity it would promise is not the one a host reads", CapabilitySbx)
+	}
 	seenSingleton := map[string]int{}
 	seenExact := map[string]int{}
 	seenCredential := map[string]int{}
@@ -457,7 +469,12 @@ func validateCapabilityEntries(d *Descriptor) error {
 			}
 			seenExact[key] = i
 		}
-		if configlessCapabilities[n.Type] && len(n.Config) > 0 {
+		// Presence, not emptiness: `config: {}` and `config: null` are
+		// config values, which these types' schemas (`not: {}`) reject,
+		// and neither is distinguishable from an omitted key by the
+		// decoded map alone. Testing length or nil-ness would let one
+		// descriptor pass here and fail schema validation.
+		if configlessCapabilities[n.Type] && n.ConfigStated() {
 			return fieldErrorf(path+".config", "capabilities[%d]: %s takes no config", i, n.Type)
 		}
 

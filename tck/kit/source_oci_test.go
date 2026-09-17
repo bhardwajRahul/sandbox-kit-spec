@@ -564,45 +564,274 @@ func TestASymlinkedStagedRootIsDiscovered(t *testing.T) {
 	require.Equal(t, body, got)
 }
 
-// An ancestor symlink with an empty target is dangling, and one targeting
-// the root must join canonically instead of producing a double slash no
-// archive path matches.
-func TestAncestorLinkEdgeCases(t *testing.T) {
-	build := func(t *testing.T, add func(tw *tar.Writer)) Artifact {
-		dir := t.TempDir()
-		store, err := oci.New(dir)
-		require.NoError(t, err)
-		ctx := context.Background()
-		push := func(mediaType string, content []byte) ocispec.Descriptor {
-			d := ocispec.Descriptor{
-				MediaType: mediaType,
-				Digest:    digest.FromBytes(content),
-				Size:      int64(len(content)),
-			}
-			require.NoError(t, store.Push(ctx, d, bytes.NewReader(content)))
-			return d
+// buildLayerArtifact stores one layer as an OCI layout and opens it as
+// an artifact, so a test can state a filesystem as tar entries.
+func buildLayerArtifact(t *testing.T, add func(tw *tar.Writer)) Artifact {
+	return buildLayeredArtifact(t, add)
+}
+
+// buildLayeredArtifact is buildLayerArtifact over several layers, lowest
+// first, so a test can state what a later layer does to an earlier one.
+func buildLayeredArtifact(t *testing.T, layers ...func(tw *tar.Writer)) Artifact {
+	dir := t.TempDir()
+	store, err := oci.New(dir)
+	require.NoError(t, err)
+	ctx := context.Background()
+	push := func(mediaType string, content []byte) ocispec.Descriptor {
+		d := ocispec.Descriptor{
+			MediaType: mediaType,
+			Digest:    digest.FromBytes(content),
+			Size:      int64(len(content)),
 		}
+		require.NoError(t, store.Push(ctx, d, bytes.NewReader(content)))
+		return d
+	}
+	var descs []ocispec.Descriptor
+	for _, add := range layers {
 		var buf bytes.Buffer
 		tw := tar.NewWriter(&buf)
 		add(tw)
 		require.NoError(t, tw.Close())
-		layerDesc := push(ocispec.MediaTypeImageLayer, buf.Bytes())
-		config, err := json.Marshal(ocispec.Image{})
-		require.NoError(t, err)
-		configDesc := push(ocispec.MediaTypeImageConfig, config)
-		manifest, err := json.Marshal(ocispec.Manifest{
-			Versioned: specsgo.Versioned{SchemaVersion: 2},
-			MediaType: ocispec.MediaTypeImageManifest,
-			Config:    configDesc,
-			Layers:    []ocispec.Descriptor{layerDesc},
-		})
-		require.NoError(t, err)
-		manifestDesc := push(ocispec.MediaTypeImageManifest, manifest)
-		require.NoError(t, store.Tag(ctx, manifestDesc, "kit"))
-		artifact, err := FromLayout(ctx, dir, "kit")
-		require.NoError(t, err)
-		return artifact
+		descs = append(descs, push(ocispec.MediaTypeImageLayer, buf.Bytes()))
 	}
+	config, err := json.Marshal(ocispec.Image{})
+	require.NoError(t, err)
+	configDesc := push(ocispec.MediaTypeImageConfig, config)
+	manifest, err := json.Marshal(ocispec.Manifest{
+		Versioned: specsgo.Versioned{SchemaVersion: 2},
+		MediaType: ocispec.MediaTypeImageManifest,
+		Config:    configDesc,
+		Layers:    descs,
+	})
+	require.NoError(t, err)
+	manifestDesc := push(ocispec.MediaTypeImageManifest, manifest)
+	require.NoError(t, store.Tag(ctx, manifestDesc, "kit"))
+	artifact, err := FromLayout(ctx, dir, "kit")
+	require.NoError(t, err)
+	return artifact
+}
+
+// A shell is usually a link to whatever implements it, so the metadata
+// that decides whether it can be executed is the target's, not the
+// link's.
+func TestFileStatFollowsLinksToTheTarget(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		require.NoError(t, tw.WriteHeader(&tar.Header{
+			Name: "bin/busybox", Typeflag: tar.TypeReg, Mode: 0o750, Uid: 7, Gid: 9, Size: 3,
+		}))
+		_, err := tw.Write([]byte("elf"))
+		require.NoError(t, err)
+		require.NoError(t, tw.WriteHeader(&tar.Header{
+			Name: "bin/sh", Typeflag: tar.TypeSymlink, Linkname: "busybox", Mode: 0o777,
+		}))
+		require.NoError(t, tw.WriteHeader(&tar.Header{
+			Name: "bin/placeholder", Typeflag: tar.TypeReg, Mode: 0o644, Size: 0,
+		}))
+		require.NoError(t, tw.WriteHeader(&tar.Header{
+			Name: "bin/node", Typeflag: tar.TypeChar, Mode: 0o777,
+		}))
+	})
+	c, ok := a.(statChecker)
+	require.True(t, ok)
+
+	st, present, err := c.FileStat(context.Background(), "/bin/sh")
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Equal(t, FileStat{Mode: 0o750, Uid: 7, Gid: 9, Regular: true}, st, "the link's target answers")
+
+	st, present, err = c.FileStat(context.Background(), "/bin/placeholder")
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Zero(t, st.Mode&0o111)
+
+	// execve runs ordinary files, and a device node is not one however
+	// its bits read.
+	st, present, err = c.FileStat(context.Background(), "/bin/node")
+	require.NoError(t, err)
+	require.True(t, present)
+	require.False(t, st.Regular)
+
+	_, present, err = c.FileStat(context.Background(), "/bin/absent")
+	require.NoError(t, err)
+	require.False(t, present)
+}
+
+// A relative symlink resolves against the directory the lookup actually
+// reached, which a symlinked ancestor can move.
+func TestALinkResolvesAgainstWhereItsAncestorsLed(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		require.NoError(t, tw.WriteHeader(&tar.Header{
+			Name: "long/a", Typeflag: tar.TypeSymlink, Linkname: "../x",
+		}))
+		require.NoError(t, tw.WriteHeader(&tar.Header{
+			Name: "x/file", Typeflag: tar.TypeSymlink, Linkname: "../target",
+		}))
+		writeFile(t, tw, "target", 0o750, 7, 9)
+		// What the lexical parent would have reached instead.
+		writeFile(t, tw, "long/target", 0o644, 0, 0)
+	})
+	c := a.(statChecker)
+
+	st, present, err := c.FileStat(context.Background(), "/long/a/file")
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Equal(t, FileStat{Mode: 0o750, Uid: 7, Gid: 9, Regular: true}, st)
+}
+
+// A hard link captures its target's inode at the moment the link applies,
+// so the bits a later layer gives the target's path are another file's.
+func TestFileStatOfAHardLinkIsTheInodeItCaptured(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a later layer rewriting the target path", func(t *testing.T) {
+		a := buildLayeredArtifact(t,
+			func(tw *tar.Writer) {
+				writeFile(t, tw, "bin/real", 0o750, 7, 9)
+				require.NoError(t, tw.WriteHeader(&tar.Header{
+					Name: "bin/sh", Typeflag: tar.TypeLink, Linkname: "bin/real",
+				}))
+			},
+			func(tw *tar.Writer) {
+				writeFile(t, tw, "bin/real", 0o600, 0, 0)
+			})
+		c := a.(statChecker)
+
+		st, present, err := c.FileStat(ctx, "/bin/sh")
+		require.NoError(t, err)
+		require.True(t, present)
+		require.Equal(t, FileStat{Mode: 0o750, Uid: 7, Gid: 9, Regular: true}, st)
+
+		st, present, err = c.FileStat(ctx, "/bin/real")
+		require.NoError(t, err)
+		require.True(t, present)
+		require.Equal(t, FileStat{Mode: 0o600, Regular: true}, st, "the path itself is the later file")
+	})
+
+	// A hard link is another name for the inode, so a relative symlink
+	// target resolves against the directory of the name used to reach
+	// it, not the directory the inode was first written in.
+	t.Run("a link to a symlink resolves against the alias", func(t *testing.T) {
+		a := buildLayerArtifact(t, func(tw *tar.Writer) {
+			// Two files named real, in the two directories the same
+			// inode can be reached through.
+			writeFile(t, tw, "bin/real", 0o644, 0, 0)
+			writeFile(t, tw, "usr/bin/real", 0o750, 7, 9)
+			require.NoError(t, tw.WriteHeader(&tar.Header{
+				Name: "usr/bin/link", Typeflag: tar.TypeSymlink, Linkname: "real",
+			}))
+			require.NoError(t, tw.WriteHeader(&tar.Header{
+				Name: "bin/sh", Typeflag: tar.TypeLink, Linkname: "usr/bin/link",
+			}))
+		})
+		c := a.(statChecker)
+
+		// /bin/sh names the symlink inode, and its relative "real"
+		// resolves in /bin.
+		st, present, err := c.FileStat(ctx, "/bin/sh")
+		require.NoError(t, err)
+		require.True(t, present)
+		require.Equal(t, FileStat{Mode: 0o644, Regular: true}, st)
+
+		// The same inode reached by its own name resolves in /usr/bin.
+		st, present, err = c.FileStat(ctx, "/usr/bin/link")
+		require.NoError(t, err)
+		require.True(t, present)
+		require.Equal(t, FileStat{Mode: 0o750, Uid: 7, Gid: 9, Regular: true}, st)
+	})
+
+	// The captured inode may come from a lower layer, which bounds where
+	// it is found but not where following it may lead: a symlink still
+	// resolves against the alias and the final state.
+	t.Run("a link whose target is a symlink in a lower layer", func(t *testing.T) {
+		a := buildLayeredArtifact(t,
+			func(tw *tar.Writer) {
+				require.NoError(t, tw.WriteHeader(&tar.Header{
+					Name: "usr/bin/link", Typeflag: tar.TypeSymlink, Linkname: "real",
+				}))
+				writeFile(t, tw, "usr/bin/real", 0o750, 7, 9)
+			},
+			func(tw *tar.Writer) {
+				require.NoError(t, tw.WriteHeader(&tar.Header{
+					Name: "bin/sh", Typeflag: tar.TypeLink, Linkname: "usr/bin/link",
+				}))
+			},
+			// Higher than the link: reachable when resolution continues
+			// against the final state, invisible if it stops below.
+			func(tw *tar.Writer) {
+				writeFile(t, tw, "bin/real", 0o644, 0, 0)
+			})
+		c := a.(statChecker)
+
+		st, present, err := c.FileStat(ctx, "/bin/sh")
+		require.NoError(t, err)
+		require.True(t, present)
+		require.Equal(t, FileStat{Mode: 0o644, Regular: true}, st)
+	})
+
+	// Nothing a later layer does to the pathname the inode was captured
+	// through un-creates the alias: the link is a name for the inode,
+	// not for the path.
+	t.Run("a later layer replacing an ancestor of the target", func(t *testing.T) {
+		a := buildLayeredArtifact(t,
+			func(tw *tar.Writer) {
+				writeFile(t, tw, "usr/bin/real", 0o750, 7, 9)
+			},
+			func(tw *tar.Writer) {
+				require.NoError(t, tw.WriteHeader(&tar.Header{
+					Name: "bin/sh", Typeflag: tar.TypeLink, Linkname: "usr/bin/real",
+				}))
+			},
+			func(tw *tar.Writer) {
+				require.NoError(t, tw.WriteHeader(&tar.Header{
+					Name: "usr/.wh..wh..opq", Typeflag: tar.TypeReg,
+				}))
+			})
+		c := a.(statChecker)
+
+		st, present, err := c.FileStat(ctx, "/bin/sh")
+		require.NoError(t, err)
+		require.True(t, present, "the alias outlives what happens to /usr")
+		require.Equal(t, FileStat{Mode: 0o750, Uid: 7, Gid: 9, Regular: true}, st)
+
+		_, present, err = c.FileStat(ctx, "/usr/bin/real")
+		require.NoError(t, err)
+		require.False(t, present, "the pathname itself is gone")
+	})
+
+	t.Run("a same-layer rewrite after the link", func(t *testing.T) {
+		a := buildLayerArtifact(t, func(tw *tar.Writer) {
+			writeFile(t, tw, "bin/real", 0o750, 7, 9)
+			require.NoError(t, tw.WriteHeader(&tar.Header{
+				Name: "bin/sh", Typeflag: tar.TypeLink, Linkname: "bin/real",
+			}))
+			writeFile(t, tw, "bin/real", 0o600, 0, 0)
+		})
+		c := a.(statChecker)
+
+		st, present, err := c.FileStat(ctx, "/bin/sh")
+		require.NoError(t, err)
+		require.True(t, present)
+		require.Equal(t, FileStat{Mode: 0o750, Uid: 7, Gid: 9, Regular: true}, st)
+	})
+}
+
+// writeFile writes one ordinary file with the metadata a permission
+// judgment reads.
+func writeFile(t *testing.T, tw *tar.Writer, name string, mode int64, uid, gid int) {
+	t.Helper()
+	const body = "elf"
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: name, Typeflag: tar.TypeReg, Mode: mode, Uid: uid, Gid: gid, Size: int64(len(body)),
+	}))
+	_, err := tw.Write([]byte(body))
+	require.NoError(t, err)
+}
+
+// An ancestor symlink with an empty target is dangling, and one targeting
+// the root must join canonically instead of producing a double slash no
+// archive path matches.
+func TestAncestorLinkEdgeCases(t *testing.T) {
+	build := buildLayerArtifact
 
 	body := []byte(fixtureDescriptor)
 	staged := "usr/share/sandbox/kit/demo/" + stagedDescriptorName

@@ -1,0 +1,22 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: workload
+displayName: Sandbox platform workload
+description: >-
+  A workload declaring sbx@1 whose identity is deliberately not the
+  conventional one, so a runtime that assumes an identity instead of
+  reading the image's is caught rather than accidentally right.
+provides: ["kit-tck-sbx-workload@1.0.0"]
+
+capabilities:
+  - type: com.docker.sandbox/sbx@1
+
+  # The profile is how the suite observes where the workspace landed: it
+  # belongs beside this workload's declared working directory, which is
+  # deliberately not the conventional one.
+  - type: com.docker.sandbox/agent-context@1
+    optional: true
+    config:
+      filename: AGENTS.md
+      content: |
+        Conformance workload with a non-conventional identity.

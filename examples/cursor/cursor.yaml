@@ -20,6 +20,11 @@ provides: ["cursor"]
 dockerfile: ./cursor.dockerfile
 
 capabilities:
+  # This workload is an agent sandbox: the host launches the agent rather
+  # than running the image's entrypoint as PID 1, and honors the identity
+  # the image config declares instead of assuming one.
+  - type: com.docker.sandbox/sbx@1
+
   # Every domain the credential injects into, plus downloads.cursor.com
   # (cursor-agent update; not covered by cursor.com), plus the template's apt mirrors
   # (a workload owns its base).

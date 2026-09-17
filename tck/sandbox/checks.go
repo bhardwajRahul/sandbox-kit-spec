@@ -17,6 +17,7 @@ const (
 	capNetworkPolicy   = "com.docker.sandbox/network-policy@1"
 	capNetworkPolicyV2 = "com.docker.sandbox/network-policy@2"
 	capCredential      = "com.docker.sandbox/credential@1"
+	capSbx             = "com.docker.sandbox/sbx@1"
 )
 
 // Fixture kits the suite composes. Each is a kit directory under
@@ -24,6 +25,7 @@ const (
 // check reads as the requirement it judges.
 const (
 	fixtureWorkload                    = "workload"
+	fixtureSbxWorkload                 = "sbx-workload"
 	fixtureHooks                       = "hooks"
 	fixtureFiles                       = "files"
 	fixtureScopedEgress                = "scoped-egress"
@@ -171,25 +173,35 @@ var checks = []check{
 		requirement: "conformance.md §2.2/required-unclaimed-refused",
 		run: func(ctx context.Context, e *Env) []report.Finding {
 			var findings []report.Finding
-			for _, probe := range []struct{ capability, fixture string }{
-				{capLifecycle, fixtureHooks},
-				{capNetworkPolicy, fixtureEgress},
-				{capNetworkPolicyV2, fixtureHTTPEgress},
-				{capCredential, fixtureCredential},
-				{capAgentContext, fixtureContext},
-				{capVolume, fixtureVolume},
-				{capResources, fixtureResources},
-				{capPrivileged, fixturePrivileged},
-				{capAgentSkills, fixtureSkills},
-				{capPort, fixturePort},
-				{capUSBDevice, fixtureUSBDevice},
-				{capAgentSessions, fixtureAgentSessions},
-				{capKitRegistry, fixtureKitRegistry},
+			for _, probe := range []struct {
+				capability, fixture string
+				// The sbx fixture is a workload, not a mixin layered
+				// onto one, so it is composed alone.
+				alone bool
+			}{
+				{capability: capSbx, fixture: fixtureSbxWorkload, alone: true},
+				{capLifecycle, fixtureHooks, false},
+				{capNetworkPolicy, fixtureEgress, false},
+				{capNetworkPolicyV2, fixtureHTTPEgress, false},
+				{capCredential, fixtureCredential, false},
+				{capAgentContext, fixtureContext, false},
+				{capVolume, fixtureVolume, false},
+				{capResources, fixtureResources, false},
+				{capPrivileged, fixturePrivileged, false},
+				{capAgentSkills, fixtureSkills, false},
+				{capPort, fixturePort, false},
+				{capUSBDevice, fixtureUSBDevice, false},
+				{capAgentSessions, fixtureAgentSessions, false},
+				{capKitRegistry, fixtureKitRegistry, false},
 			} {
 				if e.claims(probe.capability) {
 					continue
 				}
-				id, cleanup, err := e.sandbox(ctx, []string{fixtureWorkload, probe.fixture}, nil)
+				compose := []string{fixtureWorkload, probe.fixture}
+				if probe.alone {
+					compose = []string{probe.fixture}
+				}
+				id, cleanup, err := e.sandbox(ctx, compose, nil)
 				var refused *adapter.RefusedError
 				switch {
 				case errors.As(err, &refused):
@@ -657,6 +669,125 @@ var checks = []check{
 					return []report.Finding{report.Failf(
 						"an install-phase inject-only credential changed hook variable %q from %q to %q; it must not repurpose existing variables", name, value, got)}
 				}
+			}
+			return nil
+		},
+	},
+	{
+		// The fixture's identity is uid 1234 named sbxagent, chosen
+		// because it is not the conventional one: a runtime that hard-
+		// codes the convention would pass against a conventional image
+		// while reading nothing, and this is the composition that tells
+		// the two apart.
+		requirement: "sbx@1/honors-image-user",
+		capability:  capSbx,
+		run: func(ctx context.Context, e *Env) []report.Finding {
+			id, cleanup, err := e.sandbox(ctx, []string{fixtureSbxWorkload}, nil)
+			if err != nil {
+				return []report.Finding{report.Failf("create: %v", err)}
+			}
+			defer cleanup()
+
+			var findings []report.Finding
+			// All four fields, because a runtime can read one and assume
+			// the rest: the uid it execs as, the gid it owns writes with,
+			// the login name commands run under, and the home they run
+			// from.
+			for _, want := range []struct {
+				argv         []string
+				expect, what string
+			}{
+				{[]string{"id", "-u"}, "1234", "uid"},
+				{[]string{"id", "-g"}, "1234", "gid"},
+				{[]string{"id", "-un"}, "sbxagent", "login name"},
+				{[]string{"printenv", "HOME"}, "/home/sbxagent", "home"},
+			} {
+				got, f := execOutput(ctx, e, id, want.argv...)
+				if f != nil {
+					return append(findings, *f)
+				}
+				if strings.TrimSpace(got) != want.expect {
+					findings = append(findings, report.Failf(
+						"the image declares %s %s, but commands see %q; the identity is read from the image, not assumed",
+						want.what, want.expect, strings.TrimSpace(got)))
+				}
+			}
+
+			// The requirement covers hooks too, and a runtime can exec as
+			// one identity while running its own hooks as another. Only
+			// where the host claims lifecycle: without it there are no
+			// hooks to observe.
+			if !e.claims(capLifecycle) {
+				return findings
+			}
+			hookID, hookCleanup, err := e.sandbox(ctx, []string{fixtureSbxWorkload, fixtureHooks}, nil)
+			if err != nil {
+				return append(findings, report.Failf("create with hooks: %v", err))
+			}
+			defer hookCleanup()
+
+			hookEnv, f := execOutput(ctx, e, hookID, "cat", "/var/tmp/hook.env")
+			if f != nil {
+				return append(findings, *f)
+			}
+			if got := envVars(hookEnv)["HOME"]; got != "/home/sbxagent" {
+				findings = append(findings, report.Failf(
+					"the image declares home /home/sbxagent, but hooks ran with HOME %q; the identity is read from the image, not assumed", got))
+			}
+			return findings
+		},
+	},
+	{
+		// Where the profile lands is the observable form of "the host put
+		// the workspace where the image said". The conventional fixture
+		// cannot judge it: a runtime hard-coding /home/agent/workspace
+		// passes there while ignoring what the image declares.
+		requirement: "sbx@1/workspace-at-workdir",
+		capability:  capSbx,
+		// The profile is how the workspace's location is observed, and
+		// resolution rightly skips an optional request the host does not
+		// claim.
+		needs: []string{capAgentContext},
+		run: func(ctx context.Context, e *Env) []report.Finding {
+			id, cleanup, err := e.sandbox(ctx, []string{fixtureSbxWorkload}, nil)
+			if err != nil {
+				return []report.Finding{report.Failf("create: %v", err)}
+			}
+			defer cleanup()
+
+			const profile = "/home/sbxagent/workspace/AGENTS.md"
+			res, err := e.Adapter.Exec(ctx, id, "cat", profile)
+			if err != nil {
+				return []report.Finding{report.Failf("read profile: %v", err)}
+			}
+			if res.ExitCode != 0 {
+				return []report.Finding{report.Failf(
+					"the image declares its working directory as /home/sbxagent/workspace, but nothing is at %s; the workspace goes where the image says, not at a fixed path", profile)}
+			}
+			return nil
+		},
+	},
+	{
+		// The image's entrypoint is the agent's launch command, which the
+		// host reads and runs itself. Left as PID 1 it would prepend
+		// itself to whatever the host runs there, so the fixture's
+		// entrypoint writes a marker only when it is init.
+		requirement: "sbx@1/entrypoint-not-pid-one",
+		capability:  capSbx,
+		run: func(ctx context.Context, e *Env) []report.Finding {
+			id, cleanup, err := e.sandbox(ctx, []string{fixtureSbxWorkload}, nil)
+			if err != nil {
+				return []report.Finding{report.Failf("create: %v", err)}
+			}
+			defer cleanup()
+
+			res, err := e.Adapter.Exec(ctx, id, "cat", "/var/tmp/sbx-entrypoint-ran")
+			if err != nil {
+				return []report.Finding{report.Failf("probe entrypoint marker: %v", err)}
+			}
+			if res.ExitCode == 0 {
+				return []report.Finding{report.Failf(
+					"the image's entrypoint ran as PID 1; the host launches the agent itself and owns PID 1")}
 			}
 			return nil
 		},

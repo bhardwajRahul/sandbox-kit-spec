@@ -199,6 +199,26 @@ func TestSetRejectsAConventionalCompanion(t *testing.T) {
 		"the declared form is the grammar's to refuse")
 }
 
+// A set of mixins derives to a mixin, which is a shape no member
+// authored and no consumer would otherwise refuse.
+func TestASetMayNotDeriveToAnUnpublishableDescriptor(t *testing.T) {
+	derived := &spec.Descriptor{
+		SchemaVersion: spec.SchemaVersion,
+		Kind:          spec.KindMixin,
+		DisplayName:   "Derived",
+		Version:       "1.0.0",
+		Provides:      []string{"demo@1.0.0"},
+		Capabilities:  []spec.Capability{{Type: spec.CapabilitySbx}},
+	}
+	_, err := publishedSetDescriptor(derived)
+	require.ErrorContains(t, err, "not publishable")
+	require.ErrorContains(t, err, "workload-only")
+
+	derived.Kind = spec.KindWorkload
+	_, err = publishedSetDescriptor(derived)
+	require.NoError(t, err)
+}
+
 // The resolver is handed the listed kits; the set's own declarations
 // join afterwards as one more contribution. A relation the set states
 // about something it contains would therefore go unjudged and flatten

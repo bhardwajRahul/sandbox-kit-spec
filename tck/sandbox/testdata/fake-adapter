@@ -12,7 +12,7 @@ broken="${KIT_TCK_FAKE_BROKEN:-}"
 # suite narrows it, nothing when broken that way. The refusal duty below
 # is always keyed off this same list, because claiming and refusing are
 # two sides of one statement.
-default_claims="com.docker.sandbox/lifecycle@1,com.docker.sandbox/network-policy@1,com.docker.sandbox/network-policy@2,com.docker.sandbox/credential@1,com.docker.sandbox/agent-context@1,com.docker.sandbox/volume@1,com.docker.sandbox/resources@1,com.docker.sandbox/privileged@1,com.docker.sandbox/agent-skills@1"
+default_claims="com.docker.sandbox/sbx@1,com.docker.sandbox/lifecycle@1,com.docker.sandbox/network-policy@1,com.docker.sandbox/network-policy@2,com.docker.sandbox/credential@1,com.docker.sandbox/agent-context@1,com.docker.sandbox/volume@1,com.docker.sandbox/resources@1,com.docker.sandbox/privileged@1,com.docker.sandbox/agent-skills@1"
 claims="${KIT_TCK_FAKE_CLAIMS:-$default_claims}"
 if [ "$broken" = "claims-nothing" ]; then claims=""; fi
 verb="${1:-}"
@@ -84,6 +84,9 @@ create)
       need=""
       case "$kit" in
       *skills-optional* | *scoped-egress*) ;;
+      # Before the *context* arm, whose name this fixture also carries
+      # through its own agent-context profile.
+      *sbx-workload*) need="com.docker.sandbox/sbx@1" ;;
       *context*) need="com.docker.sandbox/agent-context@1" ;;
       *hooks* | *files* | *restricted-env*) need="com.docker.sandbox/lifecycle@1" ;;
       # Before the *egress* arm, which would otherwise claim this name.
@@ -125,10 +128,19 @@ create)
   # closes afterwards.
   printf '%s' "reachable" >"$dir/install-egress"
   printf '%s' "closed" >"$dir/phase"
+  # Before the hook environment is written, because that is where the
+  # composed identity is first observed.
+  for kit in "${kits[@]}"; do
+    if [[ "$kit" == *sbx-workload* ]]; then : >"$dir/sbx"; fi
+  done
   # A hook sees its declared env and the platform baseline, nothing else.
   {
     echo "PATH=/usr/bin"
-    echo "HOME=/home/agent"
+    if [ -f "$dir/sbx" ] && [ "$broken" != "assumes-uid-1000" ]; then
+      echo "HOME=/home/sbxagent"
+    else
+      echo "HOME=/home/agent"
+    fi
     # A sentinel smuggled into a variable the hook legitimately sees: no
     # name is added, so only the stable-value comparison against the
     # credential-free hook baselines sees it.
@@ -245,12 +257,28 @@ exec)
     case "$2" in
     /var/tmp/install.count) cat "$dir/install.count" ;;
     /var/tmp/startup.count) cat "$dir/startup.count" ;;
+    /var/tmp/sbx-entrypoint-ran)
+      if [ "$broken" = "runs-image-entrypoint" ] && [ -f "$dir/sbx" ]; then
+        echo ran
+      else
+        echo "no such file: $2" >&2
+        exit 1
+      fi
+      ;;
     /var/tmp/install-egress) cat "$dir/install-egress" ;;
     /var/tmp/hook.env) cat "$dir/hook.env" ;;
     /var/tmp/skills-at-install) cat "$dir/skills-at-install" ;;
     /var/tmp/skills-rw-at-install) cat "$dir/skills-rw-at-install" ;;
     /etc/kit-written) cat "$dir/kit-written" ;;
     /home/agent/workspace/AGENTS.md) cat "$dir/profile" ;;
+    /home/sbxagent/workspace/AGENTS.md)
+      if [ -f "$dir/sbx" ] && [ "$broken" != "workspace-at-fixed-path" ]; then
+        cat "$dir/profile"
+      else
+        echo "no such file: $2" >&2
+        exit 1
+      fi
+      ;;
     /usr/share/sandbox/kit/context/context.md)
       # The staged body behind the profile's reference. A runtime that
       # surfaces the reference while dropping the mixin's layers has an
@@ -279,6 +307,24 @@ exec)
       ;;
     esac
     ;;
+  id)
+    # The identity comes from the image the sandbox was created from; the
+    # fixture's is deliberately not the conventional uid 1000 / agent.
+    if [ -f "$dir/sbx" ] && [ "$broken" != "assumes-uid-1000" ]; then
+      case "$2" in
+      -u | -g) echo 1234 ;;
+      -un) echo sbxagent ;;
+      *) echo "unsupported id flag: $2" >&2; exit 1 ;;
+      esac
+    else
+      case "$2" in
+      -u | -g) echo 1000 ;;
+      -un) echo agent ;;
+      *) echo "unsupported id flag: $2" >&2; exit 1 ;;
+      esac
+    fi
+    ;;
+
   env)
     echo "PATH=/usr/bin"
     echo "HOME=/home/agent"
@@ -308,6 +354,14 @@ exec)
     ;;
 
   printenv)
+    if [ "$2" = HOME ]; then
+      if [ -f "$dir/sbx" ] && [ "$broken" != "assumes-uid-1000" ]; then
+        echo /home/sbxagent
+      else
+        echo /home/agent
+      fi
+      exit 0
+    fi
     # The container sees a sentinel; the real secret never arrives.
     if [ "$broken" = "no-credential" ]; then
       echo "printenv: KIT_TCK_TOKEN: not set" >&2
