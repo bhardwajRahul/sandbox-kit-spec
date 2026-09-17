@@ -786,7 +786,56 @@ func TestTheFloorResolvesTheUserByNameOrUid(t *testing.T) {
 	a.config.Config.User = "nobody-here"
 	got := findings(t, a)["sbx-platform-floor"]
 	require.Equal(t, report.Fail, got.Severity)
-	require.Contains(t, got.Detail, "no /etc/passwd entry")
+	require.Contains(t, got.Detail, "does not resolve")
+}
+
+// A runtime reads a numeric spelling as a uid, so a row merely named
+// "1000" is not the uid the image asked for.
+func TestANumericUserResolvesByUidNotName(t *testing.T) {
+	a := sbxWorkload(t)
+	a.files["/etc/passwd"] = []byte("1000:x:2000:2000::/home/odd:/bin/bash\n")
+	a.config.Config.User = "1000"
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+
+	a = sbxWorkload(t)
+	a.files["/etc/passwd"] = []byte("odd:x:1000:1000::/home/odd:/bin/bash\n")
+	a.config.Config.User = "1000"
+	require.Empty(t, findings(t, a))
+}
+
+// An explicit group overrides the passwd primary, so it is the gid the
+// host would honor and the one that has to resolve.
+func TestAGroupSuffixHasToResolve(t *testing.T) {
+	a := sbxWorkload(t)
+	a.files["/etc/group"] = []byte("agent:x:1000:\nbuild:x:2000:\n")
+	a.config.Config.User = "agent:build"
+	require.Empty(t, findings(t, a))
+
+	a = sbxWorkload(t)
+	a.files["/etc/group"] = []byte("agent:x:1000:\n")
+	a.config.Config.User = "agent:no-such-group"
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+}
+
+// A row the host cannot read a uid, gid and home out of has not resolved
+// anything, however well its name matches.
+func TestAMalformedPasswdRowDoesNotResolve(t *testing.T) {
+	for _, row := range []string{
+		"agent:x:notanumber:1000::/home/agent:/bin/bash",
+		"agent:x:1000:notanumber::/home/agent:/bin/bash",
+		"agent:x:1000:1000::relative/home:/bin/bash",
+		"agent:x:1000:1000:::/bin/bash",
+	} {
+		t.Run(row, func(t *testing.T) {
+			a := sbxWorkload(t)
+			a.files["/etc/passwd"] = []byte(row + "\n")
+			got := findings(t, a)["sbx-platform-floor"]
+			require.Equal(t, report.Fail, got.Severity)
+		})
+	}
 }
 
 // A mixin's image config never becomes the composed image's, so the

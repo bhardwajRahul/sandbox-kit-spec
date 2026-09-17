@@ -173,25 +173,35 @@ var checks = []check{
 		requirement: "conformance.md §2.2/required-unclaimed-refused",
 		run: func(ctx context.Context, e *Env) []report.Finding {
 			var findings []report.Finding
-			for _, probe := range []struct{ capability, fixture string }{
-				{capLifecycle, fixtureHooks},
-				{capNetworkPolicy, fixtureEgress},
-				{capNetworkPolicyV2, fixtureHTTPEgress},
-				{capCredential, fixtureCredential},
-				{capAgentContext, fixtureContext},
-				{capVolume, fixtureVolume},
-				{capResources, fixtureResources},
-				{capPrivileged, fixturePrivileged},
-				{capAgentSkills, fixtureSkills},
-				{capPort, fixturePort},
-				{capUSBDevice, fixtureUSBDevice},
-				{capAgentSessions, fixtureAgentSessions},
-				{capKitRegistry, fixtureKitRegistry},
+			for _, probe := range []struct {
+				capability, fixture string
+				// The sbx fixture is a workload, not a mixin layered
+				// onto one, so it is composed alone.
+				alone bool
+			}{
+				{capability: capSbx, fixture: fixtureSbxWorkload, alone: true},
+				{capLifecycle, fixtureHooks, false},
+				{capNetworkPolicy, fixtureEgress, false},
+				{capNetworkPolicyV2, fixtureHTTPEgress, false},
+				{capCredential, fixtureCredential, false},
+				{capAgentContext, fixtureContext, false},
+				{capVolume, fixtureVolume, false},
+				{capResources, fixtureResources, false},
+				{capPrivileged, fixturePrivileged, false},
+				{capAgentSkills, fixtureSkills, false},
+				{capPort, fixturePort, false},
+				{capUSBDevice, fixtureUSBDevice, false},
+				{capAgentSessions, fixtureAgentSessions, false},
+				{capKitRegistry, fixtureKitRegistry, false},
 			} {
 				if e.claims(probe.capability) {
 					continue
 				}
-				id, cleanup, err := e.sandbox(ctx, []string{fixtureWorkload, probe.fixture}, nil)
+				compose := []string{fixtureWorkload, probe.fixture}
+				if probe.alone {
+					compose = []string{probe.fixture}
+				}
+				id, cleanup, err := e.sandbox(ctx, compose, nil)
 				var refused *adapter.RefusedError
 				switch {
 				case errors.As(err, &refused):
@@ -735,7 +745,7 @@ var checks = []check{
 		// The image's entrypoint is the agent's launch command, which the
 		// host reads and runs itself. Left as PID 1 it would prepend
 		// itself to whatever the host runs there, so the fixture's
-		// entrypoint records having run and the marker must never appear.
+		// entrypoint writes a marker only when it is init.
 		requirement: "sbx@1/entrypoint-not-pid-one",
 		capability:  capSbx,
 		run: func(ctx context.Context, e *Env) []report.Finding {

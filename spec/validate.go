@@ -469,11 +469,12 @@ func validateCapabilityEntries(d *Descriptor) error {
 			}
 			seenExact[key] = i
 		}
-		// Presence, not emptiness: `config: {}` decodes to a non-nil
-		// empty map and is a config value, which these types' schemas
-		// (`not: {}`) reject. Testing length would let one descriptor
-		// pass here and fail schema validation.
-		if configlessCapabilities[n.Type] && n.Config != nil {
+		// Presence, not emptiness: `config: {}` and `config: null` are
+		// config values, which these types' schemas (`not: {}`) reject,
+		// and neither is distinguishable from an omitted key by the
+		// decoded map alone. Testing length or nil-ness would let one
+		// descriptor pass here and fail schema validation.
+		if configlessCapabilities[n.Type] && n.ConfigStated() {
 			return fieldErrorf(path+".config", "capabilities[%d]: %s takes no config", i, n.Type)
 		}
 

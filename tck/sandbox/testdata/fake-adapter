@@ -84,6 +84,9 @@ create)
       need=""
       case "$kit" in
       *skills-optional* | *scoped-egress*) ;;
+      # Before the *context* arm, whose name this fixture also carries
+      # through its own agent-context profile.
+      *sbx-workload*) need="com.docker.sandbox/sbx@1" ;;
       *context*) need="com.docker.sandbox/agent-context@1" ;;
       *hooks* | *files* | *restricted-env*) need="com.docker.sandbox/lifecycle@1" ;;
       # Before the *egress* arm, which would otherwise claim this name.

@@ -10,13 +10,13 @@ RUN groupadd --gid 1234 sbxagent \
  && touch /etc/sbx-persistent.sh \
  && chown sbxagent:sbxagent /etc/sbx-persistent.sh
 
-# The entrypoint records that it ran. The host owns PID 1 and launches the
-# agent itself, so this marker must never appear; if it does, the image's
-# entrypoint became PID 1 and the launch command would have prepended
-# itself to whatever the host meant to run.
+# The marker records the violation, not the run: the host reads this
+# entrypoint and launches the agent through it later, so a conforming
+# runtime does execute it. What it must never be is the container's init,
+# which would prepend it to whatever the host meant to run.
 COPY --chmod=755 <<'EOF' /usr/local/bin/kit-tck-sbx-entrypoint
 #!/bin/sh
-: > /var/tmp/sbx-entrypoint-ran
+[ "$$" -eq 1 ] && : > /var/tmp/sbx-entrypoint-ran
 exec sleep infinity
 EOF
 

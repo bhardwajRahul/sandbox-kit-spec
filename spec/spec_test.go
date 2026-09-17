@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // Create-phase args may parameterize capability configs. The authored and
@@ -570,11 +571,41 @@ func TestValidateNeedEntries(t *testing.T) {
 	_, err = Validate(base(Capability{Type: CapabilityKitRegistry}, Capability{Type: CapabilityKitRegistry}))
 	require.ErrorContains(t, err, "already declared")
 
+	// Merge unions a set into one workload-kinded descriptor, so a
+	// mixin's platform claim would be indistinguishable from the
+	// workload's own by the time an artifact is judged.
+	mixin := base(Capability{Type: CapabilitySbx})
+	mixin.Kind = KindMixin
+	_, err = Validate(mixin)
+	require.ErrorContains(t, err, "workload-only")
+
+	set := base(Capability{Type: CapabilitySbx})
+	set.Kind = KindSet
+	set.Kits = []Kit{{Ref: "example.com/demo:1"}}
+	_, err = Validate(set)
+	require.NoError(t, err, "a set's kind is derived from its members later")
+
 	// Config-less types take no config.
 	_, err = Validate(base(Capability{Type: CapabilityKitRegistry, Config: map[string]any{"x": 1}}))
 	require.ErrorContains(t, err, "takes no config")
 	_, err = Validate(base(Capability{Type: CapabilityPrivileged, Config: map[string]any{"x": 1}}))
 	require.ErrorContains(t, err, "takes no config")
+
+	// The empty and null spellings are config values too, which these
+	// types' schemas reject; both decode to something the map alone
+	// cannot tell from an omitted key, so Go would otherwise accept a
+	// descriptor JSON Schema refuses.
+	for _, spelling := range []string{"{}", "null", `{"x": 1}`} {
+		var c Capability
+		require.NoError(t, yaml.Unmarshal([]byte("type: "+CapabilityPrivileged+"\nconfig: "+spelling+"\n"), &c))
+		_, err = Validate(base(c))
+		require.ErrorContains(t, err, "takes no config", "yaml config: %s", spelling)
+
+		var j Capability
+		require.NoError(t, json.Unmarshal([]byte(`{"type":"`+CapabilityPrivileged+`","config":`+spelling+`}`), &j))
+		_, err = Validate(base(j))
+		require.ErrorContains(t, err, "takes no config", "json config: %s", spelling)
+	}
 
 	// Known configs decode strictly: an unknown field is an error, not
 	// silently ignored — this is where a typo in a permission surfaces.

@@ -126,6 +126,14 @@ func planSet(ctx context.Context, c gwclient.Client, d *spec.Descriptor, platfor
 	if err != nil {
 		return nil, err
 	}
+	// The derived descriptor is what consumers read, and deriving can
+	// produce shapes no member authored: a set of mixins derives to a
+	// mixin, carrying declarations only a workload may make. Held to the
+	// same bar as any published descriptor, here rather than at the first
+	// consumer.
+	if _, err := spec.ValidatePublished(published, first.merged); err != nil {
+		return nil, fmt.Errorf("the set derives to a descriptor that is not publishable: %w", err)
+	}
 	plan.published = published
 	return plan, nil
 }

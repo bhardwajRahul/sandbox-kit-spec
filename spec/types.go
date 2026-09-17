@@ -12,6 +12,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+
+	"gopkg.in/yaml.v3"
 )
 
 // SchemaVersion is the only schema version this package decodes.
@@ -261,9 +263,48 @@ type Capability struct {
 	// changes gate like any widening.
 	Config map[string]any `json:"config,omitempty" yaml:"config,omitempty"`
 
+	// configSet records that the document carried a `config` key, which
+	// the decoded map cannot express: an explicit null and an omitted key
+	// both decode to nil, while the config-less types' schemas reject any
+	// value including null and {}.
+	configSet bool
+
 	// Description is shown wherever the request is listed or prompted.
 	Description string `json:"description,omitempty" yaml:"description,omitempty"`
 }
+
+// UnmarshalYAML records whether the document stated a config at all,
+// which the decoded map cannot distinguish from an omitted key.
+func (c *Capability) UnmarshalYAML(node *yaml.Node) error {
+	type plain Capability
+	if err := node.Decode((*plain)(c)); err != nil {
+		return err
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == "config" {
+			c.configSet = true
+		}
+	}
+	return nil
+}
+
+// UnmarshalJSON records config presence for the JSON spelling.
+func (c *Capability) UnmarshalJSON(data []byte) error {
+	type plain Capability
+	if err := json.Unmarshal(data, (*plain)(c)); err != nil {
+		return err
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(data, &keys); err != nil {
+		return err
+	}
+	_, c.configSet = keys["config"]
+	return nil
+}
+
+// ConfigStated reports whether the document carried a `config` key,
+// including the null and empty spellings the decoded map loses.
+func (c Capability) ConfigStated() bool { return c.configSet || c.Config != nil }
 
 // Well-known capability types. Policy-shaped types appear at most once
 // per descriptor; instance-shaped types (credential, volume, port,

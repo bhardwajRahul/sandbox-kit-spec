@@ -43,6 +43,11 @@ A workload declaring this type:
   name to run commands as a login user; the gid to own what it writes;
   and the home as the working directory it writes from. A user the image
   names but does not resolve leaves the host guessing the rest.
+  Resolution follows what a runtime does with the spelling: a numeric
+  user is a uid rather than a login name, a `user:group` suffix is the
+  gid that applies instead of the passwd primary and resolves against
+  `/etc/group` when it is named, and a row whose uid or gid is not
+  numeric or whose home is not absolute has not resolved anything.
 - **SHOULD** name the persistent-environment file in `BASH_ENV` and ship <!-- tck: sbx@1/bash-env-names-a-shipped-file -->
   it. Without it the agent starts with whatever the image config carries
   and nothing the sandbox adds later.
@@ -62,7 +67,8 @@ A conforming runtime:
   so profile and rc files never run; this is the only thing that loads it.
 - **MUST** place the workspace at the image config's working directory <!-- tck: sbx@1/workspace-at-workdir -->
   when the image declares an absolute one, so the kit's paths and the
-  host's agree.
+  host's agree. Observable wherever the host writes into the workspace,
+  such as an `agent-context@1` profile.
 - **MAY** refuse the type. Refusal fails resolution for a required entry;
   an optional entry is skipped and recorded, and the kit runs however the
   host runs an ordinary image.

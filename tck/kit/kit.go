@@ -173,17 +173,21 @@ func isNumeric(s string) bool {
 }
 
 // lookupPasswd resolves an image config user — a name, a uid, or either
-// with a group suffix — against /etc/passwd content. Both spellings have
-// to resolve, because the host needs the half the image did not state.
-func lookupPasswd(passwd, user string) (passwdEntry, bool) {
-	want, _, _ := strings.Cut(user, ":")
+// with a group suffix — against /etc/passwd and /etc/group content. Both
+// spellings have to resolve, because the host needs the half the image
+// did not state.
+func lookupPasswd(passwd, group, user string) (passwdEntry, bool) {
+	want, wantGroup, hasGroup := strings.Cut(user, ":")
+	// A runtime reads a numeric spelling as a uid, so resolution has to
+	// as well: a row merely named "1000" is not uid 1000.
+	numeric := isNumeric(want)
 	for _, line := range strings.Split(passwd, "\n") {
 		fields := strings.Split(strings.TrimSpace(line), ":")
 		if len(fields) < 6 {
 			continue
 		}
 		e := passwdEntry{name: fields[0], uid: fields[2], gid: fields[3], home: fields[5]}
-		if e.name != want && e.uid != want {
+		if (numeric && e.uid != want) || (!numeric && e.name != want) {
 			continue
 		}
 		// Matching is not resolving: a row whose uid or gid is not a
@@ -192,9 +196,37 @@ func lookupPasswd(passwd, user string) (passwdEntry, bool) {
 		if !isNumeric(e.uid) || !isNumeric(e.gid) || !strings.HasPrefix(e.home, "/") {
 			return passwdEntry{}, false
 		}
+		if !hasGroup {
+			return e, true
+		}
+		// An explicit group overrides the passwd primary, so it is the
+		// gid the host would honor and the one that has to resolve.
+		gid, ok := lookupGroup(group, wantGroup)
+		if !ok {
+			return passwdEntry{}, false
+		}
+		e.gid = gid
 		return e, true
 	}
 	return passwdEntry{}, false
+}
+
+// lookupGroup resolves the group half of an image config user to a gid.
+func lookupGroup(groupFile, want string) (string, bool) {
+	if isNumeric(want) {
+		return want, true
+	}
+	for _, line := range strings.Split(groupFile, "\n") {
+		fields := strings.Split(strings.TrimSpace(line), ":")
+		if len(fields) < 3 || fields[0] != want {
+			continue
+		}
+		if !isNumeric(fields[2]) {
+			return "", false
+		}
+		return fields[2], true
+	}
+	return "", false
 }
 
 var checks = []check{
@@ -448,8 +480,14 @@ var checks = []check{
 			if !present {
 				return append(findings, fail("no /etc/passwd, so user %q resolves to nothing the host can read before the container exists", user)...)
 			}
-			if _, ok := lookupPasswd(string(passwd), user); !ok {
-				return append(findings, fail("user %q has no /etc/passwd entry; the host resolves its uid, gid and home from the image, before the container exists", user)...)
+			// Absent /etc/group only matters for a named group, which
+			// lookupPasswd rejects when it cannot resolve.
+			groupFile, _, err := s.artifact.ReadFile(ctx, "/etc/group")
+			if err != nil {
+				return append(findings, fail("read /etc/group: %v", err)...)
+			}
+			if _, ok := lookupPasswd(string(passwd), string(groupFile), user); !ok {
+				return append(findings, fail("user %q does not resolve to a uid, gid and home; the host reads those from the image, before the container exists", user)...)
 			}
 			return findings
 		},
