@@ -70,13 +70,17 @@ func (a *buildArtifact) HasFile(ctx context.Context, name string) (bool, error) 
 	if a.ref == nil {
 		return false, nil
 	}
-	if _, err := a.ref.StatFile(ctx, gwclient.StatRequest{Path: name}); err != nil {
+	st, err := a.ref.StatFile(ctx, gwclient.StatRequest{Path: name})
+	if err != nil {
 		if isNotExist(err) {
 			return false, nil
 		}
 		return false, err
 	}
-	return true, nil
+	// A directory at the path is not a file there, which is what the
+	// post-export source reports; the two sides of publication have to
+	// agree on what is present.
+	return !os.FileMode(st.Mode).IsDir(), nil
 }
 
 // FileStat reports the permission metadata of the filesystem about to be

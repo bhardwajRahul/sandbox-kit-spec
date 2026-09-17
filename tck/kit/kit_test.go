@@ -967,6 +967,28 @@ func TestAShortRecordIsNotAnAccount(t *testing.T) {
 	require.Contains(t, got.Detail, "does not resolve")
 }
 
+// Whitespace inside a record belongs to the field: " agent" is not the
+// agent a host looks for.
+func TestARecordsFieldsAreLiteral(t *testing.T) {
+	a := sbxWorkload(t)
+	a.files["/etc/passwd"] = []byte(" agent:x:1000:1000::/home/agent:/bin/bash\n")
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+
+	a = sbxWorkload(t)
+	a.files["/etc/group"] = []byte(" build:x:2000:\n")
+	a.config.Config.User = "agent:build"
+	got = findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+
+	// A CRLF database still resolves: the terminator is not a field.
+	a = sbxWorkload(t)
+	a.files["/etc/passwd"] = []byte("agent:x:1000:1000::/home/agent:/bin/bash\r\n")
+	require.Empty(t, findings(t, a))
+}
+
 // A commented record is not an account, however exactly it spells the
 // identity being looked for.
 func TestACommentedPasswdRecordIsNotAnAccount(t *testing.T) {

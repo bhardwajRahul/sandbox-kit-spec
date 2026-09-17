@@ -204,7 +204,10 @@ func lookupPasswd(passwd, group, user string) (passwdEntry, bool) {
 	// as well: a row merely named "1000" is not uid 1000, and 001000 is.
 	wantID, numeric := parseID(want)
 	for _, line := range strings.Split(passwd, "\n") {
-		line = strings.TrimSpace(line)
+		// Only the line terminator comes off: whitespace inside a record
+		// is part of the field, and normalizing it would resolve " agent"
+		// as the agent the host will look for and not find.
+		line = strings.TrimSuffix(line, "\r")
 		// A commented record is not an account: resolvers skip these, so
 		// matching one would certify an identity the host cannot find.
 		if strings.HasPrefix(line, "#") {
@@ -259,7 +262,7 @@ func lookupGroup(groupFile, want string) (int64, bool) {
 		return gid, true
 	}
 	for _, line := range strings.Split(groupFile, "\n") {
-		line = strings.TrimSpace(line)
+		line = strings.TrimSuffix(line, "\r")
 		if strings.HasPrefix(line, "#") {
 			continue
 		}
