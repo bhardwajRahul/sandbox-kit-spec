@@ -40,7 +40,7 @@
 set -euo pipefail
 
 sbx_bin="${SBX:-sbx}"
-state="${SBX_TCK_STATE:-${TMPDIR:-/tmp}/kit-tck-sbx-$(id -u)}"
+state="${SBX_TCK_STATE:-${TMPDIR:-/tmp}/kit-tck-sbx-$(id -u)${SBX_TCK_APP_NAME:+-$SBX_TCK_APP_NAME}}"
 
 # The line seeding writes into the marker's SKILL.md, and cleanup looks
 # for before removing anything: a directory that does not carry it is
@@ -90,7 +90,10 @@ com.docker.sandbox/privileged@1"
 # that called every non-zero status a refusal would satisfy them all
 # while being unable to create a sandbox at all. sbx reports a policy
 # decision and a breakage the same way — a non-zero status and an ERROR
-# line — so the difference has to be read out of the message.
+# line — so the difference has to be read out of the message. Every
+# token below is one sbx emits; a phrase it never prints would be dead
+# weight at best, and at worst would grow into one it does print for a
+# breakage.
 #
 # The daemon draws the distinction itself where it answers over HTTP: a
 # request it understood and declined comes back 400, and one that broke
@@ -102,12 +105,9 @@ com.docker.sandbox/privileged@1"
 # refusal passes one quietly.
 refusal_pattern="${SBX_TCK_REFUSAL_PATTERN:-\
 request failed: 400|\
-but the set only offers|\
 does not support|\
 does not implement|\
-unsupported capabilit|\
-exceeds the number of available CPUs|\
-refusing:}"
+exceeds the number of available CPUs}"
 
 # The suite hands the adapter a HOME that reaches the real one through a
 # sentinel-named symlink (§2.3), so a runtime copying the value into a
@@ -266,12 +266,20 @@ seed_skill_store() {
 	# found and never recorded as the adapter's to remove.
 	mkdir -p "$store"
 	if ! mkdir "$store/$name" 2>/dev/null; then
+		# Already there is fine and stays untouched; anything else is
+		# this run failing to arrange what its claim promises.
+		[ -d "$store/$name" ] ||
+			die "could not create the marker skill at $store/$name"
 		return 0
 	fi
-	# The name, not the path: cleanup resolves the store again rather
-	# than following a path out of a file into somewhere else.
+	if ! marker_body "$name" >"$store/$name/SKILL.md"; then
+		rm -rf "${store:?}/${name:?}"
+		die "could not write the marker skill at $store/$name"
+	fi
+	# Recorded once it exists, and by name: cleanup resolves the store
+	# again rather than following a path out of a file into somewhere
+	# else.
 	printf '%s\n' "$name" >"$state/seeded-skill"
-	marker_body "$name" >"$store/$name/SKILL.md"
 }
 
 # What seeding writes, and what cleanup expects to find unchanged.
@@ -314,7 +322,14 @@ bind_credential() {
 	# Captured for the same reason claims() is: a short-circuiting grep
 	# can leave the producer on a SIGPIPE that pipefail reads as no
 	# match, and this one decides whether a real secret is replaced.
-	bound="$(run_sbx secret ls --json 2>/dev/null || true)"
+	if ! bound="$(run_sbx secret ls --json 2>/dev/null)"; then
+		# Fail closed: a listing that could not be read says nothing
+		# about what is in the store, and this is the only thing
+		# standing between the fixture's secret and a binding of the
+		# user's.
+		echo "sbx-adapter: could not list secrets, so the kit-tck binding is left alone; its checks will report what the sandbox saw" >&2
+		return 0
+	fi
 	if grep -q '"kit-tck"' <<<"$bound"; then
 		echo "sbx-adapter: a kit-tck secret is already bound; leaving it, and its checks will report what the sandbox saw" >&2
 		return 0

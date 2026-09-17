@@ -307,15 +307,15 @@ exec)
       ;;
     esac
     ;;
-  test)
-    # Whether a declared file landed where the agent can write it. A
-    # runtime writing one as root leaves it off the plane this capability
-    # stays on, and its content reads the same either way.
-    case "$2" in
-    -w) ;;
-    *) echo "unsupported test: $2" >&2; exit 1 ;;
+  stat)
+    # Who a declared file belongs to. A runtime leaving one root-owned
+    # puts it off the plane this capability stays on, and its content
+    # reads the same either way.
+    case "$2 $3" in
+    "-c %u") ;;
+    *) echo "unsupported stat request: $2 $3" >&2; exit 1 ;;
     esac
-    [ "$broken" != "writes-files-as-root" ]
+    if [ "$broken" = "writes-files-as-root" ]; then echo 0; else echo 1000; fi
     ;;
 
   id)

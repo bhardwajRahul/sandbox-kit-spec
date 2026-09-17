@@ -78,6 +78,9 @@ under-provisioned.
 
 `exec` **MUST** proxy the command's exit status as its own, and **MUST
 NOT** allocate a TTY. The argv after `--` is passed through unmodified.
+It **MUST** run the command as the sandbox's agent identity: several
+requirements are about who the sandbox does things as, and an `exec` of
+the runtime's choosing would answer for a user the agent never is.
 
 `stop` followed by `start` **MUST** preserve the sandbox's filesystem.
 This pair is what separates the lifecycle phases: `install` hooks run once
