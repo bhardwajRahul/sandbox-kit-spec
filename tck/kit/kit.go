@@ -14,17 +14,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/docker/sandbox-kit-spec/v3/assemble"
 	"github.com/docker/sandbox-kit-spec/v3/resolve"
 	"github.com/docker/sandbox-kit-spec/v3/spec"
 	"github.com/docker/sandbox-kit-spec/v3/tck/report"
-	"math"
-	"strconv"
 )
 
 // StagedKitRoot is where every kit stages its own sources.
@@ -486,6 +487,12 @@ var checks = []check{
 				return fail("image config declares no user; declaring sbx@1 asks the host to honor an identity the image does not state")
 			}
 			passwd, present, err := s.artifact.ReadFile(ctx, "/etc/passwd")
+			if errors.Is(err, assemble.ErrFileTooLarge) {
+				// Bigger than any source will buffer: the identity
+				// cannot be judged here, which is not the same as an
+				// image that declared it wrongly.
+				return warn("/etc/passwd is larger than a checker will read, so user %q could not be resolved here", user)
+			}
 			if err != nil {
 				return fail("read /etc/passwd: %v", err)
 			}
@@ -495,6 +502,9 @@ var checks = []check{
 			// Absent /etc/group only matters for a named group, which
 			// lookupPasswd rejects when it cannot resolve.
 			groupFile, _, err := s.artifact.ReadFile(ctx, "/etc/group")
+			if errors.Is(err, assemble.ErrFileTooLarge) {
+				return warn("/etc/group is larger than a checker will read, so user %q could not be resolved here", user)
+			}
 			if err != nil {
 				return fail("read /etc/group: %v", err)
 			}

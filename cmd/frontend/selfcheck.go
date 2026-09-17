@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
@@ -12,6 +13,7 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/docker/sandbox-kit-spec/v3/assemble"
 	"github.com/docker/sandbox-kit-spec/v3/spec"
 	tckkit "github.com/docker/sandbox-kit-spec/v3/tck/kit"
 )
@@ -43,12 +45,21 @@ func (a *buildArtifact) ReadFile(ctx context.Context, name string) ([]byte, bool
 	if a.ref == nil {
 		return nil, false, nil
 	}
-	body, err := a.ref.ReadFile(ctx, gwclient.ReadRequest{Filename: name})
+	// Bounded like the post-export source: an untrusted base image's
+	// enormous file must not make the builder allocate without limit,
+	// and the two sides have to agree on what is readable.
+	body, err := a.ref.ReadFile(ctx, gwclient.ReadRequest{
+		Filename: name,
+		Range:    &gwclient.FileRange{Length: assemble.MaxFileEntryBytes + 1},
+	})
 	if err != nil {
 		if isNotExist(err) {
 			return nil, false, nil
 		}
 		return nil, false, err
+	}
+	if len(body) > assemble.MaxFileEntryBytes {
+		return nil, false, fmt.Errorf("%s exceeds %d bytes: %w", name, assemble.MaxFileEntryBytes, assemble.ErrFileTooLarge)
 	}
 	return body, true, nil
 }

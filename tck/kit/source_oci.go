@@ -768,7 +768,7 @@ func (a *ociArtifact) readFileAt(ctx context.Context, name string, depth, upto i
 		}
 		if entry.Hard {
 			return a.resolveHardLink(ctx, winner, upto,
-				"/"+strings.TrimPrefix(entry.Link, "/"), entry.Index, depth+1)
+				name, "/"+strings.TrimPrefix(entry.Link, "/"), entry.Index, depth+1)
 		}
 		return a.readFileAt(ctx, resolveLinkTarget(name, entry), depth+1, upto)
 	}
@@ -780,7 +780,7 @@ func (a *ociArtifact) readFileAt(ctx context.Context, name string, depth, upto i
 // layer, that is the target's last entry BEFORE the link — a later
 // rewrite in the same tar replaces the path with a new inode and must not
 // retarget the link; below it, the composed state of the lower layers.
-func (a *ociArtifact) resolveHardLink(ctx context.Context, winner, upto int, target string, before, depth int) ([]byte, bool, error) {
+func (a *ociArtifact) resolveHardLink(ctx context.Context, winner, upto int, alias, target string, before, depth int) ([]byte, bool, error) {
 	if depth > maxLinkDepth {
 		return nil, false, fmt.Errorf("%s: links nest deeper than any kit should", target)
 	}
@@ -801,10 +801,13 @@ func (a *ociArtifact) resolveHardLink(ctx context.Context, winner, upto int, tar
 		return nil, false, nil
 	case prior.OK && prior.Hard:
 		return a.resolveHardLink(ctx, winner, upto,
-			"/"+strings.TrimPrefix(prior.Link, "/"), prior.Index, depth+1)
+			alias, "/"+strings.TrimPrefix(prior.Link, "/"), prior.Index, depth+1)
 	case prior.OK:
-		// A symlink resolves at read time, against the final state.
-		return a.readFileAt(ctx, resolveLinkTarget(target, prior), depth+1, upto)
+		// A symlink resolves at read time, against the final state, and
+		// against the directory of the name used to reach it: a hard
+		// link is another name for the inode, not a copy anchored where
+		// the inode was first written.
+		return a.readFileAt(ctx, resolveLinkTarget(alias, prior), depth+1, upto)
 	default:
 		// Nothing earlier in this layer: the target came from below.
 		return a.readFileAt(ctx, target, depth+1, winner-1)
@@ -841,7 +844,7 @@ func (a *ociArtifact) hasFileAt(ctx context.Context, name string, depth, upto in
 		}
 		if entry.Hard {
 			return a.hasHardLink(ctx, winner, upto,
-				"/"+strings.TrimPrefix(entry.Link, "/"), entry.Index, depth+1)
+				name, "/"+strings.TrimPrefix(entry.Link, "/"), entry.Index, depth+1)
 		}
 		return a.hasFileAt(ctx, resolveLinkTarget(name, entry), depth+1, upto)
 	}
@@ -883,7 +886,7 @@ func (a *ociArtifact) fileStatAt(ctx context.Context, name string, depth, upto i
 		}
 		if entry.Hard {
 			return a.hardLinkStat(ctx, winner, upto,
-				"/"+strings.TrimPrefix(entry.Link, "/"), entry.Index, depth+1)
+				name, "/"+strings.TrimPrefix(entry.Link, "/"), entry.Index, depth+1)
 		}
 		return a.fileStatAt(ctx, resolveLinkTarget(name, entry), depth+1, upto)
 	}
@@ -892,7 +895,7 @@ func (a *ociArtifact) fileStatAt(ctx context.Context, name string, depth, upto i
 
 // hardLinkStat is hasHardLink reporting the target's metadata rather than
 // only that it exists.
-func (a *ociArtifact) hardLinkStat(ctx context.Context, winner, upto int, target string, before, depth int) (FileStat, bool, error) {
+func (a *ociArtifact) hardLinkStat(ctx context.Context, winner, upto int, alias, target string, before, depth int) (FileStat, bool, error) {
 	if depth > maxLinkDepth {
 		return FileStat{}, false, fmt.Errorf("%s: links nest deeper than any kit should", target)
 	}
@@ -913,9 +916,9 @@ func (a *ociArtifact) hardLinkStat(ctx context.Context, winner, upto int, target
 		return FileStat{}, false, nil
 	case prior.OK && prior.Hard:
 		return a.hardLinkStat(ctx, winner, upto,
-			"/"+strings.TrimPrefix(prior.Link, "/"), prior.Index, depth+1)
+			alias, "/"+strings.TrimPrefix(prior.Link, "/"), prior.Index, depth+1)
 	case prior.OK:
-		return a.fileStatAt(ctx, resolveLinkTarget(target, prior), depth+1, upto)
+		return a.fileStatAt(ctx, resolveLinkTarget(alias, prior), depth+1, upto)
 	default:
 		return a.fileStatAt(ctx, target, depth+1, winner-1)
 	}
@@ -924,7 +927,7 @@ func (a *ociArtifact) hardLinkStat(ctx context.Context, winner, upto int, target
 // hasHardLink is resolveHardLink for existence only: no target body is
 // ever buffered, so no content bound applies to bulky staged files
 // reached through a link.
-func (a *ociArtifact) hasHardLink(ctx context.Context, winner, upto int, target string, before, depth int) (bool, error) {
+func (a *ociArtifact) hasHardLink(ctx context.Context, winner, upto int, alias, target string, before, depth int) (bool, error) {
 	if depth > maxLinkDepth {
 		return false, fmt.Errorf("%s: links nest deeper than any kit should", target)
 	}
@@ -945,9 +948,9 @@ func (a *ociArtifact) hasHardLink(ctx context.Context, winner, upto int, target 
 		return false, nil
 	case prior.OK && prior.Hard:
 		return a.hasHardLink(ctx, winner, upto,
-			"/"+strings.TrimPrefix(prior.Link, "/"), prior.Index, depth+1)
+			alias, "/"+strings.TrimPrefix(prior.Link, "/"), prior.Index, depth+1)
 	case prior.OK:
-		return a.hasFileAt(ctx, resolveLinkTarget(target, prior), depth+1, upto)
+		return a.hasFileAt(ctx, resolveLinkTarget(alias, prior), depth+1, upto)
 	default:
 		return a.hasFileAt(ctx, target, depth+1, winner-1)
 	}

@@ -147,6 +147,15 @@ func ReadFile(r io.Reader, path string) ([]byte, bool, error) {
 // limit. Existence-only lookups take StatFileEntry and have no bound.
 const maxFileEntryBytes = 16 << 20
 
+// ErrFileTooLarge reports a body over MaxFileEntryBytes. A caller that
+// only wanted to read the file can say so rather than condemning the
+// artifact for something it cannot see.
+var ErrFileTooLarge = errors.New("file is larger than a checker will buffer")
+
+// MaxFileEntryBytes is the bound, exported so other sources of the same
+// filesystem enforce the one a checker expects.
+const MaxFileEntryBytes = maxFileEntryBytes
+
 // FileEntry is one path's final tar entry within a layer.
 type FileEntry struct {
 	Body []byte
@@ -273,7 +282,7 @@ func readEntry(tr *tar.Reader, path string, withBody bool, before int) (FileEntr
 				return FileEntry{}, fmt.Errorf("read %s: %w", path, err)
 			}
 			if len(body) > maxFileEntryBytes {
-				return FileEntry{}, fmt.Errorf("%s exceeds %d bytes; no staged descriptor is that large", path, maxFileEntryBytes)
+				return FileEntry{}, fmt.Errorf("%s exceeds %d bytes: %w", path, maxFileEntryBytes, ErrFileTooLarge)
 			}
 			entry = FileEntry{Body: body, Index: entryIndex, Mode: hdr.Mode, Uid: hdr.Uid, Gid: hdr.Gid, Regular: regular(hdr.Typeflag), OK: true}
 		}

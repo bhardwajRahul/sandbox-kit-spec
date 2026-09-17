@@ -291,10 +291,14 @@ func (c *Capability) UnmarshalYAML(unmarshal func(any) error) error {
 	return nil
 }
 
-// UnmarshalJSON records config presence for the JSON spelling.
+// UnmarshalJSON records config presence for the JSON spelling. Decoding
+// is strict, as every other well-known config is — a custom unmarshaler
+// does not inherit the caller's DisallowUnknownFields.
 func (c *Capability) UnmarshalJSON(data []byte) error {
 	type plain Capability
-	if err := json.Unmarshal(data, (*plain)(c)); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode((*plain)(c)); err != nil {
 		return err
 	}
 	var keys map[string]json.RawMessage

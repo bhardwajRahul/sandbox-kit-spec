@@ -3,6 +3,7 @@ package kit
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/require"
 
+	"github.com/docker/sandbox-kit-spec/v3/assemble"
 	"github.com/docker/sandbox-kit-spec/v3/spec"
 	"github.com/docker/sandbox-kit-spec/v3/tck/report"
 )
@@ -25,7 +27,10 @@ type fake struct {
 	// stats overrides the permission metadata a path reports; a file
 	// absent from it reads as root-owned and world-executable, which is
 	// what the shells an image ships are.
-	stats    map[string]FileStat
+	stats map[string]FileStat
+	// readErrs makes a path unreadable rather than absent, which is how
+	// a source reports what it will not buffer.
+	readErrs map[string]error
 	indexAnn map[string]string
 	hasIndex bool
 	// kits are the artifacts a merged set lists, keyed by reference,
@@ -49,6 +54,9 @@ func (f *fake) Layers(context.Context) ([]ocispec.Descriptor, bool, error) {
 }
 
 func (f *fake) ReadFile(_ context.Context, name string) ([]byte, bool, error) {
+	if err, ok := f.readErrs[name]; ok {
+		return nil, false, err
+	}
 	body, ok := f.files[name]
 	return body, ok, nil
 }
@@ -916,6 +924,18 @@ func TestAPaddedNumericUserResolves(t *testing.T) {
 	a := sbxWorkload(t)
 	a.config.Config.User = "001000"
 	require.Empty(t, findings(t, a))
+}
+
+// A database no source will buffer leaves the identity unjudged, which
+// is not the same as an image that declared it wrongly.
+func TestAnUnreadableAccountFileIsAWarning(t *testing.T) {
+	a := sbxWorkload(t)
+	a.readErrs = map[string]error{
+		"/etc/passwd": fmt.Errorf("/etc/passwd exceeds bytes: %w", assemble.ErrFileTooLarge),
+	}
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Warn, got.Severity)
+	require.Contains(t, got.Detail, "could not be resolved here")
 }
 
 // The host resolves the literal value, so a stray space is a user that

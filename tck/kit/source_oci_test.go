@@ -685,6 +685,38 @@ func TestFileStatOfAHardLinkIsTheInodeItCaptured(t *testing.T) {
 		require.Equal(t, FileStat{Mode: 0o600, Regular: true}, st, "the path itself is the later file")
 	})
 
+	// A hard link is another name for the inode, so a relative symlink
+	// target resolves against the directory of the name used to reach
+	// it, not the directory the inode was first written in.
+	t.Run("a link to a symlink resolves against the alias", func(t *testing.T) {
+		a := buildLayerArtifact(t, func(tw *tar.Writer) {
+			// Two files named real, in the two directories the same
+			// inode can be reached through.
+			writeFile(t, tw, "bin/real", 0o644, 0, 0)
+			writeFile(t, tw, "usr/bin/real", 0o750, 7, 9)
+			require.NoError(t, tw.WriteHeader(&tar.Header{
+				Name: "usr/bin/link", Typeflag: tar.TypeSymlink, Linkname: "real",
+			}))
+			require.NoError(t, tw.WriteHeader(&tar.Header{
+				Name: "bin/sh", Typeflag: tar.TypeLink, Linkname: "usr/bin/link",
+			}))
+		})
+		c := a.(statChecker)
+
+		// /bin/sh names the symlink inode, and its relative "real"
+		// resolves in /bin.
+		st, present, err := c.FileStat(ctx, "/bin/sh")
+		require.NoError(t, err)
+		require.True(t, present)
+		require.Equal(t, FileStat{Mode: 0o644, Regular: true}, st)
+
+		// The same inode reached by its own name resolves in /usr/bin.
+		st, present, err = c.FileStat(ctx, "/usr/bin/link")
+		require.NoError(t, err)
+		require.True(t, present)
+		require.Equal(t, FileStat{Mode: 0o750, Uid: 7, Gid: 9, Regular: true}, st)
+	})
+
 	t.Run("a same-layer rewrite after the link", func(t *testing.T) {
 		a := buildLayerArtifact(t, func(tw *tar.Writer) {
 			writeFile(t, tw, "bin/real", 0o750, 7, 9)
