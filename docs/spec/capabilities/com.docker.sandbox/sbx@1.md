@@ -52,8 +52,9 @@ A workload declaring this type:
   user is a uid rather than a login name, a `user:group` suffix is the
   gid that applies instead of the passwd primary and resolves against
   `/etc/group` when it is named, and a row with no login name, a uid or
-  gid outside the 32-bit range a host can hold, or a home that is not
-  absolute has not resolved anything.
+  gid a host cannot hold — anything at or above `4294967295`, whose top
+  value is the reserved "leave this one alone" sentinel rather than an
+  identity — or a home that is not absolute has not resolved anything.
 - **SHOULD** name the file by absolute path in `BASH_ENV` and ship it. <!-- tck: sbx@1/bash-env-names-a-shipped-file -->
   Without it the agent starts with whatever the image config carries and
   nothing the sandbox adds later, and a relative value resolves against

@@ -746,6 +746,36 @@ func TestFileStatOfAHardLinkIsTheInodeItCaptured(t *testing.T) {
 		require.Equal(t, FileStat{Mode: 0o644, Regular: true}, st)
 	})
 
+	// Nothing a later layer does to the pathname the inode was captured
+	// through un-creates the alias: the link is a name for the inode,
+	// not for the path.
+	t.Run("a later layer replacing an ancestor of the target", func(t *testing.T) {
+		a := buildLayeredArtifact(t,
+			func(tw *tar.Writer) {
+				writeFile(t, tw, "usr/bin/real", 0o750, 7, 9)
+			},
+			func(tw *tar.Writer) {
+				require.NoError(t, tw.WriteHeader(&tar.Header{
+					Name: "bin/sh", Typeflag: tar.TypeLink, Linkname: "usr/bin/real",
+				}))
+			},
+			func(tw *tar.Writer) {
+				require.NoError(t, tw.WriteHeader(&tar.Header{
+					Name: "usr/.wh..wh..opq", Typeflag: tar.TypeReg,
+				}))
+			})
+		c := a.(statChecker)
+
+		st, present, err := c.FileStat(ctx, "/bin/sh")
+		require.NoError(t, err)
+		require.True(t, present, "the alias outlives what happens to /usr")
+		require.Equal(t, FileStat{Mode: 0o750, Uid: 7, Gid: 9, Regular: true}, st)
+
+		_, present, err = c.FileStat(ctx, "/usr/bin/real")
+		require.NoError(t, err)
+		require.False(t, present, "the pathname itself is gone")
+	})
+
 	t.Run("a same-layer rewrite after the link", func(t *testing.T) {
 		a := buildLayerArtifact(t, func(tw *tar.Writer) {
 			writeFile(t, tw, "bin/real", 0o750, 7, 9)

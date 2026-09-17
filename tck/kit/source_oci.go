@@ -742,16 +742,18 @@ func (a *ociArtifact) readFileAt(ctx context.Context, name string, depth, upto i
 	return a.readFileFrom(ctx, name, name, depth, upto, upto)
 }
 
-// readFileFrom locates name within layers up to find, resolves relative
-// link targets against alias, and follows them across layers up to upto.
-// The two bounds differ only under a hard link, whose captured inode
-// comes from below it while the link it may turn out to be still
-// resolves against the composed filesystem.
+// readFileFrom locates name — path and ancestors alike — within layers
+// up to find, resolves relative link targets against alias, and follows
+// them across layers up to upto. The two bounds differ only under a hard
+// link: its inode was captured from below, and nothing a later layer
+// does to that pathname or its ancestors un-creates the alias, while a
+// symlink the capture turns out to be still resolves at read time
+// against the composed filesystem.
 func (a *ociArtifact) readFileFrom(ctx context.Context, name, alias string, depth, find, upto int) ([]byte, bool, error) {
 	if depth > maxLinkDepth {
 		return nil, false, fmt.Errorf("%s: links nest deeper than any kit should", name)
 	}
-	name, hidden, err := a.resolveAncestors(ctx, name, depth, upto)
+	name, hidden, err := a.resolveAncestors(ctx, name, depth, find)
 	if err != nil || hidden {
 		return nil, false, err
 	}
@@ -831,7 +833,7 @@ func (a *ociArtifact) hasFileFrom(ctx context.Context, name, alias string, depth
 	if depth > maxLinkDepth {
 		return false, fmt.Errorf("%s: links nest deeper than any kit should", name)
 	}
-	name, hidden, err := a.resolveAncestors(ctx, name, depth, upto)
+	name, hidden, err := a.resolveAncestors(ctx, name, depth, find)
 	if err != nil || hidden {
 		return false, err
 	}
@@ -879,7 +881,7 @@ func (a *ociArtifact) fileStatFrom(ctx context.Context, name, alias string, dept
 	if depth > maxLinkDepth {
 		return FileStat{}, false, fmt.Errorf("%s: links nest deeper than any kit should", name)
 	}
-	name, hidden, err := a.resolveAncestors(ctx, name, depth, upto)
+	name, hidden, err := a.resolveAncestors(ctx, name, depth, find)
 	if err != nil || hidden {
 		return FileStat{}, false, err
 	}
