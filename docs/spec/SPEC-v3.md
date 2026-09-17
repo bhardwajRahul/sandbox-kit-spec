@@ -533,10 +533,12 @@ candidate's against it:
   stop for approval.
 - `optional` does not change the surface: it changes what happens when the
   host cannot provide, not what is granted when it can.
-- `resources@1`, `lifecycle@1`, `agent-context@1`, and `agent-sessions@1`
-  contribute nothing to the surface: resource limits constrain the Kit
-  rather than grant it anything, and the latter three run inside the
-  sandbox on the entrypoint's trust plane (see their pages).
+- `resources@1`, `lifecycle@1`, `agent-context@1`, `agent-sessions@1`, and
+  `sbx@1` contribute nothing to the surface: resource limits constrain the
+  Kit rather than grant it anything, the next three run inside the sandbox
+  on the entrypoint's trust plane, and `sbx@1` asks the host to launch the
+  workload a particular way and to read an identity the image already
+  states (see their pages).
 
 ---
 

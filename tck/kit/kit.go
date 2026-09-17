@@ -160,6 +160,18 @@ type passwdEntry struct {
 	name, uid, gid, home string
 }
 
+func isNumeric(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // lookupPasswd resolves an image config user — a name, a uid, or either
 // with a group suffix — against /etc/passwd content. Both spellings have
 // to resolve, because the host needs the half the image did not state.
@@ -171,9 +183,16 @@ func lookupPasswd(passwd, user string) (passwdEntry, bool) {
 			continue
 		}
 		e := passwdEntry{name: fields[0], uid: fields[2], gid: fields[3], home: fields[5]}
-		if e.name == want || e.uid == want {
-			return e, true
+		if e.name != want && e.uid != want {
+			continue
 		}
+		// Matching is not resolving: a row whose uid or gid is not a
+		// number, or whose home is not an absolute path, leaves the host
+		// without the values this capability promises it can read.
+		if !isNumeric(e.uid) || !isNumeric(e.gid) || !strings.HasPrefix(e.home, "/") {
+			return passwdEntry{}, false
+		}
+		return e, true
 	}
 	return passwdEntry{}, false
 }

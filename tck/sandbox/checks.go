@@ -679,21 +679,56 @@ var checks = []check{
 			defer cleanup()
 
 			var findings []report.Finding
-			for _, want := range []struct{ arg, expect, what string }{
-				{"-u", "1234", "uid"},
-				{"-un", "sbxagent", "login name"},
+			// All four fields, because a runtime can read one and assume
+			// the rest: the uid it execs as, the gid it owns writes with,
+			// the login name commands run under, and the home they run
+			// from.
+			for _, want := range []struct {
+				argv         []string
+				expect, what string
+			}{
+				{[]string{"id", "-u"}, "1234", "uid"},
+				{[]string{"id", "-g"}, "1234", "gid"},
+				{[]string{"id", "-un"}, "sbxagent", "login name"},
+				{[]string{"printenv", "HOME"}, "/home/sbxagent", "home"},
 			} {
-				got, f := execOutput(ctx, e, id, "id", want.arg)
+				got, f := execOutput(ctx, e, id, want.argv...)
 				if f != nil {
 					return append(findings, *f)
 				}
 				if strings.TrimSpace(got) != want.expect {
 					findings = append(findings, report.Failf(
-						"the image declares %s %s, but commands run as %q; the identity is read from the image, not assumed",
+						"the image declares %s %s, but commands see %q; the identity is read from the image, not assumed",
 						want.what, want.expect, strings.TrimSpace(got)))
 				}
 			}
 			return findings
+		},
+	},
+	{
+		// Where the profile lands is the observable form of "the host put
+		// the workspace where the image said". The conventional fixture
+		// cannot judge it: a runtime hard-coding /home/agent/workspace
+		// passes there while ignoring what the image declares.
+		requirement: "sbx@1/workspace-at-workdir",
+		capability:  capSbx,
+		run: func(ctx context.Context, e *Env) []report.Finding {
+			id, cleanup, err := e.sandbox(ctx, []string{fixtureSbxWorkload}, nil)
+			if err != nil {
+				return []report.Finding{report.Failf("create: %v", err)}
+			}
+			defer cleanup()
+
+			const profile = "/home/sbxagent/workspace/AGENTS.md"
+			res, err := e.Adapter.Exec(ctx, id, "cat", profile)
+			if err != nil {
+				return []report.Finding{report.Failf("read profile: %v", err)}
+			}
+			if res.ExitCode != 0 {
+				return []report.Finding{report.Failf(
+					"the image declares its working directory as /home/sbxagent/workspace, but nothing is at %s; the workspace goes where the image says, not at a fixed path", profile)}
+			}
+			return nil
 		},
 	},
 	{

@@ -121,6 +121,7 @@ var mutations = map[string][]string{
 	"hides-install-inject-only-in-declared": {"credential@1/inject-only-no-env"},
 	"assumes-uid-1000":                      {"sbx@1/honors-image-user"},
 	"runs-image-entrypoint":                 {"sbx@1/entrypoint-not-pid-one"},
+	"workspace-at-fixed-path":               {"sbx@1/workspace-at-workdir"},
 	"accept-unknown":                        {"SPEC-v3 §7.3/unknown-required-refused"},
 	"refuses-everything":                    {"conformance.md §2.1/baseline-create-succeeds"},
 	"no-context":                            {"agent-context@1/body-readable"},

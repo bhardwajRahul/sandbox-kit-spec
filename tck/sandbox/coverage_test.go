@@ -231,7 +231,6 @@ var waived = map[string]string{
 	"network-policy@2/omitted-methods-paths-are-every": "grammar expansion, judged by the spec package's surface tests",
 	"network-policy@2/fail-closed-on-uninspectable":    "needs a TLS-uninspectable fixture endpoint the suite does not run yet",
 	"sbx@1/agent-launched-under-bash":                  "the adapter contract has no attach verb, so the suite cannot observe how the agent itself is launched — only exec, which is not that",
-	"sbx@1/workspace-at-workdir":                       "observable only through where a runtime surfaces the agent-context profile, which agent-context@1's own checks already judge",
 	"network-policy@2/unbypassable-boundary":           "non-observable from inside, as in @1",
 	"network-policy@2/refused-rule-observable":         "SHOULD; log shape is host-side and unspecified",
 

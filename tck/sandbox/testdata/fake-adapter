@@ -128,7 +128,11 @@ create)
   # A hook sees its declared env and the platform baseline, nothing else.
   {
     echo "PATH=/usr/bin"
-    echo "HOME=/home/agent"
+    if [ -f "$dir/sbx" ] && [ "$broken" != "assumes-uid-1000" ]; then
+      echo "HOME=/home/sbxagent"
+    else
+      echo "HOME=/home/agent"
+    fi
     # A sentinel smuggled into a variable the hook legitimately sees: no
     # name is added, so only the stable-value comparison against the
     # credential-free hook baselines sees it.
@@ -260,6 +264,14 @@ exec)
     /var/tmp/skills-rw-at-install) cat "$dir/skills-rw-at-install" ;;
     /etc/kit-written) cat "$dir/kit-written" ;;
     /home/agent/workspace/AGENTS.md) cat "$dir/profile" ;;
+    /home/sbxagent/workspace/AGENTS.md)
+      if [ -f "$dir/sbx" ] && [ "$broken" != "workspace-at-fixed-path" ]; then
+        cat "$dir/profile"
+      else
+        echo "no such file: $2" >&2
+        exit 1
+      fi
+      ;;
     /usr/share/sandbox/kit/context/context.md)
       # The staged body behind the profile's reference. A runtime that
       # surfaces the reference while dropping the mixin's layers has an
@@ -293,13 +305,13 @@ exec)
     # fixture's is deliberately not the conventional uid 1000 / agent.
     if [ -f "$dir/sbx" ] && [ "$broken" != "assumes-uid-1000" ]; then
       case "$2" in
-      -u) echo 1234 ;;
+      -u | -g) echo 1234 ;;
       -un) echo sbxagent ;;
       *) echo "unsupported id flag: $2" >&2; exit 1 ;;
       esac
     else
       case "$2" in
-      -u) echo 1000 ;;
+      -u | -g) echo 1000 ;;
       -un) echo agent ;;
       *) echo "unsupported id flag: $2" >&2; exit 1 ;;
       esac
@@ -335,6 +347,14 @@ exec)
     ;;
 
   printenv)
+    if [ "$2" = HOME ]; then
+      if [ -f "$dir/sbx" ] && [ "$broken" != "assumes-uid-1000" ]; then
+        echo /home/sbxagent
+      else
+        echo /home/agent
+      fi
+      exit 0
+    fi
     # The container sees a sentinel; the real secret never arrives.
     if [ "$broken" = "no-credential" ]; then
       echo "printenv: KIT_TCK_TOKEN: not set" >&2
