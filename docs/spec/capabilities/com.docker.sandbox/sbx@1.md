@@ -31,9 +31,10 @@ A workload declaring this type:
 
 - **MUST** ship a POSIX shell at `/bin/sh` that the declared user can <!-- tck: sbx@1/posix-shell-present -->
   execute. The host runs hooks, install steps, and its own idle process
-  through it. Occupying the path is not enough, and neither are bits that
-  leave the declared user out: either resolves here and then fails at the
-  first hook. A link counts when what it resolves to is executable.
+  through it. Occupying the path is not enough: a FIFO, socket, or device
+  node, or bits that leave the declared user out, resolve here and then
+  fail at the first hook. A link counts when what it resolves to is an
+  ordinary file that user can execute.
 - **MUST** ship a `bash` at `/bin/bash` the declared user can execute. <!-- tck: sbx@1/bash-present -->
   The agent is launched under bash specifically, because bash is what
   sources `BASH_ENV`; a POSIX shell would start the agent without its

@@ -122,17 +122,9 @@ func planSet(ctx context.Context, c gwclient.Client, d *spec.Descriptor, platfor
 		}
 	}
 
-	published, err := marshalDescriptorYAML(first.merged)
+	published, err := publishedSetDescriptor(first.merged)
 	if err != nil {
 		return nil, err
-	}
-	// The derived descriptor is what consumers read, and deriving can
-	// produce shapes no member authored: a set of mixins derives to a
-	// mixin, carrying declarations only a workload may make. Held to the
-	// same bar as any published descriptor, here rather than at the first
-	// consumer.
-	if _, err := spec.ValidatePublished(published, first.merged); err != nil {
-		return nil, fmt.Errorf("the set derives to a descriptor that is not publishable: %w", err)
 	}
 	plan.published = published
 	return plan, nil
@@ -152,6 +144,22 @@ func sameDeclarations(a, b *spec.Descriptor) error {
 		return fmt.Errorf("%s\n  vs\n%s", left, right)
 	}
 	return nil
+}
+
+// publishedSetDescriptor renders the derived descriptor and holds it to
+// the bar any published descriptor meets. Deriving can produce shapes no
+// member authored — a set of mixins derives to a mixin, carrying
+// declarations only a workload may make — so the check belongs here
+// rather than at the first consumer.
+func publishedSetDescriptor(d *spec.Descriptor) ([]byte, error) {
+	published, err := marshalDescriptorYAML(d)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := spec.ValidatePublished(published, d); err != nil {
+		return nil, fmt.Errorf("the set derives to a descriptor that is not publishable: %w", err)
+	}
+	return published, nil
 }
 
 // marshalDescriptorYAML renders the merged descriptor as the YAML a kit

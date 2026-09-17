@@ -887,7 +887,7 @@ func (a *ociArtifact) fileStatAt(ctx context.Context, name string, depth, upto i
 		}
 		return a.fileStatAt(ctx, resolveLinkTarget(name, entry), depth+1, upto)
 	}
-	return FileStat{Mode: entry.Mode, Uid: entry.Uid, Gid: entry.Gid}, entry.OK, nil
+	return FileStat{Mode: entry.Mode, Uid: entry.Uid, Gid: entry.Gid, Regular: entry.Regular}, entry.OK, nil
 }
 
 // hardLinkStat is hasHardLink reporting the target's metadata rather than
@@ -908,7 +908,7 @@ func (a *ociArtifact) hardLinkStat(ctx context.Context, winner, upto int, target
 	}
 	switch {
 	case prior.OK && !prior.Linked:
-		return FileStat{Mode: prior.Mode, Uid: prior.Uid, Gid: prior.Gid}, true, nil
+		return FileStat{Mode: prior.Mode, Uid: prior.Uid, Gid: prior.Gid, Regular: prior.Regular}, true, nil
 	case prior.OK && prior.Link == "":
 		return FileStat{}, false, nil
 	case prior.OK && prior.Hard:

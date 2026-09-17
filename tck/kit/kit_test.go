@@ -60,7 +60,7 @@ func (f *fake) FileStat(_ context.Context, name string) (FileStat, bool, error) 
 	if st, ok := f.stats[name]; ok {
 		return st, true, nil
 	}
-	return FileStat{Mode: 0o755}, true, nil
+	return FileStat{Mode: 0o755, Regular: true}, true, nil
 }
 
 func (f *fake) StagedStems(context.Context) ([]string, error) {
@@ -857,7 +857,7 @@ func TestAMalformedPasswdRowDoesNotResolve(t *testing.T) {
 // then fails at the first hook.
 func TestTheFloorNeedsTheShellsToBeExecutable(t *testing.T) {
 	a := sbxWorkload(t)
-	a.stats = map[string]FileStat{"/bin/bash": {Mode: 0o644}}
+	a.stats = map[string]FileStat{"/bin/bash": {Mode: 0o644, Regular: true}}
 	got := findings(t, a)["sbx-platform-floor"]
 	require.Equal(t, report.Fail, got.Severity)
 	require.Contains(t, got.Detail, "not executable")
@@ -868,22 +868,32 @@ func TestTheFloorNeedsTheShellsToBeExecutable(t *testing.T) {
 func TestTheFloorJudgesTheShellBitsAgainstTheDeclaredUser(t *testing.T) {
 	// Root-owned and root-only: the fixture's user is neither.
 	a := sbxWorkload(t)
-	a.stats = map[string]FileStat{"/bin/bash": {Mode: 0o100}}
+	a.stats = map[string]FileStat{"/bin/bash": {Mode: 0o100, Regular: true}}
 	got := findings(t, a)["sbx-platform-floor"]
 	require.Equal(t, report.Fail, got.Severity)
 	require.Contains(t, got.Detail, "not executable by agent")
 
 	// The same bits, reached through the group the user belongs to.
 	a = sbxWorkload(t)
-	a.stats = map[string]FileStat{"/bin/bash": {Mode: 0o010, Gid: 1000}}
+	a.stats = map[string]FileStat{"/bin/bash": {Mode: 0o010, Gid: 1000, Regular: true}}
 	require.Empty(t, findings(t, a))
 
 	// Root bypasses the bits entirely.
 	a = sbxWorkload(t)
 	a.config.Config.User = "root"
 	a.files["/etc/passwd"] = []byte("root:x:0:0:root:/root:/bin/bash\n")
-	a.stats = map[string]FileStat{"/bin/bash": {Mode: 0o100}}
+	a.stats = map[string]FileStat{"/bin/bash": {Mode: 0o100, Regular: true}}
 	require.Empty(t, findings(t, a))
+}
+
+// execve runs ordinary files: a FIFO, socket, or device node occupies the
+// path with every bit set and runs none of them.
+func TestTheFloorNeedsTheShellsToBeOrdinaryFiles(t *testing.T) {
+	a := sbxWorkload(t)
+	a.stats = map[string]FileStat{"/bin/sh": {Mode: 0o777}}
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "/bin/sh is not executable")
 }
 
 // uid_t is 32-bit unsigned and its top value is the "leave this one

@@ -169,7 +169,11 @@ type FileEntry struct {
 	// says nothing; follow the target and read that one's.
 	Mode     int64
 	Uid, Gid int
-	OK       bool
+	// Regular marks an ordinary file. A FIFO, socket, or device node
+	// occupies a path and can carry execute bits, and execve runs none
+	// of them.
+	Regular bool
+	OK      bool
 }
 
 // ReadFileEntry returns one path's final entry from a layer blob,
@@ -221,6 +225,12 @@ func StatFileEntry(r io.Reader, path string) (FileEntry, error) {
 	return readEntry(tr, path, false, -1)
 }
 
+// regular reports whether a tar type is an ordinary file. The reader
+// rewrites the historical spelling to TypeReg before this sees it.
+func regular(typeflag byte) bool {
+	return typeflag == tar.TypeReg
+}
+
 // readEntry keeps the LAST matching entry, because applying a layer does:
 // returning the first would report a body the composed filesystem never
 // exposes.
@@ -250,7 +260,7 @@ func readEntry(tr *tar.Reader, path string, withBody bool, before int) (FileEntr
 			entry = FileEntry{Linked: true, Link: hdr.Linkname, Hard: hdr.Typeflag == tar.TypeLink, Index: entryIndex, Mode: hdr.Mode, Uid: hdr.Uid, Gid: hdr.Gid, OK: true}
 		default:
 			if !withBody {
-				entry = FileEntry{Index: entryIndex, Mode: hdr.Mode, Uid: hdr.Uid, Gid: hdr.Gid, OK: true}
+				entry = FileEntry{Index: entryIndex, Mode: hdr.Mode, Uid: hdr.Uid, Gid: hdr.Gid, Regular: regular(hdr.Typeflag), OK: true}
 				continue
 			}
 			// Layers are untrusted input, and a tiny compressed layer can
@@ -265,7 +275,7 @@ func readEntry(tr *tar.Reader, path string, withBody bool, before int) (FileEntr
 			if len(body) > maxFileEntryBytes {
 				return FileEntry{}, fmt.Errorf("%s exceeds %d bytes; no staged descriptor is that large", path, maxFileEntryBytes)
 			}
-			entry = FileEntry{Body: body, Index: entryIndex, Mode: hdr.Mode, Uid: hdr.Uid, Gid: hdr.Gid, OK: true}
+			entry = FileEntry{Body: body, Index: entryIndex, Mode: hdr.Mode, Uid: hdr.Uid, Gid: hdr.Gid, Regular: regular(hdr.Typeflag), OK: true}
 		}
 	}
 }

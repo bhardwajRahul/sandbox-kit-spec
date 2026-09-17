@@ -951,10 +951,12 @@ type fileChecker interface {
 }
 
 // FileStat is a path's permission metadata: which execute bit applies
-// depends on who the image says will run it.
+// depends on who the image says will run it, and only an ordinary file
+// can be run at all.
 type FileStat struct {
 	Mode     int64
 	Uid, Gid int
+	Regular  bool
 }
 
 // statChecker is a source that can report that metadata. A source that
@@ -975,6 +977,11 @@ func executableBy(ctx context.Context, a Artifact, name string, who passwdEntry)
 	st, present, err := c.FileStat(ctx, name)
 	if err != nil || !present {
 		return false, false, err
+	}
+	// execve runs ordinary files. A FIFO, socket, or device node can
+	// carry every execute bit there is and run none of them.
+	if !st.Regular {
+		return false, true, nil
 	}
 	if who.uid == 0 {
 		return st.Mode&0o111 != 0, true, nil

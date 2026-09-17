@@ -68,6 +68,32 @@ func (a *buildArtifact) HasFile(ctx context.Context, name string) (bool, error) 
 	return true, nil
 }
 
+// FileStat reports the permission metadata of the filesystem about to be
+// exported, so an image whose shells the declared user cannot run is
+// refused here rather than after publication.
+func (a *buildArtifact) FileStat(ctx context.Context, name string) (tckkit.FileStat, bool, error) {
+	if a.ref == nil {
+		return tckkit.FileStat{}, false, nil
+	}
+	// StatFile resolves the path within the root, final symlink
+	// included, so what it reports is the target's, as the OCI source
+	// reports after export.
+	st, err := a.ref.StatFile(ctx, gwclient.StatRequest{Path: name})
+	if err != nil {
+		if isNotExist(err) {
+			return tckkit.FileStat{}, false, nil
+		}
+		return tckkit.FileStat{}, false, err
+	}
+	mode := os.FileMode(st.Mode)
+	return tckkit.FileStat{
+		Mode:    int64(mode.Perm()),
+		Uid:     int(st.Uid),
+		Gid:     int(st.Gid),
+		Regular: mode.IsRegular(),
+	}, true, nil
+}
+
 // StagedStems enumerates the staged root of the filesystem about to be
 // exported, exactly as the post-export OCI source will. Reporting the stem
 // the frontend intended would let a base image's stale staged kit ride

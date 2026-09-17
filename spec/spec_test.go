@@ -659,6 +659,14 @@ func TestNeedSurfaceAndGate(t *testing.T) {
 	require.Len(t, ws, 1)
 	require.Equal(t, "services", ws[0].Category)
 
+	// The platform type asks the host to launch the workload a
+	// particular way and to read an identity the image already states,
+	// so it grants nothing and never stops an update for approval.
+	sbx := SurfaceOf(&Descriptor{Capabilities: []Capability{{Type: CapabilitySbx}}})
+	require.Empty(t, sbx.Services)
+	require.Equal(t, Surface{}, sbx)
+	require.Empty(t, DiffWidenings(SurfaceOf(&Descriptor{}), sbx))
+
 	// Well-known types keep their direction-aware fields: privilege is a
 	// boolean, network allows diff per entry.
 	priv := SurfaceOf(&Descriptor{Capabilities: []Capability{{Type: CapabilityPrivileged}}})
