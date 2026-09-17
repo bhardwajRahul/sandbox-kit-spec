@@ -934,12 +934,37 @@ func TestAMalformedRecordDoesNotHideALaterOne(t *testing.T) {
 }
 
 // An empty group suffix overrides nothing: the passwd primary applies,
-// as it does for a user named without one.
+// as it does for a user named without one — including the decision not
+// to read a group file at all.
 func TestAnEmptyGroupSuffixIsNoOverride(t *testing.T) {
 	a := sbxWorkload(t)
 	a.files["/etc/group"] = nil
 	a.config.Config.User = "agent:"
 	require.Empty(t, findings(t, a))
+
+	a = sbxWorkload(t)
+	a.readErrs = map[string]error{
+		"/etc/group": fmt.Errorf("exceeds bytes: %w", assemble.ErrFileTooLarge),
+	}
+	a.config.Config.User = "agent:"
+	require.Empty(t, findings(t, a))
+}
+
+// A record is its full shape: a passwd line is seven fields and a group
+// line four, and a resolver skips what is short of that.
+func TestAShortRecordIsNotAnAccount(t *testing.T) {
+	a := sbxWorkload(t)
+	a.files["/etc/passwd"] = []byte("agent:x:1000:1000::/home/agent\n")
+	got := findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
+
+	a = sbxWorkload(t)
+	a.files["/etc/group"] = []byte("build:x:2000\n")
+	a.config.Config.User = "agent:build"
+	got = findings(t, a)["sbx-platform-floor"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "does not resolve")
 }
 
 // A commented record is not an account, however exactly it spells the

@@ -184,14 +184,22 @@ func parseID(s string) (int64, bool) {
 	return id, true
 }
 
+// explicitGroup is the group half of an image config user, when it
+// overrides the passwd primary. "agent:" overrides nothing, so the two
+// places that care — resolution, and deciding whether /etc/group is
+// worth reading at all — ask the same question here.
+func explicitGroup(user string) (string, bool) {
+	_, group, ok := strings.Cut(user, ":")
+	return group, ok && group != ""
+}
+
 // lookupPasswd resolves an image config user — a name, a uid, or either
 // with a group suffix — against /etc/passwd and /etc/group content. Both
 // spellings have to resolve, because the host needs the half the image
 // did not state.
 func lookupPasswd(passwd, group, user string) (passwdEntry, bool) {
-	want, wantGroup, hasGroup := strings.Cut(user, ":")
-	// "agent:" overrides nothing: the passwd primary still applies.
-	hasGroup = hasGroup && wantGroup != ""
+	want, _, _ := strings.Cut(user, ":")
+	wantGroup, hasGroup := explicitGroup(user)
 	// A runtime reads a numeric spelling as a uid, so resolution has to
 	// as well: a row merely named "1000" is not uid 1000, and 001000 is.
 	wantID, numeric := parseID(want)
@@ -202,8 +210,11 @@ func lookupPasswd(passwd, group, user string) (passwdEntry, bool) {
 		if strings.HasPrefix(line, "#") {
 			continue
 		}
+		// A passwd record is seven fields. A short line is malformed, and
+		// a resolver reads past it rather than making an account out of
+		// what it can see.
 		fields := strings.Split(line, ":")
-		if len(fields) < 6 {
+		if len(fields) != 7 {
 			continue
 		}
 		if numeric {
@@ -252,8 +263,9 @@ func lookupGroup(groupFile, want string) (int64, bool) {
 		if strings.HasPrefix(line, "#") {
 			continue
 		}
+		// A group record is four fields, the last being the member list.
 		fields := strings.Split(line, ":")
-		if len(fields) < 3 || fields[0] != want {
+		if len(fields) != 4 || fields[0] != want {
 			continue
 		}
 		if gid, ok := parseID(fields[2]); ok {
@@ -283,7 +295,7 @@ func resolveImageUser(ctx context.Context, a Artifact, user string) (passwdEntry
 	// Only a named group is looked up, so an unreadable group file is
 	// irrelevant to an identity that does not name one.
 	var groupFile []byte
-	if _, group, ok := strings.Cut(user, ":"); ok {
+	if group, ok := explicitGroup(user); ok {
 		if _, numeric := parseID(group); !numeric {
 			groupFile, _, err = a.ReadFile(ctx, "/etc/group")
 			switch {
