@@ -214,15 +214,21 @@ release_host_state() {
 			;;
 		esac
 	fi
+	# A binding the adapter stranded is remembered until a person takes
+	# it out, and said again every time cleanup runs. Remembered rather
+	# than retried: the removal already failed once, and by the next
+	# attempt the name could hold a binding someone repaired or replaced,
+	# which nothing here can tell from this one.
+	if [ -f "$state/stranded-credential" ]; then
+		echo "sbx-adapter: a kit-tck binding an earlier run could not remove is still in the store; 'sbx secret rm kit-tck' takes it out, then delete $state/stranded-credential" >&2
+	fi
 	if [ -f "$state/bound-credential" ]; then
-		# Once. A binding this run made is the run's to remove, but a
-		# later one cannot tell that binding from the replacement an
-		# operator put under the same name, so a failure is reported and
-		# forgotten rather than retried against whatever is there next.
-		if ! run_sbx secret rm kit-tck -f >/dev/null 2>&1; then
-			echo "sbx-adapter: the kit-tck credential outlived the run and will not be removed again; 'sbx secret rm kit-tck' takes it out" >&2
+		if run_sbx secret rm kit-tck -f >/dev/null 2>&1; then
+			rm -f "$state/bound-credential"
+		else
+			mv -f "$state/bound-credential" "$state/stranded-credential"
+			echo "sbx-adapter: the kit-tck credential outlived the run; 'sbx secret rm kit-tck' takes it out, then delete $state/stranded-credential" >&2
 		fi
-		rm -f "$state/bound-credential"
 	fi
 }
 
