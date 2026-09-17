@@ -918,6 +918,30 @@ func TestAnOutOfRangeIdDoesNotResolve(t *testing.T) {
 	}
 }
 
+// A resolver passes over a malformed record and keeps reading, so one
+// cannot hide the account that follows it.
+func TestAMalformedRecordDoesNotHideALaterOne(t *testing.T) {
+	a := sbxWorkload(t)
+	a.files["/etc/passwd"] = []byte(
+		"agent:x:notanumber:1000::/home/agent:/bin/bash\n" +
+			"agent:x:1000:1000::/home/agent:/bin/bash\n")
+	require.Empty(t, findings(t, a))
+
+	a = sbxWorkload(t)
+	a.files["/etc/group"] = []byte("build:x:notanumber:\nbuild:x:2000:\n")
+	a.config.Config.User = "agent:build"
+	require.Empty(t, findings(t, a))
+}
+
+// An empty group suffix overrides nothing: the passwd primary applies,
+// as it does for a user named without one.
+func TestAnEmptyGroupSuffixIsNoOverride(t *testing.T) {
+	a := sbxWorkload(t)
+	a.files["/etc/group"] = nil
+	a.config.Config.User = "agent:"
+	require.Empty(t, findings(t, a))
+}
+
 // A commented record is not an account, however exactly it spells the
 // identity being looked for.
 func TestACommentedPasswdRecordIsNotAnAccount(t *testing.T) {

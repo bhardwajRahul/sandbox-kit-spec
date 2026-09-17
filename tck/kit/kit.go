@@ -190,6 +190,8 @@ func parseID(s string) (int64, bool) {
 // did not state.
 func lookupPasswd(passwd, group, user string) (passwdEntry, bool) {
 	want, wantGroup, hasGroup := strings.Cut(user, ":")
+	// "agent:" overrides nothing: the passwd primary still applies.
+	hasGroup = hasGroup && wantGroup != ""
 	// A runtime reads a numeric spelling as a uid, so resolution has to
 	// as well: a row merely named "1000" is not uid 1000, and 001000 is.
 	wantID, numeric := parseID(want)
@@ -216,11 +218,13 @@ func lookupPasswd(passwd, group, user string) (passwdEntry, bool) {
 		// Matching is not resolving: a row with no login name, whose uid
 		// or gid is not an id a host can hold, or whose home is not an
 		// absolute path, leaves the host without the values this
-		// capability promises it can read.
+		// capability promises it can read. Skipped rather than fatal,
+		// because a resolver passes over a malformed record and a later
+		// one may be the account.
 		uid, uidOK := parseID(fields[2])
 		gid, gidOK := parseID(fields[3])
 		if fields[0] == "" || !uidOK || !gidOK || !strings.HasPrefix(fields[5], "/") {
-			return passwdEntry{}, false
+			continue
 		}
 		e := passwdEntry{name: fields[0], home: fields[5], uid: uid, gid: gid}
 		if !hasGroup {
@@ -252,7 +256,9 @@ func lookupGroup(groupFile, want string) (int64, bool) {
 		if len(fields) < 3 || fields[0] != want {
 			continue
 		}
-		return parseID(fields[2])
+		if gid, ok := parseID(fields[2]); ok {
+			return gid, true
+		}
 	}
 	return 0, false
 }

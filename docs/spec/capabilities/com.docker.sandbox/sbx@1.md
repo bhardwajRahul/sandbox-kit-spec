@@ -49,12 +49,14 @@ A workload declaring this type:
   and the home as the working directory it writes from. A user the image
   names but does not resolve leaves the host guessing the rest.
   Resolution follows what a runtime does with the spelling: a numeric
-  user is a uid rather than a login name, a `user:group` suffix is the
-  gid that applies instead of the passwd primary and resolves against
-  `/etc/group` when it is named, and a row with no login name, a uid or
-  gid a host cannot hold — anything at or above `4294967295`, whose top
-  value is the reserved "leave this one alone" sentinel rather than an
-  identity — or a home that is not absolute has not resolved anything.
+  user is a uid rather than a login name, a non-empty `user:group`
+  suffix is the gid that applies instead of the passwd primary and
+  resolves against `/etc/group` when it is named, and comments and
+  malformed records are passed over as any account resolver passes over
+  them. A row with no login name, a uid or gid a host cannot hold —
+  anything at or above `4294967295`, whose top value is the reserved
+  "leave this one alone" sentinel rather than an identity — or a home
+  that is not absolute resolves nothing.
 - **SHOULD** name the file by absolute path in `BASH_ENV` and ship it. <!-- tck: sbx@1/bash-env-names-a-shipped-file -->
   Without it the agent starts with whatever the image config carries and
   nothing the sandbox adds later, and a relative value resolves against
