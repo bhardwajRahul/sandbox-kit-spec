@@ -148,9 +148,12 @@ claims() {
 	capabilities | grep -qxF "$1"
 }
 
-# stat's spellings differ between the BSD and GNU tools.
-stat_owner() { stat -f '%u' "$1" 2>/dev/null || stat -c '%u' "$1"; }
-stat_mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
+# stat's spellings differ between the GNU and BSD tools. GNU first,
+# because GNU stat reads -f as "report on the filesystem" and succeeds:
+# the BSD spelling tried first would return a filesystem report here
+# rather than failing over.
+stat_owner() { stat -c '%u' "$1" 2>/dev/null || stat -f '%u' "$1"; }
+stat_mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
 
 # The adapter reads cleanup targets out of this directory and acts on
 # them, so a directory anyone else can write is a way to aim a removal.
@@ -180,19 +183,35 @@ release_host_state() {
 		name="$(cat "$state/seeded-skill")"
 		store="$(skills_store)"
 		case "$name" in
-		"" | . | .. | */*) ;;
+		"" | . | .. | */*)
+			# Nothing seeding could have written, so nothing to take
+			# back and nothing to remember.
+			rm -f "$state/seeded-skill"
+			;;
 		*)
-			if [ -n "$store" ] && grep -qF "$marker_line" "$store/$name/SKILL.md" 2>/dev/null; then
-				rm -rf "${store:?}/${name:?}"
+			if [ -z "$store" ]; then
+				echo "sbx-adapter: could not resolve the skills store; the marker skill $name outlived the run" >&2
+			elif ! grep -qF "$marker_line" "$store/$name/SKILL.md" 2>/dev/null; then
+				# Already gone, or no longer what seeding wrote: either
+				# way not this run's to remove.
+				rm -f "$state/seeded-skill"
+			elif rm -rf "${store:?}/${name:?}"; then
+				rm -f "$state/seeded-skill"
+			else
+				echo "sbx-adapter: the marker skill $store/$name outlived the run; remove it by hand" >&2
 			fi
 			;;
 		esac
-		rm -f "$state/seeded-skill"
 	fi
 	if [ -f "$state/bound-credential" ]; then
-		run_sbx secret rm kit-tck -f >/dev/null 2>&1 ||
+		# The record outlives a failed removal: it is the only thing that
+		# knows a real secret is still in the store, and dropping it
+		# would strand the secret silently.
+		if run_sbx secret rm kit-tck -f >/dev/null 2>&1; then
+			rm -f "$state/bound-credential"
+		else
 			echo "sbx-adapter: the kit-tck credential outlived the run; remove it with 'sbx secret rm kit-tck'" >&2
-		rm -f "$state/bound-credential"
+		fi
 	fi
 }
 
