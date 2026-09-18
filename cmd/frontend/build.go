@@ -87,6 +87,12 @@ func Build(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 	if _, err := spec.ValidateRaw(src.descriptor, d); err != nil {
 		return nil, withYAMLSource(err, filename, src.descriptor)
 	}
+	// The authored form is the only place this can be judged: the
+	// published one carries the derived entries legitimately, and by then
+	// an author's own would be indistinguishable from them.
+	if err := spec.RequireAuthoredProvides(d); err != nil {
+		return nil, withYAMLSource(err, filename, src.descriptor)
+	}
 
 	published, err := expandBuildPhase(src.descriptor, d, opts)
 	if err != nil {
@@ -197,18 +203,11 @@ func Build(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 	if err != nil {
 		return nil, withYAMLSource(fmt.Errorf("published descriptor no longer decodes after expansion: %w", err), filename, src.descriptor)
 	}
+	// Judged before the derived entries join it, so what an author is
+	// told about is what an author wrote. The assembled document is held
+	// to the same rules again below.
 	if _, err := spec.ValidatePublished(published, pd); err != nil {
 		return nil, withYAMLSource(err, filename, src.descriptor)
-	}
-	// The annotation carries the published descriptor as compact JSON:
-	// authored YAML is the human surface, but the published form is a
-	// derived artifact (args expanded, contentFile rewritten), and JSON
-	// matches the manifest it rides in — one `jq fromjson` away from any
-	// OCI tool, byte-deterministic for a given descriptor. Consumers
-	// decode with YAML parsers, which accept JSON as a subset.
-	publishedJSON, err := json.Marshal(pd)
-	if err != nil {
-		return nil, fmt.Errorf("encode published descriptor: %w", err)
 	}
 
 	res := gwclient.NewResult()
@@ -218,6 +217,66 @@ func Build(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 	var recipeBytes []byte
 	if content != nil {
 		recipeBytes = content.bytes
+	}
+
+	// Content first, for every platform, because the descriptor is not
+	// final until it has been read: §9.6 derives a provides entry per
+	// installed package, and the packages are in these filesystems. One
+	// descriptor serves every platform — it rides the index as one
+	// annotation — so none of it can be settled until all of them exist.
+	// The kit's own sources stage in the second pass below, since those
+	// are the descriptor.
+	builds := make([]platformBuild, 0, len(platformList))
+	for _, plat := range platformList {
+		b := platformBuild{platform: plat}
+		if plan != nil {
+			built := plan.builds[platforms.FormatAll(platformOrDefault(plat))]
+			b.ref, b.config = built.ref, built.config
+			b.ref, err = stageSetContext(ctx, c, b.ref, plat, stagedSetContextPath(stem), built.context)
+		} else {
+			b.ref, b.config, err = buildPlatform(ctx, c, d, opts, content, plat)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if guidanceBody != nil {
+			b.ref, err = stageGuidance(ctx, c, b.ref, plat, stagedGuidancePath, guidanceBody)
+			if err != nil {
+				return nil, err
+			}
+		}
+		builds = append(builds, b)
+	}
+
+	// Only a workload's filesystem is a root filesystem. A mixin's is a
+	// delta, where a package database is whatever its recipe happened to
+	// rewrite rather than an inventory of anything.
+	if pd.Kind == spec.KindWorkload {
+		refs := make([]gwclient.Reference, 0, len(builds))
+		for _, b := range builds {
+			refs = append(refs, b.ref)
+		}
+		derived, err := derivedProvides(ctx, refs)
+		if err != nil {
+			return nil, err
+		}
+		if len(derived) > 0 {
+			published, pd, err = withDerivedProvides(published, derived)
+			if err != nil {
+				return nil, withYAMLSource(err, filename, src.descriptor)
+			}
+		}
+	}
+
+	// The annotation carries the published descriptor as compact JSON:
+	// authored YAML is the human surface, but the published form is a
+	// derived artifact (args expanded, contentFile rewritten), and JSON
+	// matches the manifest it rides in — one `jq fromjson` away from any
+	// OCI tool, byte-deterministic for a given descriptor. Consumers
+	// decode with YAML parsers, which accept JSON as a subset.
+	publishedJSON, err := json.Marshal(pd)
+	if err != nil {
+		return nil, fmt.Errorf("encode published descriptor: %w", err)
 	}
 
 	// Assembled once and used twice: the self-check judges the same
@@ -233,42 +292,24 @@ func Build(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 		kitAnnotations[key] = value
 	}
 
-	for _, plat := range platformList {
-		var ref gwclient.Reference
-		var imageConfigJSON []byte
-		if plan != nil {
-			build := plan.builds[platforms.FormatAll(platformOrDefault(plat))]
-			ref, imageConfigJSON = build.ref, build.config
-			ref, err = stageSetContext(ctx, c, ref, plat, stagedSetContextPath(stem), build.context)
-		} else {
-			ref, imageConfigJSON, err = buildPlatform(ctx, c, d, opts, content, plat)
-		}
+	for _, b := range builds {
+		ref, err := stageKitSources(ctx, c, b.ref, b.platform, stem, published, recipeBytes)
 		if err != nil {
 			return nil, err
 		}
-		if guidanceBody != nil {
-			ref, err = stageGuidance(ctx, c, ref, plat, stagedGuidancePath, guidanceBody)
-			if err != nil {
-				return nil, err
-			}
-		}
-		ref, err = stageKitSources(ctx, c, ref, plat, stem, published, recipeBytes)
-		if err != nil {
-			return nil, err
-		}
-		if err := selfCheck(ctx, ref, publishedJSON, imageConfigJSON, kitAnnotations); err != nil {
+		if err := selfCheck(ctx, ref, publishedJSON, b.config, kitAnnotations); err != nil {
 			return nil, err
 		}
 
 		if !multiPlatform {
 			res.SetRef(ref)
-			res.AddMeta(exptypes.ExporterImageConfigKey, imageConfigJSON)
+			res.AddMeta(exptypes.ExporterImageConfigKey, b.config)
 			continue
 		}
-		p := platformOrDefault(plat)
+		p := platformOrDefault(b.platform)
 		id := platforms.FormatAll(p)
 		res.AddRef(id, ref)
-		res.AddMeta(exptypes.ExporterImageConfigKey+"/"+id, imageConfigJSON)
+		res.AddMeta(exptypes.ExporterImageConfigKey+"/"+id, b.config)
 		expPlatforms.Platforms = append(expPlatforms.Platforms, exptypes.Platform{ID: id, Platform: p})
 	}
 
@@ -724,6 +765,73 @@ func stageGuidance(ctx context.Context, c gwclient.Client, ref gwclient.Referenc
 		return nil, err
 	}
 	return res.SingleRef()
+}
+
+// platformBuild is one platform's solved content: the filesystem its
+// recipe produced, and the image config the exporter will write for it.
+type platformBuild struct {
+	platform *ocispecs.Platform
+	ref      gwclient.Reference
+	config   []byte
+}
+
+// withDerivedProvides adds the entries §9.6 derived to a published
+// descriptor, returning the amended bytes beside their decoded form.
+//
+// Both travel and both must say the same thing: the annotation carries
+// the JSON, the layers stage the YAML, and the staged-sources check
+// compares the two as documents. The node tree is amended rather than
+// re-encoded from the struct so the copy a reader finds in the image
+// keeps the author's own comments and ordering.
+func withDerivedProvides(published []byte, derived []string) ([]byte, *spec.Descriptor, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(published, &doc); err != nil {
+		return nil, nil, fmt.Errorf("reparse published descriptor: %w", err)
+	}
+	root := &doc
+	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
+		root = root.Content[0]
+	}
+	if root.Kind != yaml.MappingNode {
+		return nil, nil, fmt.Errorf("published descriptor is not a mapping")
+	}
+
+	provides := mappingValue(root, "provides")
+	switch {
+	case provides == nil:
+		// A kit that declared none still carries what its filesystem
+		// holds, so the field is created rather than skipped.
+		provides = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+		root.Content = append(root.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "provides"}, provides)
+	case provides.Kind == yaml.ScalarNode && provides.Tag == "!!null":
+		// `provides:` with nothing under it decodes as null, which is an
+		// empty list the author happened to spell differently.
+		provides.Kind, provides.Tag, provides.Value = yaml.SequenceNode, "!!seq", ""
+	case provides.Kind != yaml.SequenceNode:
+		return nil, nil, fmt.Errorf("published provides is not a list, so the derived entries have nowhere to go")
+	}
+	for _, entry := range derived {
+		provides.Content = append(provides.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: entry})
+	}
+
+	out, err := yaml.Marshal(&doc)
+	if err != nil {
+		return nil, nil, fmt.Errorf("re-encode published descriptor: %w", err)
+	}
+	pd, err := spec.Decode(out)
+	if err != nil {
+		return nil, nil, fmt.Errorf("published descriptor no longer decodes with derived provides: %w", err)
+	}
+	// Held to the published rules a second time, because this document is
+	// no longer only the author's: the entries came out of a base image
+	// nobody here controls, and the size budget in particular is now
+	// partly the derivation's doing.
+	if _, err := spec.ValidatePublished(out, pd); err != nil {
+		return nil, nil, fmt.Errorf("descriptor with %d provides entries derived from image content: %w", len(derived), err)
+	}
+	return out, pd, nil
 }
 
 // rewriteContentFile points the published descriptor's contentFile at the

@@ -45,10 +45,17 @@ func (a *buildArtifact) ReadFile(ctx context.Context, name string) ([]byte, bool
 	if a.ref == nil {
 		return nil, false, nil
 	}
-	// Bounded like the post-export source: an untrusted base image's
-	// enormous file must not make the builder allocate without limit,
-	// and the two sides have to agree on what is readable.
-	body, err := a.ref.ReadFile(ctx, gwclient.ReadRequest{
+	return readImageFile(ctx, a.ref, name)
+}
+
+// readImageFile reads one path out of a solved filesystem, reporting false
+// where nothing is there.
+//
+// Bounded like the post-export source: an untrusted base image's enormous
+// file must not make the builder allocate without limit, and the two sides
+// of publication have to agree on what is readable.
+func readImageFile(ctx context.Context, ref gwclient.Reference, name string) ([]byte, bool, error) {
+	body, err := ref.ReadFile(ctx, gwclient.ReadRequest{
 		Filename: name,
 		Range:    &gwclient.FileRange{Length: assemble.MaxFileEntryBytes + 1},
 	})
