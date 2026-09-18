@@ -169,11 +169,20 @@ func DerivedProvides(namespace string, listings [][]Package) []string {
 				continue
 			}
 			version := PackageVersion(p.Version)
-			if version == "" {
-				continue
-			}
 			known, ok := versions[name]
 			switch {
+			case version == "":
+				// A record this model can name no version for
+				// disagrees with every record that it can, another
+				// architecture's copy of the same package included:
+				// publishing that one would state a version the
+				// content does not carry throughout. Conflicting the
+				// name rather than passing over the record, or the
+				// derivation would emit an entry the artifact's own
+				// check refuses — the check holds an entry to every
+				// record for its name — and fail the build that made
+				// it.
+				versions[name] = conflicted
 			case !ok && i == 0:
 				versions[name] = version
 			case !ok:

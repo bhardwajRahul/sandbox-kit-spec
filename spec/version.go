@@ -19,9 +19,16 @@ import (
 // A handle stays narrow — it is an identifier someone types and a store
 // keys on, with no filesystem to answer to.
 var (
-	handleName          = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$`)
-	capabilityName      = regexp.MustCompile(`^[a-z0-9]([a-z0-9+.-]{0,62}[a-z0-9+])?$`)
-	capabilityNamespace = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
+	handleName     = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$`)
+	capabilityName = regexp.MustCompile(`^[a-z0-9]([a-z0-9+.-]{0,62}[a-z0-9+])?$`)
+	// capabilityNamespace is the charset a namespace draws on, and only
+	// that. Its structure is judged separately, label by label, because
+	// no single pattern over the whole namespace can tell com.example
+	// from com..example — both are dots and letters in some order.
+	capabilityNamespace = regexp.MustCompile(`^[a-z0-9.-]+$`)
+	// namespaceLabel is one dot-separated piece: the shape a DNS label
+	// has, alphanumeric at both ends with hyphens allowed inside.
+	namespaceLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 )
 
 // DefaultCapabilityNamespace qualifies bare capability names, the way
@@ -99,15 +106,37 @@ func validCapabilityName(name string) bool {
 // and "invalid capability name" would not say what to do about it.
 func capabilityNameError(name string) error {
 	ns, base, qualified := strings.Cut(name, "/")
-	switch {
-	case !qualified:
+	if !qualified {
 		if !capabilityName.MatchString(name) {
 			return fmt.Errorf("invalid capability name %q", name)
 		}
 		return nil
-	case !capabilityNamespace.MatchString(ns) || !capabilityName.MatchString(base):
+	}
+	if ns == "" {
 		return fmt.Errorf("invalid capability name %q", name)
-	case !strings.Contains(ns, ".") && !reservedNamespaces[ns]:
+	}
+	// Charset first, so a namespace that is not even lowercase reads as
+	// the malformed name it is rather than as a domain-shape complaint.
+	if !capabilityNamespace.MatchString(ns) || !capabilityName.MatchString(base) {
+		return fmt.Errorf("invalid capability name %q", name)
+	}
+	// Then the structure. A namespace someone defines is reverse-DNS
+	// (§5.1), which is what makes com.example/gh theirs and nobody
+	// else's — so every label has to be one a domain could carry. A dot
+	// with nothing either side of it does not make com..example a
+	// domain for having a dot in it.
+	labels := strings.Split(ns, ".")
+	for _, label := range labels {
+		if !namespaceLabel.MatchString(label) {
+			return fmt.Errorf("namespace %q in %q is not reverse-DNS: %q is not a label a domain can carry", ns, name, label)
+		}
+	}
+	// The labels this specification defined itself are single, and stand
+	// outside the two-label rule rather than failing it.
+	if reservedNamespaces[ns] {
+		return nil
+	}
+	if len(labels) < 2 {
 		return fmt.Errorf("namespace %q in %q is a single label, which this specification reserves; a namespace of your own is reverse-DNS, as in com.example/%s", ns, name, base)
 	}
 	return nil

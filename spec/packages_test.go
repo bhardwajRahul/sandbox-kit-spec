@@ -208,6 +208,39 @@ func TestDerivedProvidesFoldsAMultiarchDatabase(t *testing.T) {
 	require.Empty(t, DerivedProvides(DebNamespace, [][]Package{conflicting}))
 }
 
+// A record whose version this model cannot name disagrees with one it
+// can, so the name is conflicted rather than answered by the other
+// record. Passing over it would state a version the content does not
+// carry throughout — and worse, would emit an entry the artifact's own
+// check refuses, failing the build that produced it.
+func TestAnUnnameableVersionConflictsTheName(t *testing.T) {
+	require.Empty(t, DerivedProvides(DebNamespace, [][]Package{{
+		{Name: "pkg", Version: "2.0~rc1-1"},
+		{Name: "pkg", Version: "2.0-1"},
+	}}), "one architecture carrying the candidate is not agreement on the release")
+
+	// Order must not decide it either.
+	require.Empty(t, DerivedProvides(DebNamespace, [][]Package{{
+		{Name: "pkg", Version: "2.0-1"},
+		{Name: "pkg", Version: "2.0~rc1-1"},
+	}}))
+
+	// Across listings, the same way.
+	require.Empty(t, DerivedProvides(DebNamespace, [][]Package{
+		{{Name: "pkg", Version: "2.0-1"}},
+		{{Name: "pkg", Version: "2.0~rc1-1"}},
+	}))
+
+	// A name that is not a capability name at all is different: there is
+	// nothing to state and nothing for it to disagree with, so a package
+	// beside it is unaffected.
+	require.Equal(t, []string{"deb/bash@5.2.37"},
+		DerivedProvides(DebNamespace, [][]Package{{
+			{Name: "UPPER", Version: "1.0.0-1"},
+			{Name: "bash", Version: "5.2.37-2+dhi1"},
+		}}))
+}
+
 // Every derived entry has to survive the grammar it is published under,
 // or the frontend would assemble a descriptor its own validator refuses.
 func TestDerivedProvidesParseAsProvides(t *testing.T) {
@@ -272,9 +305,21 @@ func TestASingleLabelNamespaceIsReserved(t *testing.T) {
 		require.ErrorContains(t, err, "reverse-DNS", entry)
 	}
 
+	// A dot is not enough to make a domain. These carry one and name
+	// nothing, so the MUST has to read the labels rather than the
+	// punctuation.
+	for _, entry := range []string{"com..example/pkg", "com-.example/pkg", ".com.example/pkg", "com.example./pkg", "com.-example/pkg"} {
+		_, err := ParseProvide(entry)
+		require.ErrorContains(t, err, "not reverse-DNS", entry)
+	}
+
 	// Reverse-DNS is anyone's to use, and the two labels this
 	// specification has defined stay usable in the published form.
-	for _, entry := range []string{"com.example/gh", "com.docker.kit/gh", "gh", "deb/bash@5.2.37", "apk/musl@1.2.5"} {
+	for _, entry := range []string{
+		"com.example/gh", "com.docker.kit/gh", "gh", "deb/bash@5.2.37", "apk/musl@1.2.5",
+		// Hyphens inside a label are what a domain may carry.
+		"com.my-company/gh", "io.github.some-user/tool@1.0.0",
+	} {
 		_, err := ParseProvide(entry)
 		require.NoError(t, err, entry)
 	}
