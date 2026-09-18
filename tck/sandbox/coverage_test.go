@@ -111,6 +111,16 @@ var kitCovers = map[string][]string{
 	},
 	"sbx-persistent-env": {"sbx@1/bash-env-names-a-shipped-file"},
 
+	// The derivation ships its own evidence: the databases those entries
+	// were read from are in the artifact, so each one is held back to
+	// the filesystem that produced it — the package installed, and the
+	// version the one §9.6 says to publish.
+	"derived-provides": {
+		"SPEC-v3 §9.6/workload-only",
+		"SPEC-v3 §9.6/installed-only",
+		"SPEC-v3 §9.6/version-is-upstream-core",
+	},
+
 	// Fetching the kits a set lists is what turns the merge from
 	// something only its producer could check into something the
 	// published artifact can be held to.
@@ -158,6 +168,13 @@ var waived = map[string]string{
 	"SPEC-v3 §3.4/kit-published-reference":           "grammar rule, judged by the spec package's validators and schema tests",
 	"SPEC-v3 §9.5/layers-preserved":                  "build-time layer arithmetic; llb.Merge preserves the inputs' layers, which the published manifest cannot distinguish from a repack",
 	"SPEC-v3 §9.5/declarations-platform-independent": "the frontend holds every platform's merge to one descriptor at build; a single published manifest cannot show the comparison",
+
+	// Derivation: what the entries say is checkable against the databases
+	// that ship beside them, but agreement BETWEEN platforms is not — the
+	// kit suite judges one platform manifest at a time, and the reconciled
+	// entry is the only trace the comparison leaves.
+	"SPEC-v3 §9.6/agreed-across-platforms":     "the frontend reconciles every platform's databases at build; one published manifest cannot show what another platform recorded",
+	"SPEC-v3 §5.1/derived-namespaces-reserved": "grammar rule, judged by the spec package's validators; a published descriptor cannot distinguish an authored deb/ entry from a derived one, and derived-provides refuses either if the image disagrees",
 
 	// Grammar rules: the spec package's validators and schema tests are
 	// where these are judged, statement by statement.

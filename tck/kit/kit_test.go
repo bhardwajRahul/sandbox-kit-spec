@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"sort"
 	"strings"
 	"testing"
 
@@ -749,6 +750,131 @@ func sbxWorkload(t *testing.T) *fake {
 
 func TestASbxWorkloadSatisfyingTheFloorReportsNothing(t *testing.T) {
 	require.Empty(t, findings(t, sbxWorkload(t)))
+}
+
+// dpkgStatus is what a status file looks like for the packages a test
+// names, at the raw versions a distribution would have written.
+func dpkgStatus(packages map[string]string) []byte {
+	names := make([]string, 0, len(packages))
+	for name := range packages {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var b strings.Builder
+	for _, name := range names {
+		fmt.Fprintf(&b, "Package: %s\nStatus: install ok installed\nVersion: %s\n\n", name, packages[name])
+	}
+	return []byte(b.String())
+}
+
+// derivedWorkload is a workload whose descriptor carries §9.6 entries and
+// whose filesystem holds the database they were read from, so each test
+// can put exactly one of the two out of step.
+func derivedWorkload(t *testing.T, provides []string, installed map[string]string) *fake {
+	t.Helper()
+	authored := "schemaVersion: \"3\"\nkind: workload\ndisplayName: Shell\nversion: \"1.0.0\"\n" +
+		"provides: [" + strings.Join(provides, ", ") + "]\n"
+	d, err := spec.Decode([]byte(authored))
+	require.NoError(t, err)
+	published, err := json.Marshal(d)
+	require.NoError(t, err)
+
+	ann := map[string]string{
+		spec.AnnotationDescriptor:    string(published),
+		spec.AnnotationSchemaVersion: "3",
+	}
+	for k, v := range spec.OCIAnnotations(d) {
+		ann[k] = v
+	}
+	a := &fake{
+		annotations: ann,
+		layers:      []ocispec.Descriptor{{Digest: "sha256:aaaa"}},
+		layersKnown: true,
+		files: map[string][]byte{
+			path.Join(StagedKitRoot, stem, stagedDescriptorName): []byte(authored),
+			spec.DpkgStatusPath: dpkgStatus(installed),
+		},
+	}
+	a.config.Config.Entrypoint = []string{"bash"}
+	return a
+}
+
+func TestDerivedProvidesMatchingTheDatabaseReportsNothing(t *testing.T) {
+	a := derivedWorkload(t,
+		[]string{`"deb/bash@5.2.37"`, `"deb/libstdc++6@14.2.0"`},
+		map[string]string{"bash": "5.2.37-2+dhi1", "libstdc++6": "14.2.0-19+dhi0"})
+
+	require.NotContains(t, findings(t, a), "derived-provides")
+}
+
+// A package the database does not record as installed means the entry
+// came from somewhere other than the filesystem it claims to describe.
+func TestADerivedProvideNeedsAnInstalledPackage(t *testing.T) {
+	a := derivedWorkload(t,
+		[]string{`"deb/bash@5.2.37"`, `"deb/ghost@1.0.0"`},
+		map[string]string{"bash": "5.2.37-2+dhi1"})
+
+	got := findings(t, a)["derived-provides"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "deb/ghost@1.0.0")
+	require.Contains(t, got.Detail, "records as installed")
+}
+
+// The published version is the upstream core, so an entry carrying the
+// distribution's own decoration is wrong even though it is the truth.
+func TestADerivedProvideCarriesTheUpstreamCore(t *testing.T) {
+	a := derivedWorkload(t,
+		[]string{`"deb/openssl@3.5.7-1"`},
+		map[string]string{"openssl": "3.5.7-1~deb13u2+dhi1"})
+
+	got := findings(t, a)["derived-provides"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "3.5.7")
+}
+
+// The entries claim a database the image does not have, so there is
+// nothing backing them at all.
+func TestDerivedProvidesNeedTheDatabaseTheyNameToBePresent(t *testing.T) {
+	a := derivedWorkload(t, []string{`"deb/bash@5.2.37"`}, nil)
+	delete(a.files, spec.DpkgStatusPath)
+
+	got := findings(t, a)["derived-provides"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, spec.DpkgStatusPath)
+}
+
+// A mixin's layers are a delta, so a package database in one is whatever
+// its recipe rewrote rather than an inventory of anything.
+func TestDerivedProvidesAreWorkloadOnly(t *testing.T) {
+	authored := "schemaVersion: \"3\"\nkind: mixin\ndisplayName: Demo\nversion: \"1.0.0\"\n" +
+		"provides: [\"deb/bash@5.2.37\"]\n"
+	d, err := spec.Decode([]byte(authored))
+	require.NoError(t, err)
+	published, err := json.Marshal(d)
+	require.NoError(t, err)
+
+	a := conforming(t)
+	a.annotations[spec.AnnotationDescriptor] = string(published)
+	for k, v := range spec.OCIAnnotations(d) {
+		a.annotations[k] = v
+	}
+	a.files[path.Join(StagedKitRoot, stem, stagedDescriptorName)] = []byte(authored)
+	a.files[spec.DpkgStatusPath] = dpkgStatus(map[string]string{"bash": "5.2.37-2+dhi1"})
+
+	got := findings(t, a)["derived-provides"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "only a workload")
+}
+
+// §9.6 states an entry only where every platform agreed, so a package
+// this platform carries and the descriptor omits is not a finding — the
+// check reads one direction and only one.
+func TestADatabasePackageWithNoEntryIsNotAFinding(t *testing.T) {
+	a := derivedWorkload(t,
+		[]string{`"deb/bash@5.2.37"`},
+		map[string]string{"bash": "5.2.37-2+dhi1", "amd64-only": "1.0.0-1"})
+
+	require.NotContains(t, findings(t, a), "derived-provides")
 }
 
 // Without the capability the floor is not this kit's promise, so the same

@@ -648,6 +648,80 @@ var checks = []check{
 		},
 	},
 	{
+		// What §9.6 derived is evidence rather than a claim, and the
+		// evidence travels with it: the databases those entries were
+		// read from are in the artifact. So each entry is held back to
+		// the filesystem that is supposed to have produced it, which is
+		// what separates a derivation from an assertion.
+		//
+		// One direction only. A package with no entry is not a finding:
+		// §9.6 states an entry only where every platform agreed, so a
+		// package this platform's database lists is legitimately absent
+		// from a descriptor another platform disagreed about.
+		name:        "derived-provides",
+		requirement: "SPEC-v3 §9.6",
+		run: func(ctx context.Context, s *state) []report.Finding {
+			byNamespace := derivedByNamespace(s.descriptor.Provides)
+			if len(byNamespace) == 0 {
+				return nil
+			}
+			// A mixin's layers are a delta, where a package database is
+			// whatever the recipe happened to rewrite rather than an
+			// inventory — and §5.3 admits one workload per composition,
+			// which is what gives a derived name one owner.
+			if s.descriptor.Kind != spec.KindWorkload {
+				entries := flattenDerived(byNamespace)
+				return fail("descriptor carries %d provides entries derived from package databases, starting %s; only a workload's root filesystem answers for those, and a mixin's layers are a delta",
+					len(entries), entries[0])
+			}
+
+			var findings []report.Finding
+			for _, db := range spec.PackageDatabases() {
+				entries := byNamespace[db.Namespace]
+				if len(entries) == 0 {
+					continue
+				}
+				body, present, err := s.artifact.ReadFile(ctx, db.Path)
+				switch {
+				case errors.Is(err, assemble.ErrFileTooLarge):
+					findings = append(findings, report.Warnf(
+						"%s is larger than a checker will read, so the %s/ entries could not be held to it", db.Path, db.Namespace))
+					continue
+				case err != nil:
+					return append(findings, fail("read %s: %v", db.Path, err)...)
+				case !present:
+					findings = append(findings, report.Failf(
+						"descriptor carries %d %s/ entries but the image has no %s to read them from",
+						len(entries), db.Namespace, db.Path))
+					continue
+				}
+				installed, err := db.Read(bytes.NewReader(body))
+				if err != nil {
+					return append(findings, fail("%s: %v", db.Path, err)...)
+				}
+				recorded := make(map[string]string, len(installed))
+				for _, p := range installed {
+					recorded[p.Name] = p.Version
+				}
+				for _, entry := range entries {
+					raw, ok := recorded[entry.name]
+					if !ok {
+						findings = append(findings, report.Failf(
+							"%s is not a package %s records as installed, so nothing in the image offers it",
+							entry.spelling, db.Path))
+						continue
+					}
+					if want := spec.PackageVersion(raw); want != entry.version {
+						findings = append(findings, report.Failf(
+							"%s names version %s, but %s records %s, whose published version is %s",
+							entry.spelling, entry.version, db.Path, raw, want))
+					}
+				}
+			}
+			return findings
+		},
+	},
+	{
 		name:        "merged-set",
 		requirement: "SPEC-v3 §9.5",
 		run: func(ctx context.Context, s *state) []report.Finding {
@@ -781,6 +855,49 @@ var checks = []check{
 			return findings
 		},
 	},
+}
+
+// derivedEntry is one §9.6 provides entry, split for comparison against
+// a database and kept with the spelling the descriptor used, so a finding
+// names the string a reader would search the descriptor for.
+type derivedEntry struct {
+	spelling string
+	name     string
+	version  string
+}
+
+// derivedByNamespace groups a descriptor's derived provides by the
+// package manager that answers for them. An entry that does not parse is
+// left alone: descriptor-valid owns the grammar, and reporting it twice
+// would read as two problems.
+func derivedByNamespace(provides []string) map[string][]derivedEntry {
+	out := map[string][]derivedEntry{}
+	for _, s := range provides {
+		p, err := spec.ParseProvide(s)
+		if err != nil || !spec.IsDerivedProvide(p.Name) {
+			continue
+		}
+		namespace, name, _ := strings.Cut(p.Name, "/")
+		out[namespace] = append(out[namespace], derivedEntry{
+			spelling: strings.TrimSpace(s),
+			name:     name,
+			version:  p.Version,
+		})
+	}
+	return out
+}
+
+// flattenDerived lists every grouped entry as the descriptor spelled it,
+// ordered so a finding naming one of them names the same one every run.
+func flattenDerived(byNamespace map[string][]derivedEntry) []string {
+	var out []string
+	for _, entries := range byNamespace {
+		for _, e := range entries {
+			out = append(out, e.spelling)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // kitResolver is a source that can reach the kits a merged set lists,
