@@ -793,6 +793,30 @@ func TestTheFloorNeedsTheImageToDeclareAUser(t *testing.T) {
 	require.Contains(t, got.Detail, "declares no user")
 }
 
+// An image stating no identity is still judged for its shells: they are
+// their own MUSTs, and a run that stopped at the user would hand back
+// the rest one rebuild at a time.
+func TestTheFloorStillJudgesTheShellsWithoutAUser(t *testing.T) {
+	a := sbxWorkload(t)
+	a.config.Config.User = ""
+	delete(a.files, "/bin/sh")
+	delete(a.files, "/bin/bash")
+
+	rep, err := Run(context.Background(), a)
+	require.NoError(t, err)
+	var details []string
+	for _, f := range rep.Findings {
+		if f.Check == "sbx-platform-floor" {
+			require.Equal(t, report.Fail, f.Severity)
+			details = append(details, f.Detail)
+		}
+	}
+	require.Len(t, details, 3)
+	require.Contains(t, details[0], "declares no user")
+	require.Contains(t, details[1], "/bin/sh is missing")
+	require.Contains(t, details[2], "/bin/bash is missing")
+}
+
 // Both spellings have to resolve: the host reads whichever half the image
 // did not state out of passwd, before the container exists.
 func TestTheFloorResolvesTheUserByNameOrUid(t *testing.T) {

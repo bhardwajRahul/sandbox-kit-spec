@@ -980,11 +980,27 @@ func TestFromLayoutReportsAKitThatStagedNothing(t *testing.T) {
 	require.ErrorContains(t, rep.Err(), "self-describing")
 }
 
+// A reference is typed the way it is typed everywhere else, so the
+// shorthand forms have to reach the registry they name rather than making
+// the first path segment a host.
 func TestSplitRef(t *testing.T) {
+	const dgst = "sha256:0ba2d5c53a3f8e2f3b6a1a2b8cd0e4f5061728394a5b6c7d8e9f0a1b2c3d4e5f"
 	for ref, want := range map[string][2]string{
 		"docker.io/me/kit:1.0.0":     {"docker.io/me/kit", "1.0.0"},
 		"reg.example.com:5000/x:tag": {"reg.example.com:5000/x", "tag"},
-		"docker.io/me/kit@sha256:ab": {"docker.io/me/kit", "sha256:ab"},
+		"docker.io/me/kit@" + dgst:   {"docker.io/me/kit", dgst},
+		// Hub shorthand: a user repository, and an official image whose
+		// repository is implicitly under library.
+		"me/kit:1.0.0": {"docker.io/me/kit", "1.0.0"},
+		"kit:1.0.0":    {"docker.io/library/kit", "1.0.0"},
+		// A bare name is the tag every other tool reads it as.
+		"me/kit": {"docker.io/me/kit", "latest"},
+		// A host stays a host: normalization must not swallow the
+		// registry a local build loop pushes to.
+		"localhost:5000/me/kit:1.0.0": {"localhost:5000/me/kit", "1.0.0"},
+		"127.0.0.1:5000/me/kit":       {"127.0.0.1:5000/me/kit", "latest"},
+		// Pinned twice: the digest is what the reference named.
+		"me/kit:1.0.0@" + dgst: {"docker.io/me/kit", dgst},
 	} {
 		repo, tag, err := splitRef(ref)
 		require.NoError(t, err, ref)
@@ -992,9 +1008,12 @@ func TestSplitRef(t *testing.T) {
 		require.Equal(t, want[1], tag, ref)
 	}
 
-	// A bare repository names nothing to check.
-	_, _, err := splitRef("docker.io/me/kit")
-	require.Error(t, err)
+	// A reference no registry could serve is refused here, where the
+	// error can name it, rather than as a request that goes nowhere.
+	for _, ref := range []string{"", "Me/Kit:1.0.0", "me/kit:", "me/kit@sha256:ab"} {
+		_, _, err := splitRef(ref)
+		require.Error(t, err, ref)
+	}
 }
 
 // A whiteout in a later layer deletes what an earlier one staged. Without
