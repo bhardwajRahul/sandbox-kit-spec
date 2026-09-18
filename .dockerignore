@@ -1,0 +1,14 @@
+# Repository history and local editor/agent settings
+.git
+**/.git
+.vscode
+**/.vscode
+.claude
+**/.claude
+**/.DS_Store
+
+# Local build and release artifacts
+/frontend
+/kit-tck
+/bin
+/dist

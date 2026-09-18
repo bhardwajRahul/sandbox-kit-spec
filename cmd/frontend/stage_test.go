@@ -14,7 +14,7 @@ import (
 // scratch itself. stageGuidance instead called ToState on the reference
 // unconditionally, so a mixin whose only content was an agent-context
 // contentFile took the frontend down before staging it — surfacing as a
-// bare "exit code: 2" with no stack. See docker/sandboxes#6094.
+// bare "exit code: 2" with no stack.
 func TestStateToStageOnStartsFromScratchForADeclarationOnlyKit(t *testing.T) {
 	st, constraints, err := stateToStageOn(nil, &ocispecs.Platform{OS: "linux", Architecture: "s390x"})
 	require.NoError(t, err)

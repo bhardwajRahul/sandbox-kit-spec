@@ -137,7 +137,7 @@ func TestResolveInfersVersionFromReferenceTag(t *testing.T) {
 }
 
 func TestVersionFromReference(t *testing.T) {
-	require.Equal(t, "1.0.3", VersionFromReference("docker.io/cdupuis/sbx-kit-hello:1.0.3"))
+	require.Equal(t, "1.0.3", VersionFromReference("docker.io/example/sbx-kit-hello:1.0.3"))
 	require.Equal(t, "2.1.0", VersionFromReference("reg.io:5000/kits/hello:v2.1.0"),
 		"a conventional v-prefixed tag names the bare version")
 	require.Equal(t, "2.1.0", VersionFromReference("reg.io/kits/hello:2.1.0@sha256:abc"))

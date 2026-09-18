@@ -4,7 +4,7 @@ vars:
   # The frontend image the `# syntax=` line of every descriptor names.
   FRONTEND_IMAGE: docker/sandbox-kit
   FRONTEND_TAG: "3"
-  # Registry prefix kit images are pushed under, e.g. docker.io/cdupuis.
+  # Registry prefix kit images are pushed under, e.g. docker.io/example.
   # No default: pushing to someone else's namespace should never be one
   # forgotten variable away.
   REGISTRY: ""
