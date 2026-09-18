@@ -241,6 +241,15 @@ capabilities:
           env: [MCP_GATEWAY_URL, MCP_SENTINEL_TOKEN_NAME]
           description: Register the sandbox MCP gateway (startup fallback)
 
+  # Where claude reads shared skills, so the host's store reaches it. A
+  # subdirectory of ~/.claude the volumes above leave alone, and one the
+  # settings.json hook does not write, so the mount lands on a path no
+  # other declaration of this kit claims.
+  - type: com.docker.sandbox/agent-skills@1
+    optional: true
+    config:
+      path: /home/agent/.claude/skills
+
   - type: com.docker.sandbox/agent-context@1
     config:
       filename: CLAUDE.md
