@@ -383,6 +383,35 @@ func RequireVersionedProvides(d *Descriptor) error {
 	return nil
 }
 
+// RequireAuthoredProvides refuses a provides entry an author must not
+// write: §5.1 reserves the deb/ and apk/ namespaces for §9.6, where
+// publishing fills them from the package databases in the content.
+//
+// Authored form only, which is why it is not folded into Validate: the
+// published form legitimately carries these, and a runtime revalidating
+// a descriptor on load has to accept what publishing put there. The
+// distinction is the whole point — an entry under these namespaces is
+// something read off a filesystem, and one written by hand would assert
+// a fact about content instead of offering a capability, with nothing
+// left to catch the difference.
+func RequireAuthoredProvides(d *Descriptor) error {
+	for i, s := range d.Provides {
+		p, err := ParseProvide(s)
+		// A malformed entry, or one still holding an arg reference, is
+		// another rule's to report; a name that cannot be parsed cannot
+		// be in a reserved namespace either.
+		if err != nil {
+			continue
+		}
+		if IsDerivedProvide(p.Name) {
+			namespace, _, _ := strings.Cut(p.Name, "/")
+			return fieldErrorf(fmt.Sprintf("provides[%d]", i),
+				"provides entry %q is in the %s/ namespace, which publishing fills from the image's package database; drop it and let the build state what the content carries", s, namespace)
+		}
+	}
+	return nil
+}
+
 // needType is <namespace>/<name>@<version>: a dotted lowercase
 // namespace, a hyphenated lowercase name, an integer config-schema
 // version.
@@ -885,7 +914,7 @@ func validateCredentialNeed(path string, i int, n Capability) (*Credential, erro
 	if c.Service == "" {
 		return nil, fieldErrorf(path+".config.service", "capabilities[%d]: credential service is required", i)
 	}
-	if !capabilityName.MatchString(c.Service) {
+	if !handleName.MatchString(c.Service) {
 		return nil, fieldErrorf(path+".config.service", "capabilities[%d]: invalid service name %q", i, c.Service)
 	}
 	if c.Phase != "install" && c.Phase != "runtime" {

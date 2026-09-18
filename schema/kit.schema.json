@@ -59,7 +59,7 @@
       "items": {
         "type": "string"
       },
-      "description": "Capabilities this kit offers, optionally versioned as name@version. Nothing is provided implicitly. Bare names normalize into the default namespace (gh IS com.docker.kit/gh, like debian is docker.io/library/debian); third parties qualify under their own namespace, which never matches the bare form."
+      "description": "Capabilities this kit offers, optionally versioned as name@version. Nothing an author offers is provided implicitly. Bare names normalize into the default namespace (gh IS com.docker.kit/gh, like debian is docker.io/library/debian); third parties qualify under their own namespace, which never matches the bare form. The deb/ and apk/ namespaces are reserved: publishing fills them from the package databases in a workload's content, one entry per installed package, so do not author them."
     },
     "requires": {
       "type": "array",

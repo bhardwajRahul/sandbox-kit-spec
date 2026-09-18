@@ -7,12 +7,20 @@ import (
 	"strings"
 )
 
-// Capability names are constrained like kit handles: lowercase alphanumeric
-// plus hyphens, no leading or trailing hyphen. An optional dotted
-// namespace prefix qualifies the name the way registries qualify image
+// Names are constrained like kit handles: lowercase alphanumeric plus
+// hyphens, no leading or trailing hyphen. An optional dotted namespace
+// prefix qualifies a capability name the way registries qualify image
 // names.
+//
+// A capability name admits dots and pluses on top of that, because a
+// distribution package name is a capability name here (§9.6): Debian
+// ships libstdc++6, python-3.14 and containerd.io, and a charset that
+// refused them would leave a fifth of an image's packages unnameable. A
+// handle stays narrow — it is an identifier someone types and a store
+// keys on, with no filesystem to answer to.
 var (
-	capabilityName      = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$`)
+	handleName          = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$`)
+	capabilityName      = regexp.MustCompile(`^[a-z0-9]([a-z0-9+.-]{0,62}[a-z0-9+])?$`)
 	capabilityNamespace = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 )
 
@@ -24,6 +32,33 @@ var (
 // contracts the RUNTIME answers (capability types), com.docker.kit names
 // vocabulary KITS provide.
 const DefaultCapabilityNamespace = "com.docker.kit"
+
+// DebNamespace and ApkNamespace hold what a kit's own filesystem says it
+// carries, rather than what its author wrote down: publishing reads the
+// package databases and states one entry per installed package (§9.6).
+//
+// Their own namespaces, and not com.docker.kit, because they are facts of
+// a different kind and a different authority. A bare `node` is a claim an
+// author makes about what the kit offers; `deb/nodejs-24` is what dpkg
+// records, and the two must not collide in one namespace where a
+// requirement could match either.
+const (
+	DebNamespace = "deb"
+	ApkNamespace = "apk"
+)
+
+// IsDerivedProvide reports whether a normalized capability name is one
+// publishing derived from image content rather than one an author wrote.
+//
+// Three callers need the distinction, all of them because a derived entry
+// is evidence and an authored one is a claim: the version annotation must
+// not be drowned out by hundreds of package versions, the derivation must
+// replace its own previous output rather than accumulate it, and a report
+// reads better when it can say which is which.
+func IsDerivedProvide(name string) bool {
+	ns, _, qualified := strings.Cut(name, "/")
+	return qualified && (ns == DebNamespace || ns == ApkNamespace)
+}
 
 // NormalizeCapabilityName qualifies a bare capability name with the
 // default namespace; already-qualified names pass through. Matching,
@@ -529,6 +564,52 @@ func parseVersion(v string) (string, error) {
 func IsVersion(s string) bool {
 	_, err := parseVersion(s)
 	return err == nil
+}
+
+// semverCore and numericCore match the leading version inside what a
+// package database records. semverCore spells each part as semver's
+// numeric identifier, which admits no leading zero; numericCore takes any
+// digit run. Both tolerate a dpkg epoch and stop after three parts.
+var (
+	semverCore  = regexp.MustCompile(`^(?:[0-9]+:)?(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){0,2}`)
+	numericCore = regexp.MustCompile(`^(?:[0-9]+:)?[0-9]+(?:\.[0-9]+){0,2}`)
+)
+
+// PackageVersion is the version a derived provide carries: the leading
+// x.y.z core of what a package database records, with everything a
+// distribution wrapped around it removed. Empty when the record holds no
+// version this model can name, which drops the package rather than
+// publishing it under the kit's own version.
+//
+// What comes off is packaging bookkeeping rather than a point in the
+// upstream order — a Debian revision, a binNMU, a backport suffix, an apk
+// release — and a consumer writing `deb/openssl >= 3.5` cannot be asked to
+// know about `-1~deb13u2+dhi1`. Fewer than three parts stays as it is and
+// is never padded: binutils really is 2.44, and 2.44.0 would invent
+// precision the distribution never stated.
+func PackageVersion(raw string) string {
+	raw = strings.TrimSpace(raw)
+	// The longer of the two, because a leading zero is the one place the
+	// semver spelling has to give way: bc 1.07.1 is a real release, and
+	// the strict pattern stops mid-version and would name it 1.0. Kept
+	// whole instead, which §5.2 accepts and compares per segment, so it
+	// is the same point a semver reader lands on at 1.7.1 — while
+	// rewriting it that way would name a release nobody published.
+	core := semverCore.FindString(raw)
+	if permissive := numericCore.FindString(raw); len(permissive) > len(core) {
+		core = permissive
+	}
+	// An epoch is dpkg's ordering override, not part of what upstream
+	// released: it exists to re-order a version that already shipped, so
+	// carrying it would put 1:2.5.2 ahead of every 2.x that never needed
+	// one.
+	if _, upstream, found := strings.Cut(core, ":"); found {
+		core = upstream
+	}
+	if !IsVersion(core) {
+		return ""
+	}
+	return core
 }
 
 // TagVersion maps a consumption-reference tag (an OCI tag, a git ref)

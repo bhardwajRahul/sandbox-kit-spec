@@ -174,7 +174,7 @@ func TestSchemaMatchesSpecConstants(t *testing.T) {
 	}
 
 	credential := loadJSON(t, perTypeSchemaPath(CapabilityCredential))
-	require.Equal(t, capabilityName.String(), at(t, credential, "properties", "service")["pattern"])
+	require.Equal(t, handleName.String(), at(t, credential, "properties", "service")["pattern"])
 	// The schema wraps the validator's env-var pattern in an optional
 	// group: an empty name is the inject-only shape, which the validator
 	// accepts only alongside inject rules (a cross-field rule a regex
