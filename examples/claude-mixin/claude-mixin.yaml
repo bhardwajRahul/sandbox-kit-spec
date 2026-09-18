@@ -184,6 +184,13 @@ capabilities:
           env: [MCP_GATEWAY_URL, MCP_SENTINEL_TOKEN_NAME]
           description: Register the sandbox MCP gateway (startup fallback)
 
+  # Where claude reads shared skills, so the host's store reaches it in
+  # the mixin shape too.
+  - type: com.docker.sandbox/agent-skills@1
+    optional: true
+    config:
+      path: /home/agent/.claude/skills
+
   - type: com.docker.sandbox/agent-context@1
     config:
       contentFile: ./claude-mixin-context.md
