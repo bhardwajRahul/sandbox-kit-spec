@@ -313,6 +313,19 @@ func TestASingleLabelNamespaceIsReserved(t *testing.T) {
 		require.ErrorContains(t, err, "not reverse-DNS", entry)
 	}
 
+	// Nor is shape alone. A label longer than 63 characters, or a whole
+	// namespace longer than 253, is a string no domain can be — so it is
+	// nobody's to own, which is the only thing the namespace is for.
+	_, err := ParseProvide(strings.Repeat("a", 64) + ".example/pkg")
+	require.ErrorContains(t, err, "not reverse-DNS")
+	_, err = ParseProvide(strings.Repeat("a", 63) + ".example/pkg")
+	require.NoError(t, err, "63 is the limit, not 62")
+
+	long := strings.TrimSuffix(strings.Repeat(strings.Repeat("a", 63)+".", 5), ".")
+	require.Greater(t, len(long), maxNamespaceLength)
+	_, err = ParseProvide(long + "/pkg")
+	require.ErrorContains(t, err, "no domain is longer than 253")
+
 	// Reverse-DNS is anyone's to use, and the two labels this
 	// specification has defined stay usable in the published form.
 	for _, entry := range []string{
@@ -326,7 +339,7 @@ func TestASingleLabelNamespaceIsReserved(t *testing.T) {
 
 	// The rule is about the namespace, so it reaches every relation that
 	// names a capability rather than provides alone.
-	_, err := ParseRequire("tools/gh >= 1.0.0")
+	_, err = ParseRequire("tools/gh >= 1.0.0")
 	require.ErrorContains(t, err, "single label")
 
 	// Conflicts is the third place a capability name is judged, and it

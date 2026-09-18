@@ -27,9 +27,16 @@ var (
 	// from com..example — both are dots and letters in some order.
 	capabilityNamespace = regexp.MustCompile(`^[a-z0-9.-]+$`)
 	// namespaceLabel is one dot-separated piece: the shape a DNS label
-	// has, alphanumeric at both ends with hyphens allowed inside.
-	namespaceLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+	// has, alphanumeric at both ends with hyphens allowed inside, and
+	// within the 63 characters a label may occupy.
+	namespaceLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 )
+
+// maxNamespaceLength is what a domain name occupies at most, which a
+// reversed one occupies too. Bounded for the same reason the labels are:
+// a namespace is someone's because the domain is theirs, and a string no
+// domain could be is nobody's to own.
+const maxNamespaceLength = 253
 
 // DefaultCapabilityNamespace qualifies bare capability names, the way
 // docker.io/library qualifies bare image names: `gh` and
@@ -125,6 +132,11 @@ func capabilityNameError(name string) error {
 	// else's — so every label has to be one a domain could carry. A dot
 	// with nothing either side of it does not make com..example a
 	// domain for having a dot in it.
+	if len(ns) > maxNamespaceLength {
+		// Not echoed: the offending value is the length.
+		return fmt.Errorf("namespace in %q is %d characters, and no domain is longer than %d",
+			base, len(ns), maxNamespaceLength)
+	}
 	labels := strings.Split(ns, ".")
 	for _, label := range labels {
 		if !namespaceLabel.MatchString(label) {

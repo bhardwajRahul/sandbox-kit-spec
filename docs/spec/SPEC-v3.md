@@ -332,9 +332,13 @@ typical rootfs, and none of them nameable without.
 `com.docker.kit/` (vocabulary Kits provide) is deliberately a sibling of
 `com.docker.sandbox/` (contracts the runtime answers, [§7](#7-capabilities)).
 
-A namespace anyone defines for themselves **MUST** be reverse-DNS. <!-- tck: SPEC-v3 §5.1/namespace-reverse-dns -->
+A namespace anyone defines for themselves **MUST** be reverse-DNS: two <!-- tck: SPEC-v3 §5.1/namespace-reverse-dns -->
+labels or more, each one a domain could carry — alphanumeric at both
+ends, hyphens inside, at most 63 characters, and 253 for the whole.
 `com.example/gh` is theirs because the domain is, and that is the whole
-of what makes it never match `gh`. A single label is backed by no domain,
+of what makes it never match `gh`. A string no domain could be is nobody's
+to own, so `com..example` does not qualify for having a dot in it. A
+single label is backed by no domain,
 so that flat space is this specification's to hand out rather than
 first-come: reserving it is what keeps a name this specification has not
 defined yet — `rpm`, say — available to define, instead of already taken
