@@ -2,7 +2,7 @@
 
 Docker maintains this specification. The people accountable for it are in
 [MAINTAINERS](MAINTAINERS); GitHub routes review to them through
-[CODEOWNERS](CODEOWNERS).
+[CODEOWNERS](.github/CODEOWNERS).
 
 ## How decisions are made
 
@@ -50,6 +50,6 @@ moves.
 
 ## Conduct
 
-Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
-Security reports follow [SECURITY.md](SECURITY.md) rather than public
+Participation is governed by the [Code of Conduct](.github/CODE_OF_CONDUCT.md).
+Security reports follow [SECURITY.md](.github/SECURITY.md) rather than public
 issues.
