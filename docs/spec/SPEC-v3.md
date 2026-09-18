@@ -756,6 +756,17 @@ one entry per installed package:
   upstream order, and a consumer writing `deb/openssl >= 3.5` cannot be
   asked to know about them. Fewer than three parts is published as it
   stands and never padded — `binutils` really is `2.44`.
+- A tilde in the **upstream** half is the exception, and such a package <!-- tck: SPEC-v3 §9.6/prerelease-dropped -->
+  is dropped rather than published. dpkg sorts a tilde before everything,
+  end of string included, so `1.69~deb13u1` is older than `1.69` and
+  `2.0~rc1` is the candidate rather than the release: truncating there
+  would state a version the content has not reached, and
+  `deb/pkg >= 2.0` would be satisfied by something below it. Carrying it
+  is no better, since [§5.2](#52-versions) compares a non-numeric segment
+  lexically and would order `2.0-rc1` *above* `2.0`. The point is not
+  expressible here, so nothing is stated. A tilde in the Debian revision
+  is the ordinary rebuild marker and strips like the rest —
+  `9.20.26-1~deb13u1` really is `9.20.26`.
 - An entry is stated only where every platform the Kit publishes agrees <!-- tck: SPEC-v3 §9.6/agreed-across-platforms -->
   on the package and its version. One descriptor serves them all
   ([§9.5](#95-merging-a-set)), so it may state only what holds for all of

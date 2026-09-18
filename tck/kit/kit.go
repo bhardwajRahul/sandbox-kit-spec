@@ -665,26 +665,32 @@ var checks = []check{
 			if len(byNamespace) == 0 {
 				return nil
 			}
+			// A mixin's layers are a delta, where a package database is
+			// whatever the recipe happened to rewrite rather than an
+			// inventory — and §5.3 admits one workload per composition,
+			// which is what gives a derived name one owner.
+			//
+			// Judged first, before the set skip below, because it needs
+			// no database: a set of mixins merges to kind: mixin, and if
+			// one of them carried derived entries the union brings them
+			// along — ValidatePublished accepts the namespaces by design,
+			// so nothing else would refuse the result.
+			if s.descriptor.Kind != spec.KindWorkload {
+				entries := flattenDerived(byNamespace)
+				return fail("descriptor carries %d provides entries derived from package databases, starting %s; only a workload's root filesystem answers for those, and a mixin's layers are a delta",
+					len(entries), entries[0])
+			}
 			// A merged set carries its kits' entries through the provides
 			// union rather than deriving its own (§9.6), so these were
 			// read from the listed workload's filesystem BEFORE anything
 			// composed onto it. What this artifact can read is the merged
 			// database, which a mixin that upgraded or removed a package
 			// has since changed — and judging a correctly carried entry
-			// against it would report the merge as a violation. The
-			// entries stay checkable at the kit they came from, where
-			// merged-set-declarations already reaches.
+			// against it would report the merge as a violation. Only the
+			// comparison is skipped; the entries stay checkable at the
+			// kit they came from, where merged-set-declarations reaches.
 			if len(s.descriptor.Kits) > 0 {
 				return skip("a merged set carries its kits' derived entries, which were read before composition")
-			}
-			// A mixin's layers are a delta, where a package database is
-			// whatever the recipe happened to rewrite rather than an
-			// inventory — and §5.3 admits one workload per composition,
-			// which is what gives a derived name one owner.
-			if s.descriptor.Kind != spec.KindWorkload {
-				entries := flattenDerived(byNamespace)
-				return fail("descriptor carries %d provides entries derived from package databases, starting %s; only a workload's root filesystem answers for those, and a mixin's layers are a delta",
-					len(entries), entries[0])
 			}
 
 			var findings []report.Finding

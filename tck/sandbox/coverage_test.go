@@ -119,6 +119,10 @@ var kitCovers = map[string][]string{
 		"SPEC-v3 §9.6/workload-only",
 		"SPEC-v3 §9.6/installed-only",
 		"SPEC-v3 §9.6/version-is-upstream-core",
+		// The same comparison judges it: a dropped prerelease is an
+		// entry that is not there, and an entry that IS there is held
+		// to PackageVersion, which refuses to name one.
+		"SPEC-v3 §9.6/prerelease-dropped",
 	},
 
 	// Fetching the kits a set lists is what turns the merge from

@@ -921,6 +921,32 @@ func TestAMergedSetsDerivedEntriesAreNotJudgedHere(t *testing.T) {
 	require.Contains(t, got.Detail, "before composition")
 }
 
+// A set of mixins merges to kind: mixin, and the union brings a
+// nonconforming member's derived entries along with it. That is a
+// violation whichever filesystem is available, so the kind is judged
+// before the set skip — otherwise nothing refuses the result, since
+// ValidatePublished accepts the namespaces by design.
+func TestAMergedMixinSetStillFailsTheWorkloadOnlyRule(t *testing.T) {
+	authored := "schemaVersion: \"3\"\nkind: mixin\ndisplayName: Set\nversion: \"1.0.0\"\n" +
+		"provides: [\"deb/bash@5.2.37\"]\n" +
+		"kits:\n  - ref: reg.io/sbx-kit-tool:1.0.0\n    digest: sha256:" + strings.Repeat("a", 64) + "\n"
+	d, err := spec.Decode([]byte(authored))
+	require.NoError(t, err)
+	published, err := json.Marshal(d)
+	require.NoError(t, err)
+
+	a := derivedWorkload(t, []string{`"deb/bash@5.2.37"`}, map[string]string{"bash": "5.2.37-2+dhi1"})
+	a.annotations[spec.AnnotationDescriptor] = string(published)
+	for k, v := range spec.OCIAnnotations(d) {
+		a.annotations[k] = v
+	}
+	a.files[path.Join(StagedKitRoot, stem, stagedDescriptorName)] = []byte(authored)
+
+	got := findings(t, a)["derived-provides"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "only a workload")
+}
+
 // Without the capability the floor is not this kit's promise, so the same
 // gaps must go unreported rather than being imposed on every workload.
 func TestTheFloorIsJudgedOnlyWhenTheCapabilityIsDeclared(t *testing.T) {

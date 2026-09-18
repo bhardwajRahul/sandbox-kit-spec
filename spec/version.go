@@ -595,10 +595,13 @@ func IsVersion(s string) bool {
 // semverCore and numericCore match the leading version inside what a
 // package database records. semverCore spells each part as semver's
 // numeric identifier, which admits no leading zero; numericCore takes any
-// digit run. Both tolerate a dpkg epoch and stop after three parts.
+// digit run. Both stop after three parts.
 var (
-	semverCore  = regexp.MustCompile(`^(?:[0-9]+:)?(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){0,2}`)
-	numericCore = regexp.MustCompile(`^(?:[0-9]+:)?[0-9]+(?:\.[0-9]+){0,2}`)
+	semverCore  = regexp.MustCompile(`^(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){0,2}`)
+	numericCore = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){0,2}`)
+	// versionEpoch is dpkg's ordering override, which is not part of
+	// what upstream released.
+	versionEpoch = regexp.MustCompile(`^[0-9]+:`)
 )
 
 // PackageVersion is the version a derived provide carries: the leading
@@ -614,7 +617,36 @@ var (
 // is never padded: binutils really is 2.44, and 2.44.0 would invent
 // precision the distribution never stated.
 func PackageVersion(raw string) string {
-	raw = strings.TrimSpace(raw)
+	// An epoch is dpkg's ordering override, not part of what upstream
+	// released: it exists to re-order a version that already shipped, so
+	// carrying it would put 1:2.5.2 ahead of every 2.x that never needed
+	// one.
+	raw = versionEpoch.ReplaceAllString(strings.TrimSpace(raw), "")
+
+	// A tilde in the upstream version is the one suffix that is not
+	// bookkeeping: dpkg sorts it before everything, end of string
+	// included, so 1.69~deb13u1 is OLDER than 1.69 and 2.0~rc1 is the
+	// release candidate rather than the release. Truncating there would
+	// publish the version this is not yet, and `deb/pkg >= 2.0` would
+	// then be satisfied by something below 2.0.
+	//
+	// Nor can it be carried: §5.2 compares a non-numeric segment
+	// lexically, which puts 2.0-rc1 ABOVE 2.0 and overstates it the
+	// other way round. The point is unrepresentable here, so the package
+	// gets no entry — which §9.6 prefers to a wrong one.
+	//
+	// Only in the upstream half. A tilde in the Debian revision is the
+	// ordinary rebuild marker, and 9.20.26-1~deb13u1 really is 9.20.26.
+	// The last hyphen is the boundary, since an upstream version may
+	// carry earlier ones.
+	upstream := raw
+	if i := strings.LastIndex(raw, "-"); i >= 0 {
+		upstream = raw[:i]
+	}
+	if strings.Contains(upstream, "~") {
+		return ""
+	}
+
 	// The longer of the two, because a leading zero is the one place the
 	// semver spelling has to give way: bc 1.07.1 is a real release, and
 	// the strict pattern stops mid-version and would name it 1.0. Kept
@@ -624,13 +656,6 @@ func PackageVersion(raw string) string {
 	core := semverCore.FindString(raw)
 	if permissive := numericCore.FindString(raw); len(permissive) > len(core) {
 		core = permissive
-	}
-	// An epoch is dpkg's ordering override, not part of what upstream
-	// released: it exists to re-order a version that already shipped, so
-	// carrying it would put 1:2.5.2 ahead of every 2.x that never needed
-	// one.
-	if _, upstream, found := strings.Cut(core, ":"); found {
-		core = upstream
 	}
 	if !IsVersion(core) {
 		return ""

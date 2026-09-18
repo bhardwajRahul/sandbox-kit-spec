@@ -55,6 +55,49 @@ func TestPackageVersionTakesTheUpstreamCore(t *testing.T) {
 	}
 }
 
+// dpkg sorts a tilde before everything, end of string included, so
+// 1.69~deb13u1 is OLDER than 1.69 and 2.0~rc1 is the candidate rather
+// than the release. Truncating there would publish a version the image
+// has not reached, and §5.2 cannot carry it either — it compares a
+// non-numeric segment lexically, which would put 2.0-rc1 above 2.0. So
+// the package gets no entry.
+func TestPackageVersionDropsAnUpstreamPrerelease(t *testing.T) {
+	for _, raw := range []string{
+		// Real: init-system-helpers on a shell-docker rootfs, where the
+		// whole string is the upstream version.
+		"1.69~deb13u1+dhi1",
+		"2.0~rc1-1",
+		"3.0~beta2",
+		"1:2.0~rc1-1",
+	} {
+		require.Empty(t, PackageVersion(raw), raw)
+	}
+
+	// A tilde in the Debian revision is the ordinary rebuild marker, and
+	// these really are the upstream versions they name. 20 of the 363
+	// packages on that rootfs look like this, so reading the tilde
+	// anywhere would throw away a twentieth of the image for nothing.
+	for raw, want := range map[string]string{
+		"1:9.20.26-1~deb13u1+dhi1": "9.20.26",
+		"0.12.0-1~deb13u1+dhi1":    "0.12.0",
+		"3.5.7-1~deb13u2+dhi1":     "3.5.7",
+		// The last hyphen is the boundary, so a tilde before an earlier
+		// one is still upstream's.
+		"1.2-3-4~deb1": "1.2",
+	} {
+		require.Equal(t, want, PackageVersion(raw), raw)
+	}
+	require.Empty(t, PackageVersion("1.2~a-3-4"),
+		"a tilde before the last hyphen is in the upstream half")
+}
+
+// The ordering claim the drop rests on, pinned: if this model ever
+// ordered a prerelease correctly, carrying it would beat dropping it.
+func TestThisModelCannotOrderAPrerelease(t *testing.T) {
+	require.Equal(t, 1, CompareVersions("2.0-rc1", "2.0"),
+		"a non-numeric segment compares lexically, so the candidate reads as newer than the release")
+}
+
 // A dpkg status file keeps a stanza for a package whose files are gone,
 // so reading every stanza would have a kit provide software it does not
 // carry.
