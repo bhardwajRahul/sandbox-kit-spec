@@ -205,16 +205,38 @@ func FromLayout(ctx context.Context, dir, tag string) (Artifact, error) {
 	return resolveArtifact(ctx, store, tag, nil, "")
 }
 
-// splitRef separates the repository from the tag or digest.
+// splitRef normalizes a reference, then separates the repository from the
+// tag or digest.
+//
+// Normalized rather than cut at its separators, because a reference is
+// typed in familiar form — `me/sbx-kit:1.0.0`, `nginx` — and a registry
+// client takes a fully qualified repository. Cutting leaves `me` standing
+// as a registry host, and the check then fails on a DNS lookup for a name
+// that was never a host, saying nothing about the artifact. The expansion
+// here is the one docker and the frontend already apply, so a reference
+// that pulls is a reference this judges.
 func splitRef(ref string) (string, string, error) {
-	if i := strings.LastIndex(ref, "@"); i >= 0 {
-		return ref[:i], ref[i+1:], nil
+	named, err := reference.ParseNormalizedNamed(ref)
+	if err != nil {
+		return "", "", fmt.Errorf("reference %q: %w", ref, err)
 	}
-	i := strings.LastIndex(ref, ":")
-	if i < 0 || strings.Contains(ref[i+1:], "/") {
+	// A bare name means `latest`: that is what it means to docker pull
+	// and to the frontend resolving a kit a set lists, and a tool that
+	// refused the spelling those accept would be unusable against the
+	// references people actually publish under.
+	named = reference.TagNameOnly(named)
+	repo := reference.TrimNamed(named).String()
+	switch t := named.(type) {
+	case reference.Canonical:
+		// A digest answers for a reference carrying both, because it is
+		// the pin: resolving the tag instead would judge whatever it
+		// points at now, which need not be what the author named.
+		return repo, t.Digest().String(), nil
+	case reference.Tagged:
+		return repo, t.Tag(), nil
+	default:
 		return "", "", fmt.Errorf("reference %q names no tag or digest", ref)
 	}
-	return ref[:i], ref[i+1:], nil
 }
 
 // resolveArtifact descends to the image manifest a consumer would run,
