@@ -573,12 +573,24 @@ var checks = []check{
 			// not exist, and certifying it against "agent" would hide
 			// exactly that.
 			user := cfg.Config.User
+			var (
+				who      passwdEntry
+				resolved bool
+				findings []report.Finding
+			)
 			if strings.TrimSpace(user) == "" {
-				return fail("image config declares no user; declaring sbx@1 asks the host to honor an identity the image does not state")
-			}
-			who, resolved, findings, err := resolveImageUser(ctx, s.artifact, user)
-			if err != nil {
-				return fail("%v", err)
+				// Recorded and carried past, not returned: the shells
+				// are their own MUSTs, there or missing whoever would
+				// have run them. Stopping at the identity would report
+				// an image that states none and ships no shell either
+				// as having one thing wrong, and hand back the rest a
+				// rebuild at a time.
+				findings = fail("image config declares no user; declaring sbx@1 asks the host to honor an identity the image does not state")
+			} else {
+				who, resolved, findings, err = resolveImageUser(ctx, s.artifact, user)
+				if err != nil {
+					return fail("%v", err)
+				}
 			}
 
 			for _, shell := range []string{"/bin/sh", "/bin/bash"} {
