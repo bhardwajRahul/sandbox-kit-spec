@@ -7,14 +7,36 @@ import (
 	"strings"
 )
 
-// Capability names are constrained like kit handles: lowercase alphanumeric
-// plus hyphens, no leading or trailing hyphen. An optional dotted
-// namespace prefix qualifies the name the way registries qualify image
+// Names are constrained like kit handles: lowercase alphanumeric plus
+// hyphens, no leading or trailing hyphen. An optional dotted namespace
+// prefix qualifies a capability name the way registries qualify image
 // names.
+//
+// A capability name admits dots and pluses on top of that, because a
+// distribution package name is a capability name here (§9.6): Debian
+// ships libstdc++6, python-3.14 and containerd.io, which is one package
+// in twenty on a shell-docker rootfs and none of them nameable without.
+// A handle stays narrow — it is an identifier someone types and a store
+// keys on, with no filesystem to answer to.
 var (
-	capabilityName      = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$`)
-	capabilityNamespace = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
+	handleName     = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$`)
+	capabilityName = regexp.MustCompile(`^[a-z0-9]([a-z0-9+.-]{0,62}[a-z0-9+])?$`)
+	// capabilityNamespace is the charset a namespace draws on, and only
+	// that. Its structure is judged separately, label by label, because
+	// no single pattern over the whole namespace can tell com.example
+	// from com..example — both are dots and letters in some order.
+	capabilityNamespace = regexp.MustCompile(`^[a-z0-9.-]+$`)
+	// namespaceLabel is one dot-separated piece: the shape a DNS label
+	// has, alphanumeric at both ends with hyphens allowed inside, and
+	// within the 63 characters a label may occupy.
+	namespaceLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 )
+
+// maxNamespaceLength is what a domain name occupies at most, which a
+// reversed one occupies too. Bounded for the same reason the labels are:
+// a namespace is someone's because the domain is theirs, and a string no
+// domain could be is nobody's to own.
+const maxNamespaceLength = 253
 
 // DefaultCapabilityNamespace qualifies bare capability names, the way
 // docker.io/library qualifies bare image names: `gh` and
@@ -24,6 +46,33 @@ var (
 // contracts the RUNTIME answers (capability types), com.docker.kit names
 // vocabulary KITS provide.
 const DefaultCapabilityNamespace = "com.docker.kit"
+
+// DebNamespace and ApkNamespace hold what a kit's own filesystem says it
+// carries, rather than what its author wrote down: publishing reads the
+// package databases and states one entry per installed package (§9.6).
+//
+// Their own namespaces, and not com.docker.kit, because they are facts of
+// a different kind and a different authority. A bare `node` is a claim an
+// author makes about what the kit offers; `deb/nodejs-24` is what dpkg
+// records, and the two must not collide in one namespace where a
+// requirement could match either.
+const (
+	DebNamespace = "deb"
+	ApkNamespace = "apk"
+)
+
+// IsDerivedProvide reports whether a normalized capability name is one
+// publishing derived from image content rather than one an author wrote.
+//
+// Three callers need the distinction, all of them because a derived entry
+// is evidence and an authored one is a claim: the version annotation must
+// not be drowned out by hundreds of package versions, the derivation must
+// replace its own previous output rather than accumulate it, and a report
+// reads better when it can say which is which.
+func IsDerivedProvide(name string) bool {
+	ns, _, qualified := strings.Cut(name, "/")
+	return qualified && (ns == DebNamespace || ns == ApkNamespace)
+}
 
 // NormalizeCapabilityName qualifies a bare capability name with the
 // default namespace; already-qualified names pass through. Matching,
@@ -43,13 +92,66 @@ func DisplayCapabilityName(name string) string {
 	return strings.TrimPrefix(name, DefaultCapabilityNamespace+"/")
 }
 
+// reservedNamespaces are the single-label namespaces this specification
+// defines (§5.1). Everything else a namespace can be is reverse-DNS, so
+// these are the only ones no domain stands behind — which is why the
+// space is reserved rather than first-come: it is what keeps a label
+// this specification has not defined yet available to define.
+var reservedNamespaces = map[string]bool{
+	DebNamespace: true,
+	ApkNamespace: true,
+}
+
 // validCapabilityName accepts a bare name or a namespace-qualified one.
 func validCapabilityName(name string) bool {
+	return capabilityNameError(name) == nil
+}
+
+// capabilityNameError says why a name is not a capability name, or nil
+// when it is one. Separate from the predicate because a namespace this
+// specification reserved is refused for a reason an author can act on,
+// and "invalid capability name" would not say what to do about it.
+func capabilityNameError(name string) error {
 	ns, base, qualified := strings.Cut(name, "/")
 	if !qualified {
-		return capabilityName.MatchString(name)
+		if !capabilityName.MatchString(name) {
+			return fmt.Errorf("invalid capability name %q", name)
+		}
+		return nil
 	}
-	return capabilityNamespace.MatchString(ns) && capabilityName.MatchString(base)
+	if ns == "" {
+		return fmt.Errorf("invalid capability name %q", name)
+	}
+	// Charset first, so a namespace that is not even lowercase reads as
+	// the malformed name it is rather than as a domain-shape complaint.
+	if !capabilityNamespace.MatchString(ns) || !capabilityName.MatchString(base) {
+		return fmt.Errorf("invalid capability name %q", name)
+	}
+	// Then the structure. A namespace someone defines is reverse-DNS
+	// (§5.1), which is what makes com.example/gh theirs and nobody
+	// else's — so every label has to be one a domain could carry. A dot
+	// with nothing either side of it does not make com..example a
+	// domain for having a dot in it.
+	if len(ns) > maxNamespaceLength {
+		// Not echoed: the offending value is the length.
+		return fmt.Errorf("namespace in %q is %d characters, and no domain is longer than %d",
+			base, len(ns), maxNamespaceLength)
+	}
+	labels := strings.Split(ns, ".")
+	for _, label := range labels {
+		if !namespaceLabel.MatchString(label) {
+			return fmt.Errorf("namespace %q in %q is not reverse-DNS: %q is not a label a domain can carry", ns, name, label)
+		}
+	}
+	// The labels this specification defined itself are single, and stand
+	// outside the two-label rule rather than failing it.
+	if reservedNamespaces[ns] {
+		return nil
+	}
+	if len(labels) < 2 {
+		return fmt.Errorf("namespace %q in %q is a single label, which this specification reserves; a namespace of your own is reverse-DNS, as in com.example/%s", ns, name, base)
+	}
+	return nil
 }
 
 // Provide is a parsed provides entry: a capability name with an optional
@@ -92,8 +194,8 @@ type Require struct {
 // normalized: bare names gain the default namespace.
 func ParseProvide(s string) (Provide, error) {
 	name, version, found := strings.Cut(strings.TrimSpace(s), "@")
-	if !validCapabilityName(name) {
-		return Provide{}, fmt.Errorf("provides entry %q: invalid capability name %q", s, name)
+	if err := capabilityNameError(name); err != nil {
+		return Provide{}, fmt.Errorf("provides entry %q: %w", s, err)
 	}
 	if found {
 		if _, err := parseVersion(version); err != nil {
@@ -214,8 +316,8 @@ func ParseRequire(s string) (Require, error) {
 	if err != nil {
 		return Require{}, fmt.Errorf("requires entry %q: %w", s, err)
 	}
-	if !validCapabilityName(name) {
-		return Require{}, fmt.Errorf("requires entry %q: invalid capability name %q", s, name)
+	if err := capabilityNameError(name); err != nil {
+		return Require{}, fmt.Errorf("requires entry %q: %w", s, err)
 	}
 	req := Require{Name: NormalizeCapabilityName(name)}
 	if rest == "" {
@@ -529,6 +631,77 @@ func parseVersion(v string) (string, error) {
 func IsVersion(s string) bool {
 	_, err := parseVersion(s)
 	return err == nil
+}
+
+// semverCore and numericCore match the leading version inside what a
+// package database records. semverCore spells each part as semver's
+// numeric identifier, which admits no leading zero; numericCore takes any
+// digit run. Both stop after three parts.
+var (
+	semverCore  = regexp.MustCompile(`^(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){0,2}`)
+	numericCore = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){0,2}`)
+	// versionEpoch is dpkg's ordering override, which is not part of
+	// what upstream released.
+	versionEpoch = regexp.MustCompile(`^[0-9]+:`)
+)
+
+// PackageVersion is the version a derived provide carries: the leading
+// x.y.z core of what a package database records, with everything a
+// distribution wrapped around it removed. Empty when the record holds no
+// version this model can name, which drops the package rather than
+// publishing it under the kit's own version.
+//
+// What comes off is packaging bookkeeping rather than a point in the
+// upstream order — a Debian revision, a binNMU, a backport suffix, an apk
+// release — and a consumer writing `deb/openssl >= 3.5` cannot be asked to
+// know about `-1~deb13u2+dhi1`. Fewer than three parts stays as it is and
+// is never padded: binutils really is 2.44, and 2.44.0 would invent
+// precision the distribution never stated.
+func PackageVersion(raw string) string {
+	// An epoch is dpkg's ordering override, not part of what upstream
+	// released: it exists to re-order a version that already shipped, so
+	// carrying it would put 1:2.5.2 ahead of every 2.x that never needed
+	// one.
+	raw = versionEpoch.ReplaceAllString(strings.TrimSpace(raw), "")
+
+	// A tilde in the upstream version is the one suffix that is not
+	// bookkeeping: dpkg sorts it before everything, end of string
+	// included, so 1.69~deb13u1 is OLDER than 1.69 and 2.0~rc1 is the
+	// release candidate rather than the release. Truncating there would
+	// publish the version this is not yet, and `deb/pkg >= 2.0` would
+	// then be satisfied by something below 2.0.
+	//
+	// Nor can it be carried: §5.2 compares a non-numeric segment
+	// lexically, which puts 2.0-rc1 ABOVE 2.0 and overstates it the
+	// other way round. The point is unrepresentable here, so the package
+	// gets no entry — which §9.6 prefers to a wrong one.
+	//
+	// Only in the upstream half. A tilde in the Debian revision is the
+	// ordinary rebuild marker, and 9.20.26-1~deb13u1 really is 9.20.26.
+	// The last hyphen is the boundary, since an upstream version may
+	// carry earlier ones.
+	upstream := raw
+	if i := strings.LastIndex(raw, "-"); i >= 0 {
+		upstream = raw[:i]
+	}
+	if strings.Contains(upstream, "~") {
+		return ""
+	}
+
+	// The longer of the two, because a leading zero is the one place the
+	// semver spelling has to give way: bc 1.07.1 is a real release, and
+	// the strict pattern stops mid-version and would name it 1.0. Kept
+	// whole instead, which §5.2 accepts and compares per segment, so it
+	// is the same point a semver reader lands on at 1.7.1 — while
+	// rewriting it that way would name a release nobody published.
+	core := semverCore.FindString(raw)
+	if permissive := numericCore.FindString(raw); len(permissive) > len(core) {
+		core = permissive
+	}
+	if !IsVersion(core) {
+		return ""
+	}
+	return core
 }
 
 // TagVersion maps a consumption-reference tag (an OCI tag, a git ref)

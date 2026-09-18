@@ -45,6 +45,12 @@ func OCIAnnotations(d *Descriptor) map[string]string {
 // version: field when set, otherwise the version every versioned
 // provides entry agrees on. Disagreement or absence yields "" — an
 // ambiguous version is worse than none.
+//
+// Derived entries do not vote. A kit's packages carry hundreds of
+// unrelated versions, so counting them would leave every kit that named
+// no version: of its own with no version annotation at all — the
+// agreement rule would find the disagreement of a Debian archive rather
+// than the kit's own silence.
 func descriptorVersion(d *Descriptor) string {
 	if d.Version != "" {
 		return d.Version
@@ -52,7 +58,7 @@ func descriptorVersion(d *Descriptor) string {
 	version := ""
 	for _, s := range d.Provides {
 		p, err := ParseProvide(s)
-		if err != nil || p.Version == "" {
+		if err != nil || p.Version == "" || IsDerivedProvide(p.Name) {
 			continue
 		}
 		if version != "" && version != p.Version {

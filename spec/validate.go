@@ -295,8 +295,8 @@ func validateCapabilityNames(d *Descriptor) error {
 		if argRef.MatchString(s) {
 			return fieldErrorf(fmt.Sprintf("conflicts[%d]", i), "conflicts entry %q: arg references are not allowed in conflicts", s)
 		}
-		if !validCapabilityName(s) {
-			return fieldErrorf(fmt.Sprintf("conflicts[%d]", i), "conflicts entry %q: invalid capability name", s)
+		if err := capabilityNameError(s); err != nil {
+			return fieldErrorf(fmt.Sprintf("conflicts[%d]", i), "conflicts entry %q: %v", s, err)
 		}
 	}
 	return nil
@@ -378,6 +378,35 @@ func RequireVersionedProvides(d *Descriptor) error {
 		if p.Version == "" {
 			return fieldErrorf(fmt.Sprintf("provides[%d]", i),
 				"provides entry %q has no version: add @<version> here or a top-level version: field (a version-shaped image tag can override it at consumption, but a published kit must carry one)", s)
+		}
+	}
+	return nil
+}
+
+// RequireAuthoredProvides refuses a provides entry an author must not
+// write: §5.1 reserves the deb/ and apk/ namespaces for §9.6, where
+// publishing fills them from the package databases in the content.
+//
+// Authored form only, which is why it is not folded into Validate: the
+// published form legitimately carries these, and a runtime revalidating
+// a descriptor on load has to accept what publishing put there. The
+// distinction is the whole point — an entry under these namespaces is
+// something read off a filesystem, and one written by hand would assert
+// a fact about content instead of offering a capability, with nothing
+// left to catch the difference.
+func RequireAuthoredProvides(d *Descriptor) error {
+	for i, s := range d.Provides {
+		p, err := ParseProvide(s)
+		// A malformed entry, or one still holding an arg reference, is
+		// another rule's to report; a name that cannot be parsed cannot
+		// be in a reserved namespace either.
+		if err != nil {
+			continue
+		}
+		if IsDerivedProvide(p.Name) {
+			namespace, _, _ := strings.Cut(p.Name, "/")
+			return fieldErrorf(fmt.Sprintf("provides[%d]", i),
+				"provides entry %q is in the %s/ namespace, which publishing fills from the image's package database; drop it and let the build state what the content carries", s, namespace)
 		}
 	}
 	return nil
@@ -885,7 +914,7 @@ func validateCredentialNeed(path string, i int, n Capability) (*Credential, erro
 	if c.Service == "" {
 		return nil, fieldErrorf(path+".config.service", "capabilities[%d]: credential service is required", i)
 	}
-	if !capabilityName.MatchString(c.Service) {
+	if !handleName.MatchString(c.Service) {
 		return nil, fieldErrorf(path+".config.service", "capabilities[%d]: invalid service name %q", i, c.Service)
 	}
 	if c.Phase != "install" && c.Phase != "runtime" {

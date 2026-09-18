@@ -67,7 +67,12 @@ capabilities:
     config:
       filename: AGENTS.md
       content: "Base guidance."
-`, map[string]string{"base.dockerfile": "FROM busybox:1.37\nENTRYPOINT [\"/bin/sh\"]\n"})
+`, map[string]string{"base.dockerfile": "FROM busybox:1.37\n" +
+		// A dpkg database of one package, so §9.6 derivation actually
+		// runs here. busybox carries none, and without it the set path
+		// below would have nothing to double up.
+		"RUN mkdir -p /var/lib/dpkg && printf 'Package: e2e-pkg\\nStatus: install ok installed\\nVersion: 1:2.3.4-5+e2e1\\n\\n' > /var/lib/dpkg/status\n" +
+		"ENTRYPOINT [\"/bin/sh\"]\n"})
 
 	// A mixin that requires the workload, adds content and egress of its
 	// own, and takes a create-phase arg the set will supply.
@@ -122,6 +127,14 @@ kits:
       flavor: ${{ kit.args.flavor }}
 `, nil)
 
+	// The workload derived its own filesystem's package, epoch and
+	// revision removed, before any of the set machinery ran.
+	baseRaw := e.manifest(registry, "sbx-kit-base", "1.0.0").Annotations[spec.AnnotationDescriptor]
+	baseDescriptor, err := spec.Decode([]byte(baseRaw))
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"e2e-base@1.0.0", "deb/e2e-pkg@2.3.4"}, baseDescriptor.Provides,
+		"a workload states what its own package database records")
+
 	manifest := e.manifest(registry, "sbx-kit-team", "3.0.0")
 	raw := manifest.Annotations[spec.AnnotationDescriptor]
 	require.NotEmpty(t, raw, "the merged artifact carries a kit descriptor")
@@ -132,7 +145,13 @@ kits:
 	require.NoError(t, err, "a merged set is a published kit like any other")
 
 	require.Equal(t, spec.KindWorkload, d.Kind, "a workload among its kits makes the merge a workload")
-	require.ElementsMatch(t, []string{"e2e-base@1.0.0", "e2e-extra@2.0.0", "e2e-team@3.0.0"}, d.Provides)
+	// The derived entry arrives through the provides union, once. A set
+	// merges to kind: workload, so a derivation keyed on kind alone would
+	// read the merged filesystem and append a second copy of everything
+	// the base already contributed (§9.6: a set carries, never re-derives).
+	require.ElementsMatch(t,
+		[]string{"e2e-base@1.0.0", "e2e-extra@2.0.0", "e2e-team@3.0.0", "deb/e2e-pkg@2.3.4"},
+		d.Provides, "a set carries its kits' derived entries through, exactly once")
 	require.Empty(t, d.Requires, "the set answers e2e-base itself, so the merged kit does not require it")
 	require.Equal(t, []string{"Apache-2.0", "BSD-3-Clause", "MIT"}, d.Licenses)
 

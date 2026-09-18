@@ -303,8 +303,11 @@ conflicts: ["podman"]                           # must be absent from the resolv
   providers; at most one provider per capability name), never a
   backtracking solver that picks versions from a registry.
 - `conflicts` entries are bare names.
-- Nothing is provided implicitly: a Kit that wants to be requirable by name
-  states so in `provides`.
+- Nothing an author offers is provided implicitly: a Kit that wants to be
+  requirable by a name of its own states so in `provides`. The one
+  exception is not an author's claim at all — publishing derives an entry
+  per installed distribution package, in namespaces reserved for it
+  ([§9.6](#96-derived-provides)).
 - Arg references are permitted in `provides` (and `version`) only — they are
   expanded at publish ([§9.1](#91-expansion)). `requires`, `integrates`, and
   `conflicts` MUST stay literal: they are what the resolver judges, and a <!-- tck: SPEC-v3 §5/requires-literal -->
@@ -319,8 +322,37 @@ while a third party's `com.example/gh` never matches either, the way
 `docker.io/library/` qualifies bare image names. Matching, locks, and
 surfaces speak normalized names; the short form is display sugar.
 
+The base name is lowercase alphanumeric with hyphens, dots and pluses,
+starting alphanumeric and never ending on a hyphen or dot. Dots and
+pluses are there because a distribution package name is a capability name
+under [§9.6](#96-derived-provides): Debian ships `libstdc++6`,
+`python-3.14` and `containerd.io` — around one package in twenty on a
+typical rootfs, and none of them nameable without.
+
 `com.docker.kit/` (vocabulary Kits provide) is deliberately a sibling of
 `com.docker.sandbox/` (contracts the runtime answers, [§7](#7-capabilities)).
+
+A namespace anyone defines for themselves **MUST** be reverse-DNS: two <!-- tck: SPEC-v3 §5.1/namespace-reverse-dns -->
+labels or more, each one a domain could carry — alphanumeric at both
+ends, hyphens inside, at most 63 characters, and 253 for the whole.
+`com.example/gh` is theirs because the domain is, and that is the whole
+of what makes it never match `gh`. A string no domain could be is nobody's
+to own, so `com..example` does not qualify for having a dot in it. A
+single label is backed by no domain,
+so that flat space is this specification's to hand out rather than
+first-come: reserving it is what keeps a name this specification has not
+defined yet — `rpm`, say — available to define, instead of already taken
+by whoever shipped first.
+
+`deb/` and `apk/` are the single labels defined so far, both for
+[§9.6](#96-derived-provides), and both **MUST NOT** be authored: an entry <!-- tck: SPEC-v3 §5.1/derived-namespaces-reserved -->
+under either is evidence publishing read out of a filesystem, and an
+author writing one by hand would be asserting a fact about content rather
+than offering a capability. They are short on purpose — a package
+ecosystem is not an organization, so `com.docker.*` would attribute
+`deb/bash` to Docker rather than to the dpkg database it came out of, and
+these are the names [purl](https://github.com/package-url/purl-spec)
+already uses for the same ecosystems.
 
 ### 5.2 Versions
 
@@ -693,6 +725,68 @@ A merged descriptor **MUST** be identical across every platform a <!-- tck: SPEC
 multi-platform set builds for: the annotation is written once per
 platform manifest, and a descriptor describes the Kit rather than one of
 its platforms.
+
+### 9.6 Derived provides
+
+A `version:` fallback answers for names an author chose. It cannot answer
+for the software a Kit inherited: a base image ships hundreds of packages
+at versions its author never saw, and `provides: [bash]` under
+`version: "1.0.0"` publishes `bash@1.0.0` — a statement about the Kit's
+release number wearing the name of a shell. What `bash` is at is a fact,
+and the filesystem already records it.
+
+So publishing reads the package databases out of the content and states
+one entry per installed package:
+
+| Namespace | Database |
+|---|---|
+| `deb/` | `/var/lib/dpkg/status` |
+| `apk/` | `/lib/apk/db/installed` |
+
+- Derivation applies to `kind: workload` only. A workload's layers are a <!-- tck: SPEC-v3 §9.6/workload-only -->
+  root filesystem, so its database is an inventory; a mixin's are a
+  delta, where a database is whatever its recipe happened to rewrite.
+  This is also what keeps [§5.3](#53-resolution-semantics-consumer-contract)'s
+  one-provider rule satisfiable — a composition has exactly one workload,
+  so a derived name has exactly one owner by construction.
+- Only packages a database records as **installed**. dpkg keeps a stanza <!-- tck: SPEC-v3 §9.6/installed-only -->
+  for a package whose files are gone, and publishing software a Kit no
+  longer carries is the opposite of reading the filesystem for the truth.
+- The version is the leading dotted-numeric core of what the database <!-- tck: SPEC-v3 §9.6/version-is-upstream-core -->
+  records, at most three parts, and **MUST NOT** carry what the
+  distribution wrapped around it: an epoch, a Debian revision, a binNMU,
+  a backport suffix, an apk release. `1:2.5.2-3+dhi1` publishes as
+  `2.5.2`. Those are packaging bookkeeping rather than points in the
+  upstream order, and a consumer writing `deb/openssl >= 3.5` cannot be
+  asked to know about them. Fewer than three parts is published as it
+  stands and never padded — `binutils` really is `2.44`.
+- A tilde in the **upstream** half is the exception, and such a package <!-- tck: SPEC-v3 §9.6/prerelease-dropped -->
+  is dropped rather than published. dpkg sorts a tilde before everything,
+  end of string included, so `1.69~deb13u1` is older than `1.69` and
+  `2.0~rc1` is the candidate rather than the release: truncating there
+  would state a version the content has not reached, and
+  `deb/pkg >= 2.0` would be satisfied by something below it. Carrying it
+  is no better, since [§5.2](#52-versions) compares a non-numeric segment
+  lexically and would order `2.0-rc1` *above* `2.0`. The point is not
+  expressible here, so nothing is stated. A tilde in the Debian revision
+  is the ordinary rebuild marker and strips like the rest —
+  `9.20.26-1~deb13u1` really is `9.20.26`.
+- An entry is stated only where every platform the Kit publishes agrees <!-- tck: SPEC-v3 §9.6/agreed-across-platforms -->
+  on the package and its version. One descriptor serves them all
+  ([§9.5](#95-merging-a-set)), so it may state only what holds for all of
+  them; an architecture-specific package is ordinary rather than an
+  error, and is dropped. A package whose name is not a capability name,
+  or whose record yields no version, is dropped for the same reason —
+  never published under the `version:` fallback, which is the thing this
+  section exists to stop.
+- A set does not re-derive. Its merged descriptor carries its Kits'
+  entries through the `provides` union, and the workload among them
+  already read its own filesystem.
+
+Derived entries do not vote on
+`org.opencontainers.image.version` ([§9.3](#93-annotations)): a Debian
+archive never agrees on one version, and counting it would leave every
+Kit that named no `version:` with no version annotation at all.
 
 ---
 
