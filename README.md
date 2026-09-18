@@ -437,7 +437,7 @@ task validate   # gofmt + go vet
 task test       # all Go tests
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) — in particular the note on changing
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md) — in particular the note on changing
 the grammar, which spans the Go types, the JSON Schema, the normative spec,
 and the examples together.
 
