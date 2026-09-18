@@ -1246,7 +1246,7 @@ func TestAgentSkillsAccessCannotBeConfusedWithAPath(t *testing.T) {
 // Expansion used to paste the value into the serialized descriptor, so a
 // quote ended the enclosing string early and a backslash sequence was
 // reread as an escape — `C:\new\text` reached the container as `C:`,
-// newline, `ew`, tab, `ext`. See docker/sandboxes#6095.
+// newline, `ew`, tab, `ext`.
 func TestExpandCreateArgsPreservesValuesVerbatim(t *testing.T) {
 	raw := []byte(`{"schemaVersion":"3","kind":"mixin","capabilities":[{"type":"com.docker.sandbox/lifecycle@1","config":{"files":[{"path":"/home/agent/result.txt","content":"${{ kit.args.text }}"}]}}]}`)
 	decls := map[string]Arg{"text": {}}
@@ -1319,7 +1319,7 @@ func TestExpandCreateArgsSubstitutesWithinAString(t *testing.T) {
 }
 
 // An omitted transport IS tcp, so declaring both spellings of one port is
-// the duplicate the check exists to catch. See docker/sandboxes#6096.
+// the duplicate the check exists to catch.
 func TestValidateRejectsDuplicateDefaultTransportPorts(t *testing.T) {
 	d := &Descriptor{SchemaVersion: "3", Kind: KindMixin, Capabilities: []Capability{
 		{Type: CapabilityPort, Config: map[string]any{"container": 18993}},

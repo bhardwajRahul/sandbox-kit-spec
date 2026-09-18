@@ -1,5 +1,10 @@
-/bin
 # Local build artifacts
 /frontend
 /kit-tck
 /bin/
+/dist/
+
+# Local editor and agent settings
+.vscode/
+.claude/settings.local.json
+.DS_Store
