@@ -175,6 +175,7 @@ var waived = map[string]string{
 	// entry is the only trace the comparison leaves.
 	"SPEC-v3 §9.6/agreed-across-platforms":     "the frontend reconciles every platform's databases at build; one published manifest cannot show what another platform recorded",
 	"SPEC-v3 §5.1/derived-namespaces-reserved": "grammar rule, judged by the spec package's validators; a published descriptor cannot distinguish an authored deb/ entry from a derived one, and derived-provides refuses either if the image disagrees",
+	"SPEC-v3 §5.1/namespace-reverse-dns":       "grammar rule, judged by the spec package's validators and schema tests",
 
 	// Grammar rules: the spec package's validators and schema tests are
 	// where these are judged, statement by statement.

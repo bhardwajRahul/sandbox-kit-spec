@@ -218,6 +218,41 @@ func TestAuthoredProvidesRefuseTheReservedNamespaces(t *testing.T) {
 		"a third party's own namespace merely containing the word is not the reserved one")
 }
 
+// A namespace is what makes com.example/gh someone's and not everyone's,
+// and it does that by being a domain they own. A single label owns
+// nothing, so the flat space is reserved: without that, whoever shipped
+// `rpm/...` first would have taken a name this specification still needs.
+func TestASingleLabelNamespaceIsReserved(t *testing.T) {
+	for _, entry := range []string{"tools/gh", "rpm/bash", "mystuff/thing@1.0.0"} {
+		_, err := ParseProvide(entry)
+		require.ErrorContains(t, err, "single label", entry)
+		require.ErrorContains(t, err, "reverse-DNS", entry)
+	}
+
+	// Reverse-DNS is anyone's to use, and the two labels this
+	// specification has defined stay usable in the published form.
+	for _, entry := range []string{"com.example/gh", "com.docker.kit/gh", "gh", "deb/bash@5.2.37", "apk/musl@1.2.5"} {
+		_, err := ParseProvide(entry)
+		require.NoError(t, err, entry)
+	}
+
+	// The rule is about the namespace, so it reaches every relation that
+	// names a capability rather than provides alone.
+	_, err := ParseRequire("tools/gh >= 1.0.0")
+	require.ErrorContains(t, err, "single label")
+
+	// Conflicts is the third place a capability name is judged, and it
+	// goes through the descriptor validator rather than a parser.
+	_, err = Validate(&Descriptor{
+		SchemaVersion: SchemaVersion,
+		Kind:          KindWorkload,
+		DisplayName:   "Demo",
+		Version:       "1.0.0",
+		Conflicts:     []string{"tools/gh"},
+	})
+	require.ErrorContains(t, err, "single label")
+}
+
 func TestIsDerivedProvide(t *testing.T) {
 	require.True(t, IsDerivedProvide("deb/bash"))
 	require.True(t, IsDerivedProvide("apk/musl"))

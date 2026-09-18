@@ -78,13 +78,39 @@ func DisplayCapabilityName(name string) string {
 	return strings.TrimPrefix(name, DefaultCapabilityNamespace+"/")
 }
 
+// reservedNamespaces are the single-label namespaces this specification
+// defines (§5.1). Everything else a namespace can be is reverse-DNS, so
+// these are the only ones no domain stands behind — which is why the
+// space is reserved rather than first-come: it is what keeps a label
+// this specification has not defined yet available to define.
+var reservedNamespaces = map[string]bool{
+	DebNamespace: true,
+	ApkNamespace: true,
+}
+
 // validCapabilityName accepts a bare name or a namespace-qualified one.
 func validCapabilityName(name string) bool {
+	return capabilityNameError(name) == nil
+}
+
+// capabilityNameError says why a name is not a capability name, or nil
+// when it is one. Separate from the predicate because a namespace this
+// specification reserved is refused for a reason an author can act on,
+// and "invalid capability name" would not say what to do about it.
+func capabilityNameError(name string) error {
 	ns, base, qualified := strings.Cut(name, "/")
-	if !qualified {
-		return capabilityName.MatchString(name)
+	switch {
+	case !qualified:
+		if !capabilityName.MatchString(name) {
+			return fmt.Errorf("invalid capability name %q", name)
+		}
+		return nil
+	case !capabilityNamespace.MatchString(ns) || !capabilityName.MatchString(base):
+		return fmt.Errorf("invalid capability name %q", name)
+	case !strings.Contains(ns, ".") && !reservedNamespaces[ns]:
+		return fmt.Errorf("namespace %q in %q is a single label, which this specification reserves; a namespace of your own is reverse-DNS, as in com.example/%s", ns, name, base)
 	}
-	return capabilityNamespace.MatchString(ns) && capabilityName.MatchString(base)
+	return nil
 }
 
 // Provide is a parsed provides entry: a capability name with an optional
@@ -127,8 +153,8 @@ type Require struct {
 // normalized: bare names gain the default namespace.
 func ParseProvide(s string) (Provide, error) {
 	name, version, found := strings.Cut(strings.TrimSpace(s), "@")
-	if !validCapabilityName(name) {
-		return Provide{}, fmt.Errorf("provides entry %q: invalid capability name %q", s, name)
+	if err := capabilityNameError(name); err != nil {
+		return Provide{}, fmt.Errorf("provides entry %q: %w", s, err)
 	}
 	if found {
 		if _, err := parseVersion(version); err != nil {
@@ -249,8 +275,8 @@ func ParseRequire(s string) (Require, error) {
 	if err != nil {
 		return Require{}, fmt.Errorf("requires entry %q: %w", s, err)
 	}
-	if !validCapabilityName(name) {
-		return Require{}, fmt.Errorf("requires entry %q: invalid capability name %q", s, name)
+	if err := capabilityNameError(name); err != nil {
+		return Require{}, fmt.Errorf("requires entry %q: %w", s, err)
 	}
 	req := Require{Name: NormalizeCapabilityName(name)}
 	if rest == "" {

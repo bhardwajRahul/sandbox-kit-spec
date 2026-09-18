@@ -332,10 +332,23 @@ typical rootfs, and none of them nameable without.
 `com.docker.kit/` (vocabulary Kits provide) is deliberately a sibling of
 `com.docker.sandbox/` (contracts the runtime answers, [§7](#7-capabilities)).
 
-`deb/` and `apk/` are reserved for [§9.6](#96-derived-provides) and
-**MUST NOT** be authored: an entry under either is evidence publishing <!-- tck: SPEC-v3 §5.1/derived-namespaces-reserved -->
-read out of a filesystem, and an author writing one by hand would be
-asserting a fact about content rather than offering a capability.
+A namespace anyone defines for themselves **MUST** be reverse-DNS. <!-- tck: SPEC-v3 §5.1/namespace-reverse-dns -->
+`com.example/gh` is theirs because the domain is, and that is the whole
+of what makes it never match `gh`. A single label is backed by no domain,
+so that flat space is this specification's to hand out rather than
+first-come: reserving it is what keeps a name this specification has not
+defined yet — `rpm`, say — available to define, instead of already taken
+by whoever shipped first.
+
+`deb/` and `apk/` are the single labels defined so far, both for
+[§9.6](#96-derived-provides), and both **MUST NOT** be authored: an entry <!-- tck: SPEC-v3 §5.1/derived-namespaces-reserved -->
+under either is evidence publishing read out of a filesystem, and an
+author writing one by hand would be asserting a fact about content rather
+than offering a capability. They are short on purpose — a package
+ecosystem is not an organization, so `com.docker.*` would attribute
+`deb/bash` to Docker rather than to the dpkg database it came out of, and
+these are the names [purl](https://github.com/package-url/purl-spec)
+already uses for the same ecosystems.
 
 ### 5.2 Versions
 

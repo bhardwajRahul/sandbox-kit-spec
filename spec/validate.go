@@ -295,8 +295,8 @@ func validateCapabilityNames(d *Descriptor) error {
 		if argRef.MatchString(s) {
 			return fieldErrorf(fmt.Sprintf("conflicts[%d]", i), "conflicts entry %q: arg references are not allowed in conflicts", s)
 		}
-		if !validCapabilityName(s) {
-			return fieldErrorf(fmt.Sprintf("conflicts[%d]", i), "conflicts entry %q: invalid capability name", s)
+		if err := capabilityNameError(s); err != nil {
+			return fieldErrorf(fmt.Sprintf("conflicts[%d]", i), "conflicts entry %q: %v", s, err)
 		}
 	}
 	return nil
