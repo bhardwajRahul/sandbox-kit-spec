@@ -326,8 +326,8 @@ The base name is lowercase alphanumeric with hyphens, dots and pluses,
 starting alphanumeric and never ending on a hyphen or dot. Dots and
 pluses are there because a distribution package name is a capability name
 under [§9.6](#96-derived-provides): Debian ships `libstdc++6`,
-`python-3.14` and `containerd.io`, and a charset that refused them would
-leave a fifth of an image's packages unnameable.
+`python-3.14` and `containerd.io` — around one package in twenty on a
+typical rootfs, and none of them nameable without.
 
 `com.docker.kit/` (vocabulary Kits provide) is deliberately a sibling of
 `com.docker.sandbox/` (contracts the runtime answers, [§7](#7-capabilities)).

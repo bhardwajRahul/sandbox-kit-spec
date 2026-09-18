@@ -190,6 +190,16 @@ func TestAuthoredProvidesRefuseTheReservedNamespaces(t *testing.T) {
 		require.ErrorContains(t, err, "publishing fills", entry)
 	}
 
+	// An arg reference holds no namespace to refuse until a build-phase
+	// value is in it, which is why the frontend runs this on the
+	// EXPANDED form: judged before expansion, the entry below is
+	// unparseable and passes, and after it is a reserved namespace.
+	authored := &Descriptor{Provides: []string{"${{ kit.args.cap }}"}}
+	require.NoError(t, RequireAuthoredProvides(authored),
+		"an unexpanded reference names no namespace yet")
+	require.Error(t, RequireAuthoredProvides(&Descriptor{Provides: []string{"deb/bash@5.2.37"}}),
+		"what it expands to is what has to be refused")
+
 	// What publishing itself produces has to pass the published rules,
 	// and a runtime revalidating a descriptor on load has to accept it.
 	published := &Descriptor{

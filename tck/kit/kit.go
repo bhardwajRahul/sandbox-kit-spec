@@ -665,6 +665,18 @@ var checks = []check{
 			if len(byNamespace) == 0 {
 				return nil
 			}
+			// A merged set carries its kits' entries through the provides
+			// union rather than deriving its own (§9.6), so these were
+			// read from the listed workload's filesystem BEFORE anything
+			// composed onto it. What this artifact can read is the merged
+			// database, which a mixin that upgraded or removed a package
+			// has since changed — and judging a correctly carried entry
+			// against it would report the merge as a violation. The
+			// entries stay checkable at the kit they came from, where
+			// merged-set-declarations already reaches.
+			if len(s.descriptor.Kits) > 0 {
+				return skip("a merged set carries its kits' derived entries, which were read before composition")
+			}
 			// A mixin's layers are a delta, where a package database is
 			// whatever the recipe happened to rewrite rather than an
 			// inventory — and §5.3 admits one workload per composition,
@@ -699,22 +711,30 @@ var checks = []check{
 				if err != nil {
 					return append(findings, fail("%s: %v", db.Path, err)...)
 				}
-				recorded := make(map[string]string, len(installed))
+				// Every record for a name, not the last one. A multiarch
+				// database names one package once per architecture, and
+				// §9.6 states an entry only where they agree — so
+				// keeping one version would let an entry that disagrees
+				// with a stanza it is not next to pass on the strength
+				// of whichever was read last.
+				recorded := map[string][]string{}
 				for _, p := range installed {
-					recorded[p.Name] = p.Version
+					recorded[p.Name] = append(recorded[p.Name], p.Version)
 				}
 				for _, entry := range entries {
-					raw, ok := recorded[entry.name]
+					raws, ok := recorded[entry.name]
 					if !ok {
 						findings = append(findings, report.Failf(
 							"%s is not a package %s records as installed, so nothing in the image offers it",
 							entry.spelling, db.Path))
 						continue
 					}
-					if want := spec.PackageVersion(raw); want != entry.version {
-						findings = append(findings, report.Failf(
-							"%s names version %s, but %s records %s, whose published version is %s",
-							entry.spelling, entry.version, db.Path, raw, want))
+					for _, raw := range raws {
+						if want := spec.PackageVersion(raw); want != entry.version {
+							findings = append(findings, report.Failf(
+								"%s names version %s, but %s records %s, whose published version is %s",
+								entry.spelling, entry.version, db.Path, raw, want))
+						}
 					}
 				}
 			}

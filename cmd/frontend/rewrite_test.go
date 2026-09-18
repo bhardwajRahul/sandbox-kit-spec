@@ -96,3 +96,59 @@ func TestDerivedProvidesAreValidatedNotTrusted(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorContains(t, err, "derived from image content")
 }
+
+// `provides: *shared` decodes into a perfectly good list, so a build must
+// not fail on it — and appending through the alias would extend the
+// anchor, so a derived package would turn up in whatever else uses it.
+func TestDerivedProvidesCopyASequenceAlias(t *testing.T) {
+	published := []byte(`schemaVersion: "3"
+kind: workload
+displayName: Shell
+version: "1.0.0"
+conflicts: &shared
+  - shell
+provides: *shared
+`)
+
+	out, pd, err := withDerivedProvides(published, []string{"deb/bash@5.2.37"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"shell", "deb/bash@5.2.37"}, pd.Provides)
+
+	fromBytes, err := spec.Decode(out)
+	require.NoError(t, err)
+	require.Equal(t, pd.Provides, fromBytes.Provides)
+	require.Equal(t, []string{"shell"}, fromBytes.Conflicts,
+		"the anchor's other users must not inherit the derived entries")
+}
+
+// The other direction, where provides defines the anchor: appending would
+// add a derived package to the field that aliases it, and the anchor
+// cannot move without leaving that alias pointing at nothing. Saying so
+// beats corrupting the other field quietly.
+func TestDerivedProvidesRefuseAnAnchorSomethingElseUses(t *testing.T) {
+	published := []byte(`schemaVersion: "3"
+kind: workload
+displayName: Shell
+version: "1.0.0"
+provides: &shared
+  - shell
+conflicts: *shared
+`)
+
+	_, _, err := withDerivedProvides(published, []string{"deb/bash@5.2.37"})
+	require.ErrorContains(t, err, "&shared")
+	require.ErrorContains(t, err, "write the shared list out")
+
+	// An anchor nobody references is inert, so it is appended to as any
+	// other list would be.
+	alone := []byte(`schemaVersion: "3"
+kind: workload
+displayName: Shell
+version: "1.0.0"
+provides: &shared
+  - shell
+`)
+	_, pd, err := withDerivedProvides(alone, []string{"deb/bash@5.2.37"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"shell", "deb/bash@5.2.37"}, pd.Provides)
+}

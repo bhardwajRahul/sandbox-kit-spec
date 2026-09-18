@@ -87,12 +87,6 @@ func Build(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 	if _, err := spec.ValidateRaw(src.descriptor, d); err != nil {
 		return nil, withYAMLSource(err, filename, src.descriptor)
 	}
-	// The authored form is the only place this can be judged: the
-	// published one carries the derived entries legitimately, and by then
-	// an author's own would be indistinguishable from them.
-	if err := spec.RequireAuthoredProvides(d); err != nil {
-		return nil, withYAMLSource(err, filename, src.descriptor)
-	}
 
 	published, err := expandBuildPhase(src.descriptor, d, opts)
 	if err != nil {
@@ -157,6 +151,13 @@ func Build(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 		if _, err := spec.ValidateRaw(published, expanded); err != nil {
 			return nil, withYAMLSource(err, filename, src.descriptor)
 		}
+		// The set's OWN declarations, before the merge folds its kits'
+		// entries in beside them: afterwards a reserved-namespace entry
+		// the author wrote is indistinguishable from one a listed
+		// workload legitimately derived.
+		if err := spec.RequireAuthoredProvides(expanded); err != nil {
+			return nil, withYAMLSource(err, filename, src.descriptor)
+		}
 		plan, err = planSet(ctx, c, expanded, platformList, stem)
 		if err != nil {
 			return nil, withYAMLSource(err, filename, src.descriptor)
@@ -209,6 +210,18 @@ func Build(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 	if _, err := spec.ValidatePublished(published, pd); err != nil {
 		return nil, withYAMLSource(err, filename, src.descriptor)
 	}
+	// After expansion, and on the expanded form rather than the authored
+	// one, because that is where a reserved-namespace entry can actually
+	// be seen: an authored `${{ kit.args.cap }}` holds no namespace to
+	// refuse until the build-phase value is in it, and ValidatePublished
+	// above accepts deb/ and apk/ by design. A set's own declarations are
+	// judged before its merge instead, since by here they have its kits'
+	// derived entries beside them.
+	if plan == nil {
+		if err := spec.RequireAuthoredProvides(pd); err != nil {
+			return nil, withYAMLSource(err, filename, src.descriptor)
+		}
+	}
 
 	res := gwclient.NewResult()
 	multiPlatform := len(platformList) > 1
@@ -251,7 +264,14 @@ func Build(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 	// Only a workload's filesystem is a root filesystem. A mixin's is a
 	// delta, where a package database is whatever its recipe happened to
 	// rewrite rather than an inventory of anything.
-	if pd.Kind == spec.KindWorkload {
+	//
+	// And only a workload BUILT here. A set merges to kind: workload, so
+	// its merged descriptor would qualify on kind alone — but §9.6 has a
+	// set carry its kits' entries through the provides union rather than
+	// re-derive, and deriving again here would append a second copy of
+	// every entry the listed workload already contributed, plus whatever
+	// packages the mixins' layers happen to have rewritten on top.
+	if plan == nil && pd.Kind == spec.KindWorkload {
 		refs := make([]gwclient.Reference, 0, len(builds))
 		for _, b := range builds {
 			refs = append(refs, b.ref)
@@ -808,6 +828,25 @@ func withDerivedProvides(published []byte, derived []string) ([]byte, *spec.Desc
 		// `provides:` with nothing under it decodes as null, which is an
 		// empty list the author happened to spell differently.
 		provides.Kind, provides.Tag, provides.Value = yaml.SequenceNode, "!!seq", ""
+	case provides.Kind == yaml.AliasNode && provides.Alias != nil && provides.Alias.Kind == yaml.SequenceNode:
+		// `provides: *shared` decodes into a perfectly good list, so a
+		// build must not fail on it — and appending through the alias
+		// would extend the anchor, so a derived package would turn up in
+		// whatever else references it. The list is copied onto the field
+		// instead, the way the contentFile rewrite below lands on the
+		// field node rather than on the anchor.
+		copied := *provides.Alias
+		copied.Anchor = ""
+		copied.Content = append([]*yaml.Node(nil), provides.Alias.Content...)
+		*provides = copied
+	case provides.Kind == yaml.SequenceNode && provides.Anchor != "" && aliasedElsewhere(root, provides):
+		// The other direction: provides carries the anchor and something
+		// else aliases it. Copying cannot help — the anchor is defined
+		// here, and moving it would leave those aliases pointing at
+		// nothing — while appending would add a derived package to every
+		// field that shares the list. Neither is this function's call to
+		// make, so it says what it cannot do.
+		return nil, nil, fmt.Errorf("provides carries the &%s anchor and another field aliases it, so the entries derived from the image cannot be added without adding them there too; write the shared list out where it is used", provides.Anchor)
 	case provides.Kind != yaml.SequenceNode:
 		return nil, nil, fmt.Errorf("published provides is not a list, so the derived entries have nowhere to go")
 	}
@@ -832,6 +871,24 @@ func withDerivedProvides(published []byte, derived []string) ([]byte, *spec.Desc
 		return nil, nil, fmt.Errorf("descriptor with %d provides entries derived from image content: %w", len(derived), err)
 	}
 	return out, pd, nil
+}
+
+// aliasedElsewhere reports whether anything in the document references
+// target by alias, so a rewrite can tell an anchor that is load-bearing
+// from one nobody uses.
+func aliasedElsewhere(root, target *yaml.Node) bool {
+	if root == nil || root == target {
+		return false
+	}
+	if root.Kind == yaml.AliasNode {
+		return root.Alias == target
+	}
+	for _, child := range root.Content {
+		if aliasedElsewhere(child, target) {
+			return true
+		}
+	}
+	return false
 }
 
 // rewriteContentFile points the published descriptor's contentFile at the

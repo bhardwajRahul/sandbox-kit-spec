@@ -877,6 +877,50 @@ func TestADatabasePackageWithNoEntryIsNotAFinding(t *testing.T) {
 	require.NotContains(t, findings(t, a), "derived-provides")
 }
 
+// A multiarch database names one package once per architecture, and §9.6
+// states an entry only where they agree. Keeping the last version read
+// would let an entry that disagrees with an earlier stanza pass on the
+// strength of which one happened to come last.
+func TestEveryRecordForANameHasToAgreeWithTheEntry(t *testing.T) {
+	a := derivedWorkload(t, []string{`"deb/libc6@2.42"`}, nil)
+	// Hand-built: the helper's map cannot hold one name twice, which is
+	// exactly the shape being tested.
+	a.files[spec.DpkgStatusPath] = []byte(
+		"Package: libc6\nStatus: install ok installed\nVersion: 2.41-12+dhi1\n\n" +
+			"Package: libc6\nStatus: install ok installed\nVersion: 2.42-1\n")
+
+	got := findings(t, a)["derived-provides"]
+	require.Equal(t, report.Fail, got.Severity)
+	require.Contains(t, got.Detail, "2.41",
+		"the stanza that disagrees is the finding, wherever it sits in the file")
+}
+
+// A merged set carries its kits' entries through the provides union, so
+// those were read before anything composed onto the workload. Judging
+// them against the merged database would report a mixin that upgraded a
+// package as the set's violation.
+func TestAMergedSetsDerivedEntriesAreNotJudgedHere(t *testing.T) {
+	authored := "schemaVersion: \"3\"\nkind: workload\ndisplayName: Set\nversion: \"1.0.0\"\n" +
+		"provides: [\"deb/bash@5.2.37\"]\n" +
+		"kits:\n  - ref: reg.io/sbx-kit-shell:1.0.0\n    digest: sha256:" + strings.Repeat("a", 64) + "\n"
+	d, err := spec.Decode([]byte(authored))
+	require.NoError(t, err)
+	published, err := json.Marshal(d)
+	require.NoError(t, err)
+
+	a := derivedWorkload(t, []string{`"deb/bash@5.2.37"`}, map[string]string{"bash": "9.9.9-1"})
+	a.annotations[spec.AnnotationDescriptor] = string(published)
+	for k, v := range spec.OCIAnnotations(d) {
+		a.annotations[k] = v
+	}
+	a.files[path.Join(StagedKitRoot, stem, stagedDescriptorName)] = []byte(authored)
+
+	got := findings(t, a)["derived-provides"]
+	require.Equal(t, report.Skip, got.Severity,
+		"the merged database is not the evidence these entries came from")
+	require.Contains(t, got.Detail, "before composition")
+}
+
 // Without the capability the floor is not this kit's promise, so the same
 // gaps must go unreported rather than being imposed on every workload.
 func TestTheFloorIsJudgedOnlyWhenTheCapabilityIsDeclared(t *testing.T) {

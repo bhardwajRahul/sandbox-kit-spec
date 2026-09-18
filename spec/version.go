@@ -14,9 +14,9 @@ import (
 //
 // A capability name admits dots and pluses on top of that, because a
 // distribution package name is a capability name here (§9.6): Debian
-// ships libstdc++6, python-3.14 and containerd.io, and a charset that
-// refused them would leave a fifth of an image's packages unnameable. A
-// handle stays narrow — it is an identifier someone types and a store
+// ships libstdc++6, python-3.14 and containerd.io, which is one package
+// in twenty on a shell-docker rootfs and none of them nameable without.
+// A handle stays narrow — it is an identifier someone types and a store
 // keys on, with no filesystem to answer to.
 var (
 	handleName          = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$`)
