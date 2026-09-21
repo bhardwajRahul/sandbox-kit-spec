@@ -156,6 +156,28 @@ a mixin that only touches apt inside a build stage needs no `deb/apt`, and
 adding one there rejects every Alpine or distroless workload that could
 otherwise have run the shipped binary perfectly well.
 
+Two things follow, and both cut against the instinct to list whatever a
+lifecycle hook shells out to:
+
+**Never require the platform floor.** §12 lets kit content assume `bash` and
+`sh`, `curl`, `git`, a populated CA store, and the `agent` user at uid 1000.
+A hook running `curl` or `git` has declared nothing by doing so. Worse,
+`requires: ["deb/curl"]` refuses every workload without a dpkg database —
+an Alpine or Wolfi base publishes `apk/` names — so the entry rules out bases
+that were always going to satisfy it.
+
+**A conditional dependency cannot be expressed here, so do not try.** There is
+no either/or in `requires`: an entry is a hard precondition on every
+composition. A hook that reaches for `apt-get` *only when the tool it installs
+is missing* works fine on a base that already ships the tool, and
+`requires: ["deb/apt"]` converts "degrades on some bases" into "refuses on
+them". Let the hook probe and fail with an actionable message, and say in a
+comment that the silence is deliberate — otherwise the next reader adds the
+entry back.
+
+The test is not "what do my hooks run" but **"what must already be present, on
+every base, for this kit to work at all"**. Usually that is nothing.
+
 Where a requirement is real, `deb/` names are the right vocabulary and
 invented ones are wrong: publishing derives a `deb/<pkg>` provide from a
 **workload's** dpkg database, so `requires: ["deb/apt"]`, `["deb/jq"]` or

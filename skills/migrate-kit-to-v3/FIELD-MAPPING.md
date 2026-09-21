@@ -216,6 +216,15 @@ Three things to keep straight:
   check (§5.3): a name nothing in the set provides makes the kit refuse to
   compose anywhere, rather than only on the bases that actually lack it. That is
   why an invented `docker-engine` is wrong and `deb/docker-ce` is right.
+- **Do not transcribe a hook's command list into `requires`.** It is the most
+  tempting wrong move in a migration, because v2 hooks are right there in front
+  of you. Two rules settle nearly every case: the §12 floor — `bash`, `sh`,
+  `curl`, `git`, a CA store, the `agent` user — is assumable, so a hook using
+  `curl` or `git` declares nothing; and a dependency a hook reaches for only
+  *conditionally* cannot be stated at all, because `requires` has no either/or
+  and would refuse the bases where the condition never fires. A hook that
+  apt-installs a tool **when the base lacks it** requires no `deb/apt`. Ask what
+  must be present on every base for the kit to work, not what the hooks invoke.
 
 ## Capabilities
 
