@@ -25,12 +25,20 @@ git clone https://github.com/docker/sandbox-kit-spec
 Egress is bounded to that one repository, and to reads of it: nothing else on
 github.com is reachable, and the grant covers fetching rather than pushing.
 
-**The clone is unauthenticated.** This kit declares no credential, so it works
-while the repository is public and fails on authentication — not on egress —
-if it is not. A token that happens to be in the sandbox for other reasons does
-not change that, because nothing here injects one. If the clone fails that
-way, the files above are still authoritative for everything they cover; what
-you lose is the material they link out to.
+**This kit contributes no credential of its own**, so on a bare workload the
+clone is unauthenticated: it works while the repository is public and fails on
+authentication — not on egress — if it is not.
+
+It may still end up authenticated, and that is not this kit's doing.
+Credentials union across a composition, and an `inject` rule rewrites requests
+at the outbound boundary by **domain** rather than by which process made them,
+so another kit contributing a runtime GitHub credential covering `github.com`
+authenticates this clone too. A git credential helper configured in the image
+does the same. So treat authentication as a property of the composition you
+are running in, not something to infer from this kit.
+
+If the clone does fail, the files above remain authoritative for everything
+they cover; what you lose is the material they link out to.
 
 Follow the links when a skill defers to the spec rather than guessing at a
 rule — the skills summarise, the spec decides.

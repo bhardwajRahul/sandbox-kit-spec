@@ -285,12 +285,26 @@ the index's, which covers the per-platform manifests beneath it.
 
 In CI, keyless signing avoids managing a key at all: grant the job
 `id-token: write` and cosign takes its identity from the OIDC token. The
-matching verification names the identity rather than a public key:
+matching verification names the identity rather than a public key, and for
+GitHub Actions that identity is the **workflow**, not the repository:
 
 ```sh
 cosign verify <registry>/<kit>@"$digest" \
-  --certificate-identity-regexp '^https://github\.com/<org>/' \
+  --certificate-identity 'https://github.com/<org>/<repo>/.github/workflows/publish.yml@refs/tags/<tag>' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+**Name the whole identity, not a prefix of it.** An identity regexp like
+`^https://github\.com/<org>/` accepts a certificate from *any* workflow in
+*any* repository in the organization, so any job anywhere in the org with
+`id-token: write` can mint something that passes — and verification then
+proves only that the signature came from somebody in your org, which is not
+the question being asked. The signature is only evidence of provenance when
+the identity pins the repository, the workflow file and the ref. Where a tag
+varies, keep the rest exact and vary only that part:
+
+```sh
+  --certificate-identity-regexp '^https://github\.com/<org>/<repo>/\.github/workflows/publish\.yml@refs/tags/'
 ```
 
 ## Tooling
