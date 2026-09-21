@@ -16,19 +16,18 @@ Cursor and Claude Code both read, and reference files beside it that the
 
 ## Wiring them into a tool
 
-This directory is the source of truth. Tools that expect skills somewhere
-particular can point at it rather than holding a copy:
+This directory is the source of truth, and the repository carries no
+tool-specific copy of it. Where an agent expects to find skills is a local
+choice, so make the link locally — both paths below are git-ignored:
 
 ```sh
-# Cursor — already wired in this repository
-.cursor/skills -> ../skills
-
-# Claude Code
-ln -s ../skills .claude/skills
+ln -s ../skills .cursor/skills     # Cursor
+ln -s ../skills .claude/skills     # Claude Code
 ```
 
-An agent with no skills mechanism at all loses nothing: pass the relevant
-`SKILL.md` as context, or read it and follow it.
+A symlink rather than a copy, so there is only ever one version to keep
+correct. An agent with no skills mechanism at all loses nothing: pass the
+relevant `SKILL.md` as context, or read it and follow it.
 
 ## Keeping them honest
 
