@@ -15,7 +15,7 @@ vars:
   # once those kits have been pushed to the namespace their `registry`
   # arg names. Build one on its own:
   # `task kit:build KIT=team BUILD_ARGS='--build-arg registry=docker.io/me'`.
-  KITS: hello gh tool shell builder motd wordpress claude claude-mixin claude-acp codex codex-mixin codex-acp cursor cursor-mixin devin devin-mixin docker-agent docker-agent-mixin gemini gemini-mixin opencode opencode-mixin
+  KITS: hello gh tool shell builder motd wordpress claude claude-mixin claude-acp codex codex-mixin codex-acp cursor cursor-mixin devin devin-mixin docker-agent docker-agent-mixin gemini gemini-mixin opencode opencode-mixin skills
   # Empty means "the kit's own version answers": build and push refresh an
   # upstream-tracked descriptor from the vendor's latest release and tag
   # with it, so an image tag can never name a version the kit did not
@@ -241,7 +241,10 @@ tasks:
       .dockerfile otherwise.
     requires:
       vars: [KIT]
-    dir: examples/{{.KIT}}
+    vars:
+      KIT_DIR:
+        sh: test -d "examples/{{.KIT}}" && echo "examples/{{.KIT}}" || echo "{{.KIT}}"
+    dir: '{{.KIT_DIR}}'
     cmds:
       - |
         set -euo pipefail
@@ -265,6 +268,8 @@ tasks:
     requires:
       vars: [KIT]
     vars:
+      KIT_DIR:
+        sh: test -d "examples/{{.KIT}}" && echo "examples/{{.KIT}}" || echo "{{.KIT}}"
       DEV_TAG:
         sh: date +dev-%s
       BUILD_DIR:
@@ -272,7 +277,7 @@ tasks:
     cmds:
       - defer: rm -rf {{.BUILD_DIR}}
       - docker build -q -t {{.FRONTEND_IMAGE}}:{{.DEV_TAG}} . >/dev/null
-      - cp -r examples/{{.KIT}}/ {{.BUILD_DIR}}/
+      - cp -r {{.KIT_DIR}}/ {{.BUILD_DIR}}/
       # Only line 1 is rewritten: a comment-descriptor kit's SECOND syntax
       # stanza names the content's frontend and must stay untouched. The
       # version is read, never refreshed: iterating on the frontend should
@@ -310,7 +315,10 @@ tasks:
     preconditions:
       - sh: test -n "{{.REGISTRY}}"
         msg: "REGISTRY is required, e.g. REGISTRY=docker.io/me"
-    dir: examples/{{.KIT}}
+    vars:
+      KIT_DIR:
+        sh: test -d "examples/{{.KIT}}" && echo "examples/{{.KIT}}" || echo "{{.KIT}}"
+    dir: '{{.KIT_DIR}}'
     cmds:
       - |
         set -euo pipefail

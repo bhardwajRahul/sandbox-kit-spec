@@ -1,0 +1,58 @@
+# syntax=docker/sandbox-kit:3
+# This repository's kit-authoring skills, shipped into a sandbox.
+#
+# Also a small example of a content-first mixin: layers, a context entry, and
+# one narrowly bounded grant. No hooks, no credentials — everything it installs
+# happens at build time.
+schemaVersion: "3"
+displayName: Kit authoring skills
+description: >-
+  The v3 kit authoring and migration skills from docker/sandbox-kit-spec, on
+  disk at /usr/share/kit-skills, with an agent-context entry pointing the agent
+  at them. Layer it onto any workload.
+sourceUrl: https://github.com/docker/sandbox-kit-spec
+licenses: [Apache-2.0]
+
+kind: mixin
+
+# A literal version, and this is the one shape of kit where the `version:`
+# fallback is the honest answer for an unversioned provide rather than a
+# release number wearing someone else's name. The content is this
+# repository's own documentation, so the kit's version IS the content's
+# version; there is no upstream release line for it to misreport.
+version: "3.0.0"
+provides: ["com.docker.sandbox.skills/kits"]
+
+capabilities:
+  # DELIBERATELY NOT agent-skills@1, which is the trap this kit would fall
+  # into by default. That capability asks the host to MOUNT its shared skills
+  # store at a path — it does not mean "this kit carries skills" — and the
+  # claude kits already declare it at /home/agent/.claude/skills. Shipping
+  # content to a path some other kit has invited a mount onto means the mount
+  # hides what this kit exists to deliver, and nothing reports the loss.
+  #
+  # So the skills land somewhere no capability claims, and the agent is told
+  # where by the only mechanism meant for telling it things.
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      contentFile: ./skills-context.md
+
+  # The skills link out to the spec, the capability pages and the example
+  # kits, and none of that is on disk here — so without this the agent is
+  # told to go read something it cannot reach.
+  #
+  # Bounded rather than a bare `github.com`, which is what a mixin granting
+  # egress for its READER rather than for its own content has to do. §9.5
+  # unions allow entries per phase, so this kit's grant is added to whatever
+  # it is layered onto: on codex or opencode a bare host would be a no-op,
+  # but on claude or cursor — scoped to their vendor endpoints on purpose —
+  # it would quietly open all of GitHub, and the base ships git to use it.
+  # The paths are exactly what git-over-HTTPS asks for, so the grant buys a
+  # clone of this one repository and no other reach.
+  - type: com.docker.sandbox/network-policy@2
+    config:
+      runtime:
+        allow:
+          - hosts: [github.com]
+            methods: [GET, POST]
+            paths: ["/docker/sandbox-kit-spec/**"]
