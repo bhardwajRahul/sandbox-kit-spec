@@ -25,7 +25,7 @@ sandbox.image: IMG            →  the recipe's `FROM IMG`
 sandbox.entrypoint: [...]     →  `ENTRYPOINT [...]` in the recipe
 sandbox.command.default       →  `CMD [...]` in the recipe
 sandbox.command.interactive   →  capability lifecycle@1 `interactive:`
-environment.variables         →  `ENV` in the recipe (workload only — see mixins)
+environment.variables         →  `ENV` in the recipe (mixins too — env merges)
 permissions.network           →  capability network-policy@1
 credentials[]                 →  capability credential@1, one per service
 volumes[]                     →  capability volume@1, one per path
@@ -37,6 +37,30 @@ agentInstructions             →  capability agent-context@1
 Every key in v3 is `lowerCamelCase` with acronyms title-cased: `sourceUrl`,
 `apiKey`, `iconUrl`. Decoding is strict — an unrecognized key anywhere is an
 error, which is why a v2 `name:` left in place fails rather than being ignored.
+
+### Fields the v2 kit may never have written
+
+The table maps what a v2 kit *said*, and the mapping of an absence is an
+absence. Three optional fields decide what the published artifact says about
+itself, and a v2 kit that omitted them migrates faithfully into a v3 kit that
+omits them too — the descriptor validates, `kit-tck` passes, and nothing
+anywhere reports the loss:
+
+| Field | Annotation it produces |
+|---|---|
+| `version:` | `org.opencontainers.image.version` |
+| `sourceUrl:` | `org.opencontainers.image.source` |
+| `licenses:` | `org.opencontainers.image.licenses` |
+
+Add all three whether or not v2 had them. Publishing is the only place their
+absence shows, and by then the artifact is already in a registry.
+
+`version:` is the one that gets missed, because [Provides](#provides) discusses
+it as the fallback for an unversioned provide — so a kit with **no** `provides:`
+reads that, correctly concludes the fallback cannot apply to it, and leaves the
+field out. It still names the artifact's own version. A kit with neither
+`version:` nor a version-shaped publish tag carries no version at all, and
+someone holding it cannot tell what they have or whether it changed.
 
 The image config owns the runtime contract in v3. Entrypoint, cmd, env, user and
 workdir move out of the descriptor and into the recipe; the descriptor
@@ -73,11 +97,13 @@ They are mutually exclusive: an arg resolves in one phase. Args are private by
 default — an arg reaches the container only through `env:` and the build only
 through `buildArg:`.
 
-References change spelling: a v2 `${argname}` substitution becomes
-`${{ kit.args.argname }}`. Shell variables (`$VAR`, `${VAR}`) pass through
-untouched, which is the whole point of the `${{` opener — it is not valid shell,
-so the two vocabularies cannot collide. Every `${{ kit.args.x }}` must name a
-declared arg.
+Arg references keep v2's spelling: `${{ kit.args.argname }}` is what v2 wrote
+too, so leave them alone rather than hunting for something to rewrite. Shell
+variables (`$VAR`, `${VAR}`) pass through untouched, which is the whole point
+of the `${{` opener — it is not valid shell, so the two vocabularies cannot
+collide. Every `${{ kit.args.x }}` must name a declared arg. The one `${…}`
+form v2 did define is `${WORKDIR}`, handled with the other lifecycle
+substitutions below.
 
 **That applies inside comments too.** References are found by scanning the
 descriptor's raw text, so a placeholder written in YAML prose is a real
@@ -123,8 +149,12 @@ string is always text.
   have. Where the tool arrives inside a base image rather than from an install
   the kit performs, the honest form is an *assertion* — read the version out of
   the content and fail the build when it differs from the declared default.
-- **Some installers genuinely cannot be pinned**, and leaving those unversioned
-  with the evidence recorded is the right answer. Real examples: an installer
+- **Some installers genuinely cannot be pinned**, and for those the honest move
+  is to **drop the provide**, not to leave it unversioned. `RequireVersionedProvides`
+  fails the build when a provide has no `@version` and the descriptor has no
+  `version:` either, so "unversioned with no fallback" is not a publishable
+  state. A kit with no `provides:` at all publishes fine — it offers nothing
+  matchable, which is the truth in this case. Real examples: an installer
   whose whole option surface is `--help` and `--channel` and which fetches a
   literal `latest/` path; a vendor manifest whose asset URL carries an opaque
   build id beside the version; a tool that self-updates at run time; content
@@ -148,7 +178,21 @@ built content and states one provide per installed package under `deb/` or
 `apk/`, at the upstream version with epochs and Debian revisions stripped. So a
 workload on `docker/sandbox-templates:*` offers `deb/apt`, `deb/jq`,
 `deb/docker-ce`, `deb/git` and hundreds more with nobody authoring them, and a
-mixin may require those names:
+mixin may require those names.
+
+**On a multi-platform workload the set is an intersection, not a union.** §9.6
+states an entry only where every published platform agrees on the normalized
+name *and* version, so an architecture-specific package, or one at different
+versions across arches, is emitted by none of them. Check with the platform in
+hand rather than whatever your laptop is:
+
+```sh
+docker run --rm --platform linux/amd64 <base> dpkg-query -W -f='${Version} ${Status}\n' <pkg>
+docker run --rm --platform linux/arm64 <base> dpkg-query -W -f='${Version} ${Status}\n' <pkg>
+```
+
+A requirement on a package only one arch publishes refuses to compose on the
+other, which is the same failure as inventing a name.
 
 ```yaml
 requires: ["claude", "deb/apt", "deb/openssl >= 3.5"]
@@ -160,12 +204,14 @@ Three things to keep straight:
   `provides: ["deb/apt"]` fails the build — §5.1 reserves the namespace for
   publishing to fill — and that check is authored-form only, so
   `spec.ValidateRaw` does not catch it and only the build tells you.
-- **Verify the package is really in the database.** A tilde in a version's
-  upstream half makes §9.6 drop the package rather than publish it, so
-  `deb/nodejs` does not exist on these templates even though `nodejs` is
-  installed — and they put node in `/usr/local` via `n`, outside dpkg entirely.
-  Check with
-  `docker run --rm <template> dpkg-query -W -f='${Version} ${Status}\n' <pkg>`.
+- **Verify the package is really in the database.** Two different things stop a
+  name existing, and node happens to hit both. §9.6 drops a package whose
+  upstream version contains a tilde, so a tilde-versioned entry is in dpkg and
+  still never published. Separately, these templates install node into
+  `/usr/local` via `n`, so it is not in dpkg at all. Either way `deb/nodejs` is
+  not available to require. The single check that settles it is
+  `docker run --rm <template> dpkg-query -W -f='${Version} ${Status}\n' <pkg>` —
+  no output means no package, a tilde in the output means no provide.
 - **An unprovidable name is worse than silence.** `requires` is a closed-set
   check (§5.3): a name nothing in the set provides makes the kit refuse to
   compose anywhere, rather than only on the bases that actually lack it. That is
@@ -194,11 +240,13 @@ phases must not lose a host. Deny wins over allow, and a removed deny is a
 widening. `network-policy@2` adds HTTP method and path rules over the same
 grants and is exclusive with `@1`; a kit that gates by host alone stays on `@1`.
 
-Write entries portless (`archive.ubuntu.com`, not `archive.ubuntu.com:80`). A
-portless pattern matches any port, which is what apt hosts need — pinning `:80`
-breaks the moment a mirror answers over HTTPS, and `apt-get update` then fails
-wholesale rather than skipping one source. For a v2 kit that did pin ports this
-is a deliberate widening, so note it in the migration's review notes rather than
+Write **package-mirror** entries portless (`archive.ubuntu.com`, not
+`archive.ubuntu.com:80`). A portless pattern matches any port, which is what
+apt hosts need — pinning `:80` breaks the moment a mirror answers over HTTPS,
+and `apt-get update` then fails wholesale rather than skipping one source.
+Elsewhere a pinned `:443` is fine and common; both `claude` examples pin it
+throughout. For a v2 kit that did pin a mirror's port, dropping it is a
+deliberate widening, so note it in the migration's review notes rather than
 letting it pass as a transcription detail.
 
 ### credential@1
@@ -211,8 +259,9 @@ unchanged.
 
 - **Add `optional: true` to preserve v2 behavior.** v2 credentials default to
   not-required; v3 entries are required unless they opt out.
-- `oauth.skipIfEnv` is **dropped**: mode resolution is binding-driven in v3, not
-  an env-var probe inside the container. Note it as a `MIGRATION NOTE`.
+- `oauth.skipIfEnv` is **dropped**, and strict decoding rejects it if left in.
+  Do not oversell the change in the note: the field was v1-era and already a
+  no-op under v2, so removing it costs nothing that was working.
 - `credentialFile.template` (a Go template) becomes the declarative
   `credentialFile.structure` map, encoded after substitution so the output is
   well-formed whatever the values contain. The placeholder vocabulary is
@@ -281,7 +330,9 @@ that needs nothing from create time. Keep it a hook when:
   shell expands when it runs, or become an install hook that writes the file and
   declares `env: [WORKSPACE_DIR]`. Prefer the hook. The variable is spelled
   `WORKSPACE_DIR` in v3 hooks.
-- A v2 `... &` backgrounding trick becomes `background: true`.
+- A v2 `startup[].background` carries over unchanged. The field is
+  **startup-only** in v3 — `InstallHook` has no `background`, so strict
+  decoding rejects it on an install hook rather than ignoring it.
 - Install hooks run once at create, before the entrypoint, with the install-phase
   network and credentials open. Startup hooks run on every boot and must be
   idempotent.
@@ -316,12 +367,15 @@ validation error. A mixin carries `contentFile` alone.
 Config-less. Add it to every migrated **workload**: v2 `kind: sandbox` kits are
 all sbx-launched agents, and this is what asks the host to launch the agent
 rather than let the image entrypoint become PID 1, and to honor the identity the
-image config declares. Never on a mixin — a mixin's image config does not become
-the composed image's, so the declaration would say nothing a host can act on.
+image config declares. Never on a mixin — `validate.go` rejects it outright as
+workload-only, so this is a build failure rather than a declaration a host
+quietly ignores.
 
 The kit side of the claim is real: the image must ship `/bin/sh` and `/bin/bash`
-the declared user can execute, declare a non-empty `user` that resolves in
-`/etc/passwd`, and name an absolute shipped file in `BASH_ENV`.
+the declared user can execute and declare a non-empty `user` that resolves in
+`/etc/passwd`. Naming an absolute shipped file in `BASH_ENV` is a **SHOULD** on
+the capability page rather than a MUST, and `kit-tck` warns rather than failing
+when it is missing.
 
 ### port@1
 
@@ -330,11 +384,14 @@ becomes `transport: tcp`. A kit cannot pin a host port.
 
 ### agent-sessions@1
 
-Workload-only, and only where the v2 kit's `testdata/tck.yaml` recorded a
-working non-interactive invocation in `promptArgs`. Translate it into the verb
-tails: `promptArgs: ["-p"]` → `prompt: ["-p", "{{.Prompt}}"]`, plus `continue`,
-`resume` and `list` where the agent supports them. Where `promptArgs` was
-deliberately omitted, omit the capability — do not invent flags.
+Workload-only by convention — unlike `sbx@1`, `validate.go` has no kind check
+for it, so a mixin declaring it is accepted and simply describes something a
+mixin does not own. Add it only where the v2 kit's `testdata/tck.yaml` recorded
+a working non-interactive invocation in `promptArgs`. Translate it into the
+verb tails: `promptArgs: ["-p"]` → `prompt: ["-p", "{{.Prompt}}"]`, plus
+`continue` and `resume` where the agent supports them, and `list`, which is a
+complete command rather than a tail. Where `promptArgs` was deliberately
+omitted, omit the capability — do not invent flags.
 
 ### agent-skills@1
 
@@ -369,11 +426,18 @@ environment can carry:
 - `displayName: <Name> (mixin)`, and a description that says to layer it onto a
   shell base and run the tool.
 
-v2 `environment.variables` cannot become `ENV` in a mixin, because a mixin's
-image config is not the composed image's. Drop the exports into
-`/etc/profile.d/<kit>-env.sh` in the overlay instead, which the base's login
-shell sources. `examples/cursor-mixin/` and `examples/codex-mixin/` show the
-shape.
+v2 `environment.variables` becomes `ENV` in a mixin too. Env is one of the
+**additive** image-config fields that merge at assembly, so a mixin's `ENV`
+does reach the composed image; only the contract fields the workload anchors —
+entrypoint, cmd, user, workdir — are ignored. Put it on the recipe's **final**
+stage, since a build stage's config is discarded.
+
+Prefer it over an `/etc/profile.d/<kit>-env.sh` drop, which only a login shell
+sources: `sbx@1` starts the agent under `bash` through `BASH_ENV` because
+profile and rc files do not run for it, so a profile.d value reaches a terminal
+the user opens and not the agent. Use profile.d for a variable two kits might
+each want to set differently — a genuine conflict fails the composition — or
+one that only makes sense interactively.
 
 The recipe is an overlay, not a root filesystem:
 
@@ -382,96 +446,42 @@ The recipe is an overlay, not a root filesystem:
 FROM <the workload's base> AS build
 # the same install the workload does, landed under /out
 RUN ...
-RUN mkdir -p /out/etc/profile.d && printf 'export IS_SANDBOX=1\n' > /out/etc/profile.d/<kit>-env.sh
 
 # The overlay: lands on any base.
 FROM scratch
 COPY --from=build /out /
+ENV IS_SANDBOX=1
 ```
 
-Where an install genuinely cannot be relocated — apt packages, `uv tool
-install`, npm global installs — use the workload's own base as a build stage,
-run the unmodified install, then `COPY --from=build` the specific resulting
-paths (`/usr/local/bin/...`, `/home/agent/.local/...`, `/opt/...`) into the
-`scratch` overlay, and comment on why that shape was chosen.
+Where an install resists relocation — `uv tool install`, npm global installs —
+use the workload's own base as a build stage, run the unmodified install, then
+`COPY --from=build` the specific resulting paths (`/usr/local/bin/...`,
+`/home/agent/.local/...`, `/opt/...`) into the `scratch` overlay, and comment
+on why that shape was chosen.
 
-**An overlay must reproduce the base's ownership at every level it ships**, and
-it is easy to get wrong in both directions, because an overlay's directory
-entries override the base's:
+**Apt packages are not in that list.** Selected paths leave the dpkg state and
+the shared-library closure behind, so an apt install has to stay a create-time
+hook however tempting the copy-out looks — the same rule the lifecycle section
+above states.
 
-- `/home` owned by uid 1000 hands the agent a directory it should not own.
-- `/home/agent` owned by root takes `$HOME` away from the agent user, and the
-  entrypoint runs as that user, so its own `chown` would be a no-op.
+**Everything an overlay has to get right about ownership is in
+[RECIPES.md](../create-kit-v3/RECIPES.md#ownership)** — the `/home` and
+`/home/agent` invariants, the `COPY --chown` and `chown -R` traps that break
+them, the foreign uids that ride along in npm and PyPI tarballs, the
+virtualenv that only travels with its interpreter, and the installer that
+relocates a launcher without its payload. Read it before writing a mixin
+recipe; it is the same rulebook whether the kit is new or migrated, and the
+export-and-audit command lives there too.
 
-`COPY --chown=1000:1000 … /home/agent/x` straight into `scratch` produces the
-first, because BuildKit applies the `--chown` to every parent it creates.
-A `chown -R` over the whole staging tree produces it too. A `chown -R` one
-level too deep produces the second.
+Two of those have a specifically migration-shaped trap. A v2 install hook ran
+against the **real** base, so a package tree's foreign owner and a venv's
+absolute interpreter path were both harmless — the install happened where the
+paths resolved. Turning that hook into overlay content moves it onto an
+unknown base, where neither holds. A hook that worked for years is not
+evidence that its baked equivalent will.
 
-The idiom that gets both right stages under `/out` and starts the chown exactly
-at the agent's home:
-
-```dockerfile
-USER root
-RUN mkdir -p /out/home/agent \
- && cp -a /home/agent/.local /out/home/agent/.local \
- && chown -R 1000:1000 /out/home/agent
-
-FROM scratch
-COPY --from=build /out /
-```
-
-Numeric ownership because `scratch` carries no `/etc/passwd` for a name to
-resolve against. Cleanest of all is to avoid the agent's home entirely and
-stage into `/usr/local`, `/opt` and `/etc/profile.d`, which is what a mixin
-landing on an unknown base should prefer anyway — whatever is at
-`/home/agent` may be a mounted volume.
-
-**Foreign owners ride along in package trees.** npm and PyPI tarballs preserve
-whatever uid the publisher's machine had, and `cp -a` carries it into the
-overlay — real examples from these kits are `501:20` (a macOS developer),
-`1001:127` (a CI runner) and `718322462:454177323`. A create-time hook made
-those harmless, because the install ran against the real base and its own
-`--global` prefix; as **image content on an unknown base** they may be real
-accounts, and a file's owner can rewrite it whatever its mode says. Normalize
-a copied package tree to root (`chown -R 0:0`), which is how a root-installed
-global package looks anyway. The agent needs write access to the *prefix
-directories* to add packages, not to the tool's own tree.
-
-**Verify it rather than reasoning about it.** Export the layer and read the
-ownership out:
-
-```sh
-docker buildx build . -f <kit>.yaml --output type=oci,dest=/tmp/layout,tar=false
-for b in /tmp/layout/blobs/sha256/*; do tar tvf "$b" 2>/dev/null; done \
-  | awk '{print $3":"$4}' | sort | uniq -c | sort -rn
-```
-
-Every count should be under `0:0` or `1000:1000`, and nothing else. To see the
-directory invariant specifically, filter for `^d.*home`: `home/` must be `0 0`
-and `home/agent/` must be `1000 1000`.
 `examples/devin-mixin/` and `examples/docker-agent-mixin/` show the copy-out
 pattern; `examples/claude-mixin/` shows the single-binary case.
-
-**A virtualenv travels only if its interpreter travels with it.** A venv keeps
-packages in `lib/python3.<minor>` and points `bin/python` at an absolute path;
-left pointing at the build base's `/usr/bin/python3`, the copied tree resolves
-the *composed* base's python and fails with `ModuleNotFoundError` — after the
-launcher starts, so create succeeds and use breaks. Either bundle the
-interpreter (`uv tool install --managed-python --python <minor>` puts a
-standalone CPython inside the tree the overlay already copies) or leave the
-install a create-time hook. `readlink -f <venv>/bin/python` is the tell: inside
-the overlay's own tree is self-contained, `/usr/bin/python3` is not — and the
-bug hides whenever the build and test bases share a minor version.
-
-**Watch for installers that relocate a launcher but not the tree.** A
-`--prefix`, `--dir` or `INSTALL_DIR` option frequently moves only the symlink
-while the real payload lands somewhere else — `$CODEX_HOME`, `~/.grok/downloads`
-— and a `test -x` gate on the launcher passes *in the build stage* because the
-payload is still sitting behind it there. The overlay then ships a dangling
-link and the tool cannot run on any base. Three kits shipped this way before it
-was caught. Gate on the resolved binary, and prove the overlay by composing it
-onto a bare base and running the tool, not by building it.
 
 A kit's build context is rooted at its own directory and a `dockerfile:` path
 may not escape it, so a mixin **cannot** reach an asset sitting in the
@@ -484,13 +494,18 @@ each, because nothing enforces it.
 Before calling a migration done:
 
 - [ ] no `name:` field, and `kind:` says `workload`, never `sandbox`
+- [ ] `version:`, `sourceUrl:` and `licenses:` are present even though the v2
+      kit wrote none of them — nothing fails without them and the published
+      artifact is what loses
 - [ ] every hook that reads a variable declares it in `env:`
 - [ ] every credential that was effectively optional in v2 sets `optional: true`
 - [ ] every inject domain appears in the same phase's allow list
 - [ ] the install/runtime phase split loses no host from the v2 list
-- [ ] `filename:` appears on the workload only
+- [ ] `filename:` appears only on the kit that owns the environment — a
+      workload or a set, never a mixin
 - [ ] no `sbx@1` or `agent-sessions@1` on a mixin
-- [ ] the mixin's env arrives via `/etc/profile.d`, not `ENV`
+- [ ] the mixin's `ENV` is on the recipe's final stage, and profile.d is used
+      only for values that collide or that only a shell needs
 - [ ] entrypoint, env, user and workdir live in the recipe, not the descriptor
 - [ ] every volume declares a `size`
 - [ ] v2 comments carried across, deltas marked `# MIGRATION NOTE:`
@@ -502,17 +517,22 @@ Before calling a migration done:
 - [ ] the recipe's `ENTRYPOINT` (plus any `CMD`) reproduces the v2
       `sandbox.entrypoint` and `sandbox.command.default` exactly
 
-The last one is worth scripting, because descriptor validation cannot see it —
-a `contentFile` pointing at a missing file fails at build, and a context body
-nobody references fails at nothing at all and silently never reaches the agent:
+The orphan case is worth scripting, because nothing else sees it: a
+`contentFile` naming a missing file fails at the build, but a context body
+nobody references fails at nothing at all and silently never reaches the agent.
+
+The frontend trims a leading `./` and accepts a quoted value, so `./name`,
+`name` and `"./name"` are the same reference. Match all three or the audit
+reports an ORPHAN for a file that is referenced:
 
 ```sh
 for y in */*.yaml; do d=$(dirname "$y")
-  rg -o 'contentFile: *\./[^ ]+' "$y" | sed 's|contentFile: *\./||' | while read -r f; do
+  rg -o 'contentFile: *["'\'']?\.?/?[^"'\'' ]+' "$y" \
+    | sed 's|.*contentFile: *||; s|["'\'']||g; s|^\./||' | while read -r f; do
     [ -f "$d/$f" ] || echo "MISSING: $y -> $f"
   done
 done
 for m in */*-context.md; do d=$(dirname "$m"); b=$(basename "$m")
-  rg -q "contentFile: *\./$b" "$d"/*.yaml || echo "ORPHAN: $m"
+  rg -q "contentFile: *[\"']?(\./)?$b" "$d"/*.yaml || echo "ORPHAN: $m"
 done
 ```

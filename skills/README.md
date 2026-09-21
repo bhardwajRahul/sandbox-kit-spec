@@ -21,9 +21,13 @@ tool-specific copy of it. Where an agent expects to find skills is a local
 choice, so make the link locally — both paths below are git-ignored:
 
 ```sh
-ln -s ../skills .cursor/skills     # Cursor
-ln -s ../skills .claude/skills     # Claude Code
+mkdir -p .cursor && ln -sfn ../skills .cursor/skills     # Cursor
+mkdir -p .claude && ln -sfn ../skills .claude/skills     # Claude Code
 ```
+
+`mkdir -p` because both directories are git-ignored and so do not exist in a
+fresh clone, and `-sfn` because a plain `ln -s` into a directory that *does*
+exist creates `.cursor/skills/skills` pointing at itself instead of failing.
 
 A symlink rather than a copy, so there is only ever one version to keep
 correct. An agent with no skills mechanism at all loses nothing: pass the

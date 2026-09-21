@@ -115,7 +115,11 @@ five cases where a hook is still correct, are in
 ### 3. Add the `-mixin` variant
 
 Every workload kit gets a sibling `<kit>-mixin/` holding `<kit>-mixin.yaml`,
-`<kit>-mixin.dockerfile` and `<kit>-mixin-context.md`. The mixin declares the
+`<kit>-mixin.dockerfile` and a context file. Name that last one
+`<kit>-context.md`, which is what six of the seven example mixins do — the
+staged name only has to avoid `kit.yaml` and `kit.dockerfile`, so the `-mixin-`
+infix buys nothing and the repository is already near-unanimous. The mixin
+declares the
 same credentials, network policy, volumes and hooks, minus what only the kit
 that owns the environment can carry. See the
 [mixin variants](FIELD-MAPPING.md#mixin-variants) section for the exact
@@ -124,14 +128,18 @@ subtractions and the overlay recipe patterns.
 ### 4. Validate the descriptor
 
 The frontend decodes and validates the descriptor **before** it builds any
-content, so a build that produces nothing is the fast validation loop:
+content, so an export-less build is the fast loop *while the descriptor is
+wrong*:
 
 ```sh
 cd <kit> && docker buildx build . -f <kit>.yaml --output type=cacheonly
 ```
 
 A malformed descriptor fails in about a second, naming the offending field and
-its line. Content only builds once the descriptor is valid, so iterate here
+its line. Be clear about what `cacheonly` does, though: it suppresses the
+**export**, not the build. Once the descriptor is valid the frontend goes on to
+solve the whole recipe — downloads, installs and all — so this is fail-fast for
+bad input rather than a validation-only step. Iterate here
 until it is clean — this is seconds per run where a full build is minutes.
 
 Pass build-phase args by the **kit's** arg name, not the `buildArg` name the
@@ -141,17 +149,21 @@ recipe sees, and supply anything declared `required` or validation fails:
 docker buildx build . -f <kit>.yaml --build-arg version=2.99.0 --output type=cacheonly
 ```
 
-This judges the descriptor and the recipe. Nothing checks the recipe's `FROM`
-and `COPY --from` correctness for you until the content actually builds in
-step 5.
+Because the recipe is solved too, a bad `FROM` or `COPY --from` surfaces here
+rather than waiting for step 5 — you just do not get an image out of it.
 
 ### 5. Build the kit
 
-Drop `--output` for an ordinary tagged image:
+Swap the export for `--load` to put an ordinary tagged image in the local
+store:
 
 ```sh
-docker buildx build . -f <kit>.yaml -t <kit>-kit:<tag>
+docker buildx build . -f <kit>.yaml -t <kit>-kit:<tag> --load
 ```
+
+`--load` is not optional on the `docker-container` driver, which is what
+`buildx create` gives you: without an output the result stays in the builder's
+cache and `docker run <kit>-kit:<tag>` reports no such image.
 
 To judge the artifact with `kit-tck` without a registry, export an OCI layout
 directory instead:
@@ -179,7 +191,8 @@ sbx run ./<workload> --kit ./<kit>-mixin .   # a mixin, composed onto a workload
 A mixin cannot run alone; compose it onto the migrated workload or onto a shell
 workload. Pass kit args with `--kit-arg name=value` (or `--kit-arg
 kit.name=value` to target one kit), and bind a credential the kit declares with
-`sbx secret set -g <service>` before expecting authenticated calls to work.
+`sbx secret set <service>` before expecting authenticated calls to work. (The
+`-g` flag older docs show is deprecated; global is the default now.)
 
 Inside the sandbox, the kit is self-describing — use it to check that what you
 declared is what arrived:
@@ -240,25 +253,61 @@ Runtime conformance is a separate suite, for people implementing a runtime
 rather than authoring a kit: `kit-tck runtime --adapter <path>` drives hundreds
 of sandbox lifecycles against an adapter implementing
 [conformance.md](https://github.com/docker/sandbox-kit-spec/blob/main/docs/spec/conformance.md).
-It takes hours, and migrating a kit does not need it.
+It runs long — the bare command defaults `--timeout` to 30m and fails when that
+expires, so a real run needs something like `--timeout 2h` — and migrating a kit
+does not need it at all.
+
+### 8. Publish
+
+One artifact means one push. A v2 kit pointed `sandbox.image` at an image
+published separately from the kit itself, so shipping a change meant building
+and pushing both and keeping the reference between them honest. In v3 the
+recipe's `FROM` builds the content, the frontend annotates it, and the result
+in the registry is the whole kit:
+
+```sh
+docker buildx build . -f <kit>.yaml --platform linux/amd64,linux/arm64 --push \
+  -t <registry>/sbx-kit-<kit>:<version> -t <registry>/sbx-kit-<kit>:latest
+```
+
+**Audit the CI that published the v2 pair.** A pipeline built around two
+artifacts does not fail once there is only one — it keeps pushing an image
+nothing references now that `sandbox.image` is gone, and the step that packed
+the kit has nothing left to pack. Both halves get deleted, not rewired.
+
+**Check what the existing tag actually names.** A repo publishing a family of
+kits into one repository tags them by *name* (`…/sbx-kits:<kit>`), which is a
+tag that says nothing about which build it points at. Carried into v3 unchanged
+and paired with a descriptor that never set `version:`, it yields a published
+kit with no version anywhere in it. Add `<kit>-<version>` beside the bare name,
+and set `version:` regardless — the joined tag is not version-shaped, so it
+cannot stand in for the field.
+
+Signing is optional, unchanged by the migration, and described with the rest
+of the publish flow in
+[create-kit-v3](../create-kit-v3/SKILL.md#publish).
 
 ## What actually catches bugs
 
 Each check below caught real defects in a migration of 87 kits that the
 cheaper checks above it did not. They are ordered by what they cost.
 
-1. **Validation** catches malformed descriptors and nothing else. It cannot see
-   a `contentFile:` pointing at a missing file, a `*-context.md` no descriptor
-   references, a v2 instruction body that was dropped, or an authored `deb/`
-   provide — that last one is refused by the **build**, not by validation.
-   Script the file-level audits; they are seconds and they found a kit whose
-   instructions would silently never have reached the agent.
+1. **Validation** catches malformed descriptors, and the **build** catches more
+   than you would guess: `readContextFile` and `RequireAuthoredProvides` both
+   run before the content loop, so a `contentFile:` naming a missing file and
+   an authored `deb/` provide fail in step 4, not later. What neither sees is a
+   `*-context.md` no descriptor references, or a v2 instruction body that was
+   dropped — both fail at nothing at all. Script those two file-level audits;
+   they take seconds and they found a kit whose instructions would silently
+   never have reached the agent.
 2. **Building** catches recipes. It does not prove the content works.
 3. **Reading the exported layer** catches ownership. Export with
    `--output type=oci,dest=<dir>,tar=false` and count owners:
-   `for b in <dir>/blobs/sha256/*; do tar tvf "$b"; done | awk '{print $3":"$4}' | sort | uniq -c`.
-   Everything should be `0:0` or `1000:1000`; `home/` must be `0 0` and
-   `home/agent/` `1000 1000`. This found six overlays that gave `/home` away or
+   `for b in <dir>/blobs/sha256/*; do tar --numeric-owner -tvf "$b"; done | awk '{print ($2 ~ /\//) ? $2 : $3"/"$4}' | sort | uniq -c`.
+   The awk reads GNU tar's joined `0/0` field or bsdtar's split pair, because
+   a pipeline written for one silently reports the other's size and date.
+   Everything should be `0/0` or `1000/1000`; `home/` must be `0/0` and
+   `home/agent/` `1000/1000`. This found six overlays that gave `/home` away or
    took `$HOME` from the agent, and four shipping files owned by package
    publishers' uids.
 4. **Composing the overlay onto a bare base and running the tool** catches the

@@ -28,7 +28,7 @@ Everything else follows from this.
 |---|---|---|
 | Layers are | a root filesystem | an overlay landing on a workload |
 | Per composition | exactly one | zero or more |
-| Owns | entrypoint, env, user, workdir, the agent-context `filename` | nothing of the environment |
+| Owns | entrypoint, env, user, workdir, the agent-context `filename` | env, labels, ports and volumes, which merge |
 | Must have content | yes | no — may be declaration-only |
 
 Write a **workload** when you own the environment the agent runs in. Write a
@@ -37,9 +37,19 @@ Most new kits should be mixins, and a tool worth shipping as a workload is
 usually worth shipping as both — that is what the `claude`/`claude-mixin` pair
 in the examples is.
 
-A mixin's image config is **not** the composed image's, so a mixin cannot set
-`ENTRYPOINT`, `ENV`, `USER` or `WORKDIR` and have it take effect. Static
-environment rides an `/etc/profile.d/<kit>-env.sh` drop in the overlay instead.
+A mixin cannot set `ENTRYPOINT`, `CMD`, `USER` or `WORKDIR` and have it take
+effect: the workload anchors the composition and owns those contract fields.
+The **additive** fields do merge — env, labels, ports and volumes — so a
+mixin's `ENV` reaches the composed image, and `PATH` is appended rather than
+replaced.
+
+Prefer `ENV` for static environment. It is what the agent process sees, and
+`sbx@1` launches the agent under `bash` via `BASH_ENV` precisely because
+profile and rc files do not run for it — so an `/etc/profile.d/<kit>-env.sh`
+drop reaches a terminal the user opens and misses the agent itself. Reach for
+profile.d only when a value is likely to collide, because two mixins setting
+one variable to different values is a hard composition failure, or when the
+value genuinely only makes sense in an interactive shell.
 
 ## Layout
 
@@ -79,7 +89,9 @@ args:
     buildArg: GH_VERSION
 
 provides: ["gh@${{ kit.args.version }}"]
-requires: ["deb/apt"]        # only what you genuinely need; see below
+# No requires: this overlay ships a release tarball and needs nothing from the
+# workload. Add entries only for what the composed runtime must already have —
+# see below, and note the comment under `requires` about refusing to compose.
 
 capabilities:
   - type: com.docker.sandbox/network-policy@1
@@ -107,12 +119,13 @@ often got wrong:
 
 | Type | Use it for | Easy to get wrong |
 |---|---|---|
-| `network-policy@1` | egress | It is **phase-scoped**: an absent phase grants nothing. Hosts your install hooks reach go in `install`, hosts the running agent (or a startup hook) reaches go in `runtime`, hosts both reach go in both. |
+| `network-policy@1` | egress by host | It is **phase-scoped**: an absent phase grants nothing. Hosts your install hooks reach go in `install`, hosts the running agent (or a startup hook) reaches go in `runtime`, hosts both reach go in both. |
+| `network-policy@2` | egress bounded by HTTP method and path | Same phases, plus entries that grant only matching requests. Pick `@2` when a host should carry one API and not the rest; stay on `@1` when host alone is the grant. **Exclusive with `@1`** — declaring both is an error, and a bounded allow entry must name its hosts literally. `gh` and `hello` use `@2`. |
 | `credential@1` | one service's auth | Entries are **required by default** — add `optional: true` unless the kit genuinely cannot run unauthenticated. Every `inject[].domain` must appear in the same phase's allow list, matched **exactly**: a `*.example.com` wildcard does not satisfy `api.example.com`. |
 | `lifecycle@1` | install/startup hooks, staged files | Hook environments are **deny-by-default**. Declare every variable in `env:`, including ones only a child process reads — `curl`, `pip` and `npm` need `HTTP_PROXY`/`HTTPS_PROXY`, and `docker` needs `DOCKER_HOST`. |
-| `volume@1` | persistent paths | Always set `size`. An unsized block volume inherits a 50 GiB default whose ext4 inode tables cost ~800 MiB while empty. |
-| `agent-context@1` | instructions the agent reads | `filename:` is **workload-only**. Use `contentFile:` for a static body, but inline `content:` when the body interpolates an arg — a staged body is never arg-expanded. |
-| `sbx@1` | "launch this as an agent" | Workload-only, config-less. A mixin declaring it says nothing a host can act on. |
+| `volume@1` | persistent paths | Always set `size`. An unsized kit volume is formatted at 512 MiB, which is a cache or a package store running out of room mid-run rather than anything visible at create. |
+| `agent-context@1` | instructions the agent reads | `filename:` is for the kit that owns the environment — a workload or a set, never a mixin. Use `contentFile:` for a static body, but inline `content:` when the body interpolates an arg — a staged body is never arg-expanded. |
+| `sbx@1` | "launch this as an agent" | Workload-only, config-less — and enforced: a mixin declaring it fails validation. |
 | `agent-skills@1` | the host's shared skills store | Only where the agent really reads skills from that path, and never where the kit ships content there — the mount would hide it. |
 | `port@1`, `resources@1`, `privileged@1` | inbound ports, limits, elevation | Do not declare on speculation; `privileged@1` is the largest widening available. |
 
@@ -138,11 +151,19 @@ not match it.
 
 **`requires` is a closed-set check**: a name nothing in the composition
 provides makes your kit refuse to compose *anywhere*, which is worse than
-saying nothing. That is why invented names are wrong and `deb/` names are
-right — publishing derives a `deb/<pkg>` provide for every package in a
+saying nothing. It constrains the composed **runtime** set, not your builder —
+a mixin that only touches apt inside a build stage needs no `deb/apt`, and
+adding one there rejects every Alpine or distroless workload that could
+otherwise have run the shipped binary perfectly well.
+
+Where a requirement is real, `deb/` names are the right vocabulary and
+invented ones are wrong: publishing derives a `deb/<pkg>` provide from a
 **workload's** dpkg database, so `requires: ["deb/apt"]`, `["deb/jq"]` or
-`["deb/docker-ce"]` resolve against any Debian-based workload. Verify the
-package really is installed (`docker run --rm <base> dpkg-query -W -f='${Version} ${Status}\n' <pkg>`),
+`["deb/docker-ce"]` resolve against any Debian-based workload. On a
+multi-platform workload the derived set is the **intersection** — §9.6 emits a
+package only where every published platform agrees on its normalized name and
+version — so check each arch, not just your own
+(`docker run --rm --platform linux/arm64 <base> dpkg-query -W -f='${Version} ${Status}\n' <pkg>`),
 and never *author* a `deb/` provide — the frontend refuses it.
 
 ## Content recipes
@@ -155,7 +176,9 @@ broken.
 ## Build, run, verify
 
 ```sh
-# 1. validate — the frontend validates the descriptor before building content
+# 1. validate — the descriptor is checked before any content is built, so this
+#    fails in a second on a bad field. cacheonly drops the EXPORT, not the
+#    build: once the descriptor is valid the whole recipe still solves.
 cd <kit> && docker buildx build . -f <kit>.yaml --output type=cacheonly
 
 # 2. build, exporting a layout so kit-tck can judge it without a registry
@@ -182,6 +205,72 @@ installer relocates a launcher but not its payload and the build-stage
 `test -x` passes because the payload is still there. Details and the ownership
 audit are in [RECIPES.md](RECIPES.md#verifying-an-overlay).
 
+## Publish
+
+**Publishing is the build.** A kit is an OCI artifact and the frontend has
+already written its annotations, staged sources and config, so the thing in
+the registry is the kit — there is no pack step, no sidecar artifact and no
+`kit push` subcommand to look for. Add `--push` to the build that produced the
+kit you verified:
+
+```sh
+docker buildx build . -f <kit>.yaml --platform linux/amd64,linux/arm64 --push \
+  -t <registry>/<kit>:<version> -t <registry>/<kit>:latest \
+  --metadata-file /tmp/<kit>-push.json
+```
+
+**Push both platforms in one invocation.** One build writes the index
+consumers resolve through; two single-platform builds pushed to the same tag
+replace each other, leaving a tag that serves whichever ran last and silently
+fails for everyone on the other architecture.
+
+Tag the version and `latest` together. `<version>` is the descriptor's
+expanded `version:`, so where a `version` arg drives the install it also names
+the tag, and the tag says exactly what the image contains.
+
+**Where several kits share one repository, the version belongs in the tag.**
+A repository per kit is the simple case; a repository holding a family of them
+distinguishes kits *by tag*, which leaves `<kit>:<version>` nowhere to put the
+version. Join them and keep the bare name as the moving tag:
+
+```sh
+docker buildx build . -f <kit>.yaml --platform linux/amd64,linux/arm64 --push \
+  -t <registry>/<kits-repo>:<kit>-<version> \
+  -t <registry>/<kits-repo>:<kit>
+```
+
+Publishing only the bare name leaves consumers no way to ask for a particular
+build, or to notice they were moved onto a different one. Reference the
+immutable tag from anything that has to keep working — and note that a
+version-shaped *tag* is also one of the inputs that answers an unversioned
+`provides` entry, which `<kit>-<version>` is not. That is a reason to state
+`version:` in the descriptor rather than leaning on how you tagged.
+
+Signing is optional and orthogonal. A signature is stored as its own object in
+the repository rather than as part of the image, so it changes neither the
+kit's digest nor its annotations, and a signed kit's `kit-tck` verdict is the
+one it already had:
+
+```sh
+digest=$(jq -r '."containerimage.digest"' /tmp/<kit>-push.json)
+cosign sign --yes <registry>/<kit>@"$digest"
+```
+
+**Sign the digest, never the tag.** `--metadata-file` reports the digest the
+push actually produced; a tag is mutable, so a signature naming one attests to
+whatever it happened to point at. For a multi-platform build that digest is
+the index's, which covers the per-platform manifests beneath it.
+
+In CI, keyless signing avoids managing a key at all: grant the job
+`id-token: write` and cosign takes its identity from the OIDC token. The
+matching verification names the identity rather than a public key:
+
+```sh
+cosign verify <registry>/<kit>@"$digest" \
+  --certificate-identity-regexp '^https://github\.com/<org>/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
 ## Tooling
 
 - **`docker buildx`** — nothing to install for the frontend; BuildKit pulls
@@ -191,9 +280,13 @@ audit are in [RECIPES.md](RECIPES.md#verifying-an-overlay).
   Note `sbx kit validate` does **not** accept a v3 source kit; `sbx kit inspect`
   does.
 - **`kit-tck`** — `go install github.com/docker/sandbox-kit-spec/v3/cmd/kit-tck@latest`.
-  That repository is currently private, so this needs access to it plus
+
+  *While the repository is private* this also needs access to it plus
   `GOPRIVATE=github.com/docker/*`; without access you can still validate by
-  building.
+  building. Delete this paragraph when the repository goes public — nothing
+  else here depends on it.
+- **`cosign`** — only if you sign. Nothing in the kit grammar requires it and
+  no consumer needs it to run a kit.
 
 ## Reference
 

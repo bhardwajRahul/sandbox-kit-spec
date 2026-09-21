@@ -52,16 +52,17 @@ RUN set -eux; \
     curl -fsSL "https://example.com/releases/${TOOL_VERSION}/tool" -o /out/usr/local/bin/tool; \
     chmod 0755 /out/usr/local/bin/tool
 
-# Static env, since a mixin's image config is not the composed image's.
-RUN mkdir -p /out/etc/profile.d \
- && printf 'export TOOL_HOME=/opt/tool\n' > /out/etc/profile.d/tool-env.sh
-
 # The overlay: lands on any base.
 FROM scratch
 COPY --from=build /out /
+
+# Static env belongs on the FINAL stage — a build stage's config is discarded.
+# A mixin's additive config merges, so this reaches the composed image and the
+# agent process; an /etc/profile.d drop would only reach a login shell.
+ENV TOOL_HOME=/opt/tool
 ```
 
-Prefer `/usr/local`, `/opt` and `/etc/profile.d`, and **avoid the agent's home
+Prefer `/usr/local` and `/opt`, and **avoid the agent's home
 entirely** where you can — whatever is at `/home/agent` on the composed base
 may be a mounted volume, and staging there is how the ownership traps below
 get hit.
@@ -94,7 +95,7 @@ decision:
 - **Leave it a create-time hook.** Where the venv must use the base's own
   python — because an apt hook installs that python in the first place — the
   install belongs at create, and the overlay carries only what is portable
-  (a `/etc/profile.d` drop, say).
+  (an `ENV` and a wrapper script, say).
 
 The failure is invisible when the build base and the test base happen to share
 a minor version, so check `readlink -f <venv>/bin/python`: a path under the
@@ -147,21 +148,38 @@ A build proves the recipe ran. It does not prove the overlay works.
 
 ```sh
 docker buildx build . -f <kit>.yaml --output type=oci,dest=/tmp/layout,tar=false
-for b in /tmp/layout/blobs/sha256/*; do tar tvf "$b" 2>/dev/null; done \
-  | awk '{print $3":"$4}' | sort | uniq -c | sort -rn
+for b in /tmp/layout/blobs/sha256/*; do tar --numeric-owner -tvf "$b" 2>/dev/null; done \
+  | awk '{print ($2 ~ /\//) ? $2 : $3"/"$4}' | sort | uniq -c | sort -rn
 ```
 
-Every count should be `0:0` or `1000:1000`. Filter `^d.*home` to check the
-directory invariant specifically.
+Every count should be `0/0` or `1000/1000`. Filter `^d.*home` to check the
+directory invariant specifically: `home/` must be `0/0` and `home/agent/`
+`1000/1000`.
+
+**The awk is doing real work, so do not simplify it.** GNU tar prints owner
+and group joined in field 2 (`0/0`); bsdtar splits them across fields 3 and 4.
+A pipeline written for one prints the other's size and date — on Linux, a bare
+`$3":"$4` reports `0:2026-09-21` for every entry, matches none of the values
+above, and reads as a clean audit while checking nothing. `--numeric-owner`
+matters too: without it a uid that resolves to a name in the build image is
+reported by name, and the foreign uids this catches are exactly the ones that
+do not resolve.
 
 **Compose it onto a bare base and run the tool:**
 
 ```sh
 docker buildx build . -f <kit>.yaml -t <kit>-test:local --load
-printf 'FROM ubuntu:24.04\nCOPY --from=<kit>-test:local / /\n' > /tmp/c.Dockerfile
-docker build -t compose-test -f /tmp/c.Dockerfile /tmp
-docker run --rm --user 1000:1000 compose-test /bin/sh -c 'tool --version'
+printf 'FROM ubuntu:24.04\nCOPY --from=<kit>-test:local / /\n' \
+  | docker build -t compose-test -
+docker run --rm --user 1000:1000 compose-test sh -lc 'tool --version'
 ```
+
+Two details in there are deliberate. The Dockerfile arrives on **stdin** so the
+build context stays empty — pointing it at `/tmp` uploads whatever else is
+sitting there, including the layout you just exported, to build two lines. And
+the shell is `sh -lc`: a login shell sources any `/etc/profile.d` drop the
+overlay ships, which a bare `sh -c` does not, so a tool that depends on one
+would fail here for a reason that has nothing to do with the kit.
 
 This is the check that catches **dangling symlinks**, and nothing cheaper does.
 Installers routinely relocate a launcher without its payload — a `--prefix` or
