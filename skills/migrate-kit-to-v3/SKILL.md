@@ -93,7 +93,8 @@ For a kit named `<kit>`, migrating in place:
 | `<kit>/spec.yaml` | `<kit>/<kit>.yaml`, first line `# syntax=docker/sandbox-kit:3` |
 | `<kit>/Dockerfile` | `<kit>/<kit>.dockerfile` — found by filename stem, so no `dockerfile:` field |
 | `agentInstructions.content` | `<kit>/<kit>-context.md`, referenced as `contentFile: ./<kit>-context.md` |
-| `<kit>/testdata/tck.yaml`, `<kit>/.dockerignore` | delete — v2-only harness and build wiring |
+| `<kit>/testdata/tck.yaml` | delete — v2-only harness |
+| `<kit>/.dockerignore` | **keep and audit.** BuildKit still applies it to a v3 kit's build context, so deleting it puts back whatever it was excluding — secrets and large generated files included. Drop only the entries that named v2 files. |
 | `<kit>/<kit>_tck_test.go` | delete — it loads the v2 `spec.yaml` through `tck.NewSuiteFromDir(".")` and cannot compile once that file is gone |
 
 The complete field-by-field mapping, the capability rules, and the gotcha list
@@ -341,6 +342,8 @@ them unless the task says otherwise:
 - Keep each kit's base images verbatim; a grammar migration is not the moment
   to re-point a base.
 - Keep `README.md`, updating the filenames and any v2 grammar it quotes; keep
-  `README.image.md`; delete `testdata/tck.yaml` and `.dockerignore`.
+  `README.image.md`; delete `testdata/tck.yaml`. Keep `.dockerignore` — it
+  still governs the v3 build context — and prune only the entries that named
+  v2 files.
 - Heavily commented YAML is the house style. Carry the v2 comments across —
   they are the reasoning behind the declarations.

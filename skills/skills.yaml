@@ -47,12 +47,28 @@ capabilities:
   # it is layered onto: on codex or opencode a bare host would be a no-op,
   # but on claude or cursor — scoped to their vendor endpoints on purpose —
   # it would quietly open all of GitHub, and the base ships git to use it.
-  # The paths are exactly what git-over-HTTPS asks for, so the grant buys a
-  # clone of this one repository and no other reach.
+  # Split by method rather than one GET+POST entry, because smart-HTTP puts
+  # read and write behind the same path prefix: a POST to */git-upload-pack
+  # is a fetch, a POST to */git-receive-pack is a PUSH. Granting POST across
+  # the prefix would hand write access to anything in the sandbox holding a
+  # GitHub credential — and a composed workload frequently does. So POST is
+  # pinned to the two upload-pack paths and nothing else, while GET stays
+  # broad: no verb under it can write.
+  #
+  # Both spellings are listed because GitHub serves the repository with and
+  # without the `.git` suffix and neither redirects to the other, so a glob
+  # written for one silently refuses clones of the other.
   - type: com.docker.sandbox/network-policy@2
     config:
       runtime:
         allow:
           - hosts: [github.com]
-            methods: [GET, POST]
-            paths: ["/docker/sandbox-kit-spec/**"]
+            methods: [GET]
+            paths:
+              - /docker/sandbox-kit-spec/**
+              - /docker/sandbox-kit-spec.git/**
+          - hosts: [github.com]
+            methods: [POST]
+            paths:
+              - /docker/sandbox-kit-spec/git-upload-pack
+              - /docker/sandbox-kit-spec.git/git-upload-pack

@@ -22,9 +22,18 @@ one place to get them:
 git clone https://github.com/docker/sandbox-kit-spec
 ```
 
-Egress is bounded to that repository, so a clone works and nothing else on
-github.com does. Follow the links when a skill defers to the spec rather than
-guessing at a rule — the skills summarise, the spec decides.
+Egress is bounded to that one repository, and to reads of it: nothing else on
+github.com is reachable, and the grant covers fetching rather than pushing.
+
+**The clone is unauthenticated.** This kit declares no credential, so it works
+while the repository is public and fails on authentication — not on egress —
+if it is not. A token that happens to be in the sandbox for other reasons does
+not change that, because nothing here injects one. If the clone fails that
+way, the files above are still authoritative for everything they cover; what
+you lose is the material they link out to.
+
+Follow the links when a skill defers to the spec rather than guessing at a
+rule — the skills summarise, the spec decides.
 
 They are not in an agent skills directory on purpose. A skills directory is
 where the host mounts its own shared store, and content shipped there would be

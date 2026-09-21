@@ -67,10 +67,13 @@ entirely** where you can — whatever is at `/home/agent` on the composed base
 may be a mounted volume, and staging there is how the ownership traps below
 get hit.
 
-Where the install cannot be relocated — an installer with no prefix option, an
-apt package, a language toolchain that bakes absolute paths — run the
-unmodified install on the workload's own base as the build stage, then copy the
-specific resulting paths out. Say in a comment why that shape was chosen.
+Where the install cannot be relocated — an installer with no prefix option, a
+language toolchain that bakes absolute paths — run the unmodified install on
+the workload's own base as the build stage, then copy the specific resulting
+paths out. Say in a comment why that shape was chosen. **Not apt packages**:
+copying selected paths out of one leaves its dpkg state and shared-library
+closure behind, as the next paragraph says, so the copy-out shape produces a
+broken overlay rather than a portable one.
 
 Some things genuinely cannot travel in an overlay, and the honest move is to
 document the limitation rather than fake it: apt packages (they need the
