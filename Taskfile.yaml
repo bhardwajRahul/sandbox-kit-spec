@@ -277,7 +277,11 @@ tasks:
     cmds:
       - defer: rm -rf {{.BUILD_DIR}}
       - docker build -q -t {{.FRONTEND_IMAGE}}:{{.DEV_TAG}} . >/dev/null
-      - cp -r {{.KIT_DIR}}/ {{.BUILD_DIR}}/
+      # `src/.` rather than `src/`: BSD cp copies the contents of a
+      # trailing-slash source, GNU cp creates <dest>/<src> instead, and the
+      # build below looks for the descriptor directly under BUILD_DIR. The
+      # `/.` spelling copies contents under both.
+      - cp -r {{.KIT_DIR}}/. {{.BUILD_DIR}}/
       # Only line 1 is rewritten: a comment-descriptor kit's SECOND syntax
       # stanza names the content's frontend and must stay untouched. The
       # version is read, never refreshed: iterating on the frontend should

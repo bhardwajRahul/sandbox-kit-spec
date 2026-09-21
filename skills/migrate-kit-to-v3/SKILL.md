@@ -311,12 +311,17 @@ cheaper checks above it did not. They are ordered by what they cost.
    `home/agent/` `1000/1000`. This found six overlays that gave `/home` away or
    took `$HOME` from the agent, and four shipping files owned by package
    publishers' uids.
-4. **Composing the overlay onto a bare base and running the tool** catches the
-   rest, and nothing else does. Three mixins shipped dangling symlinks whose
-   build-time `test -x` passed because the real tree was still present *in the
-   build stage*: the installer had relocated a launcher but not its payload.
-   Build with `--load`, then a throwaway `FROM ubuntu:24.04` plus
-   `COPY --from=<overlay> / /`, and run the tool as uid 1000.
+4. **Composing the overlay and running the tool** catches the rest, and nothing
+   else does. Three mixins shipped dangling symlinks whose build-time `test -x`
+   passed because the real tree was still present *in the build stage*: the
+   installer had relocated a launcher but not its payload. Compose it for real
+   — `sbx run ./<workload> --kit ./<kit> . -- tool --version` — since that is
+   what merges the overlay's `ENV` and `PATH` and puts it on a base carrying
+   the platform floor. The `--load` plus throwaway `COPY --from=<overlay> / /`
+   trick is faster and finds the same dangling symlinks, but it transfers
+   files only: the image config is dropped, so a mixin relying on its own
+   `ENV` fails there for a reason the assembler would not produce. Full detail
+   in [Verifying an overlay](../create-kit-v3/RECIPES.md#verifying-an-overlay).
 5. **`kit-tck`** judges the published artifact — see step 7.
 
 When you change ownership, re-run step 4, not just step 3. A `chown` that fixes

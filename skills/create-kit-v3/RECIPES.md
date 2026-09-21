@@ -168,30 +168,47 @@ matters too: without it a uid that resolves to a name in the build image is
 reported by name, and the foreign uids this catches are exactly the ones that
 do not resolve.
 
-**Compose it onto a bare base and run the tool:**
+**Compose it for real and run the tool.** The assembler is the only thing that
+performs an actual composition, so it is the check that counts:
+
+```sh
+sbx run ./<workload> --kit ./<kit> . -- tool --version
+```
+
+That merges the additive image config — the `ENV` and `PATH` the overlay sets
+on its final stage — and puts the overlay on a base that carries the §12
+platform floor, which is what the kit is entitled to assume.
+
+There is a faster filesystem-only shortcut, but know what it does **not** do
+before trusting it:
 
 ```sh
 docker buildx build . -f <kit>.yaml -t <kit>-test:local --load
-printf 'FROM ubuntu:24.04\nCOPY --from=<kit>-test:local / /\n' \
+printf 'FROM <the workload base>\nCOPY --from=<kit>-test:local / /\n' \
   | docker build -t compose-test -
 docker run --rm --user 1000:1000 compose-test sh -lc 'tool --version'
 ```
 
-Two details in there are deliberate. The Dockerfile arrives on **stdin** so the
-build context stays empty — pointing it at `/tmp` uploads whatever else is
-sitting there, including the layout you just exported, to build two lines. And
-the shell is `sh -lc`: a login shell sources any `/etc/profile.d` drop the
-overlay ships, which a bare `sh -c` does not, so a tool that depends on one
-would fail here for a reason that has nothing to do with the kit.
+`COPY --from` transfers the overlay's **files and nothing else** — its image
+config is discarded, so the `ENV` and `PATH` entries the assembler would have
+merged are simply absent. A correct mixin whose tool depends on either will
+fail here, and that failure is an artifact of the shortcut rather than a defect
+in the kit. Export those variables by hand if you use it. Use the *workload's*
+base rather than a stock `ubuntu:24.04` for the same class of reason: a bare
+distro image lacks parts of the platform floor, so a kit that legitimately
+relies on `git` or the `agent` user fails for reasons the real composition
+would not produce.
 
-This is the check that catches **dangling symlinks**, and nothing cheaper does.
-Installers routinely relocate a launcher without its payload — a `--prefix` or
-`INSTALL_DIR` option moves the symlink while the real tree stays in
-`$TOOL_HOME` or a `downloads/` directory — and a build-stage `test -x` on the
-launcher passes because the payload is still sitting behind it *in that stage*.
-The overlay then ships a link to nothing. Gate on the resolved binary, and run
-it composed.
+The Dockerfile arrives on **stdin** so the build context stays empty —
+pointing it at `/tmp` uploads whatever else is sitting there, including the
+layout you just exported, to build two lines. And `sh -lc` sources any
+`/etc/profile.d` drop the overlay ships, which a bare `sh -c` does not.
 
-A bare base also proves the overlay is self-sufficient: if the tool needs a
-runtime the overlay does not carry, `ubuntu:24.04` will say so where the
-workload's own base would have hidden it.
+What the shortcut is genuinely good for is **dangling symlinks**, because those
+are a filesystem property and nothing cheaper finds them. Installers routinely
+relocate a launcher without its payload — a `--prefix` or `INSTALL_DIR` option
+moves the symlink while the real tree stays in `$TOOL_HOME` or a `downloads/`
+directory — and a build-stage `test -x` on the launcher passes because the
+payload is still sitting behind it *in that stage*. The overlay then ships a
+link to nothing. Gate on the resolved binary, and confirm with the real
+composition above.

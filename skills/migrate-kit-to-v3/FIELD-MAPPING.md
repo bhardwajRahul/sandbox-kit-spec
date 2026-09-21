@@ -118,9 +118,14 @@ string is always text.
 
 - Where the recipe pins the tool's version through a build arg, declare the arg
   and reference it: `provides: ["<tool>@${{ kit.args.version }}"]`.
-- Where the install floats, use an unversioned `provides: ["<tool>"]` and keep a
-  `version:` fallback. At publish every provide must carry a version — its own
-  or the descriptor's `version:`.
+- Where the install floats, **do not** lean on the `version:` fallback to make
+  the provide publishable. Every provide must carry a version at publish, its
+  own or the descriptor's — but a floating install means the kit's release
+  number is not the tool's version, so the fallback publishes
+  `<tool>@<kit-version>`, a claim about content that can change underneath it.
+  The fallback is honest only where the kit's version genuinely *is* the
+  content's, as for a kit whose content is its own documentation. Otherwise
+  pin the install, or drop the provide.
 - **Know what an unversioned provide resolves to, because it is rarely what you
   want.** The resolver takes, in order: an explicit `@version` on the provide;
   the version a *version-shaped consumption reference* carries; then the
@@ -134,9 +139,11 @@ string is always text.
   later segments may be alphanumeric, and there is no `v` prefix. **A commit SHA
   is therefore not a version**, so a kit pinned to a git ref cannot reference
   that pin into its provide. Use the upstream version the recipe records if
-  there is one, else leave the provide unversioned — never reach for a
-  `version: "1.0.0"` fallback that would publish `<tool>@1.0.0`, which is the
-  kit's release number wearing the tool's name.
+  there is one; where the ref has no expressible version, **drop the provide**.
+  Leaving it unversioned is not the fallback position — `RequireVersionedProvides`
+  refuses that at publish unless a `version:` covers it, and reaching for a
+  `version: "1.0.0"` to satisfy it publishes `<tool>@1.0.0`, the kit's release
+  number wearing the tool's name.
 - **State the version once.** Where a kit pins its tool through a build-phase
   arg, point the top-level field at the same arg — `version: "${{ kit.args.version }}"`,
   which §4 allows and publishing expands. One input then drives the descriptor's
