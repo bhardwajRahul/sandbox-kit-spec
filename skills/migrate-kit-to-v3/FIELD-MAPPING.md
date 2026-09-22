@@ -116,39 +116,36 @@ string is always text.
 
 ### Provides
 
-- Where the recipe pins the tool's version through a build arg, declare the arg
-  and reference it: `provides: ["<tool>@${{ kit.args.version }}"]`.
-- Where the install floats, **do not** lean on the `version:` fallback to make
-  the provide publishable. Every provide must carry a version at publish, its
-  own or the descriptor's — but a floating install means the kit's release
-  number is not the tool's version, so the fallback publishes
-  `<tool>@<kit-version>`, a claim about content that can change underneath it.
-  The fallback is honest only where the kit's version genuinely *is* the
-  content's, as for a kit whose content is its own documentation. Otherwise
-  pin the install, or drop the provide.
-- **Know what an unversioned provide resolves to, because it is rarely what you
-  want.** The resolver takes, in order: an explicit `@version` on the provide;
-  the version a *version-shaped consumption reference* carries; then the
-  descriptor's `version:`. A `:latest` tag is not version-shaped, so it
-  contributes nothing. That means a kit shipping Claude Code 2.1.267 under
-  `version: "1.0.0"` offers `claude@1.0.0`, and a mixin asking for
+**The rule everything below follows from:** every provide must carry a version
+at publish — its own `@version`, or the descriptor's `version:` as a fallback —
+and `RequireVersionedProvides` fails the build when neither exists. So an
+unversioned provide is never a resting place. Either **pin** the version and
+reference it, or **drop the provide**; §9.2 publishes a kit with no `provides`
+perfectly happily, and offering nothing matchable is the honest answer when the
+kit cannot know what it installed.
+
+The one exception is a kit whose version genuinely *is* its content's, such as
+one shipping its own documentation. There the `version:` fallback states a fact
+rather than borrowing a number.
+
+- **Pin through a build arg and reference it**: `provides: ["<tool>@${{ kit.args.version }}"]`.
+  State it once — point the top-level field at the same arg,
+  `version: "${{ kit.args.version }}"`, which §4 allows and publishing expands.
+  One input then drives the descriptor's `version`, its `provides` entry, the
+  `org.opencontainers.image.version` annotation and the publish tag, with no
+  second place to drift.
+- **Know what an unversioned provide resolves to**, because it explains why the
+  fallback is not a fix. The resolver takes, in order: an explicit `@version`
+  on the provide; the version a *version-shaped consumption reference* carries;
+  then the descriptor's `version:`. A `:latest` tag is not version-shaped, so
+  it contributes nothing. A kit shipping Claude Code 2.1.267 under
+  `version: "1.0.0"` therefore offers `claude@1.0.0`, and a mixin asking for
   `claude >= 2.1` refuses to resolve against the very kit that satisfies it.
-  Unversioned is only honest when the kit genuinely cannot know its tool's
-  version.
-- A version is `[0-9]+(\.[0-9A-Za-z-]+)*`: the first segment must be numeric,
-  later segments may be alphanumeric, and there is no `v` prefix. **A commit SHA
-  is therefore not a version**, so a kit pinned to a git ref cannot reference
-  that pin into its provide. Use the upstream version the recipe records if
-  there is one; where the ref has no expressible version, **drop the provide**.
-  Leaving it unversioned is not the fallback position — `RequireVersionedProvides`
-  refuses that at publish unless a `version:` covers it, and reaching for a
-  `version: "1.0.0"` to satisfy it publishes `<tool>@1.0.0`, the kit's release
-  number wearing the tool's name.
-- **State the version once.** Where a kit pins its tool through a build-phase
-  arg, point the top-level field at the same arg — `version: "${{ kit.args.version }}"`,
-  which §4 allows and publishing expands. One input then drives the descriptor's
-  `version`, its `provides` entry, the `org.opencontainers.image.version`
-  annotation and the publish tag, with no second place to drift.
+- **A version is `[0-9]+(\.[0-9A-Za-z-]+)*`**: first segment numeric, later
+  segments alphanumeric, no `v` prefix. **A commit SHA is therefore not a
+  version**, so a kit pinned to a git ref cannot reference that pin into its
+  provide. Use the upstream version the recipe records if there is one;
+  otherwise drop it.
 - **A pinned provide is a claim about content, so make the build enforce it.**
   Wire the arg through to the installer and add a step that re-reads the
   installed version and fails on mismatch. Pinning the provide without pinning
@@ -156,16 +153,11 @@ string is always text.
   have. Where the tool arrives inside a base image rather than from an install
   the kit performs, the honest form is an *assertion* — read the version out of
   the content and fail the build when it differs from the declared default.
-- **Some installers genuinely cannot be pinned**, and for those the honest move
-  is to **drop the provide**, not to leave it unversioned. `RequireVersionedProvides`
-  fails the build when a provide has no `@version` and the descriptor has no
-  `version:` either, so "unversioned with no fallback" is not a publishable
-  state. A kit with no `provides:` at all publishes fine — it offers nothing
-  matchable, which is the truth in this case. Real examples: an installer
-  whose whole option surface is `--help` and `--channel` and which fetches a
-  literal `latest/` path; a vendor manifest whose asset URL carries an opaque
-  build id beside the version; a tool that self-updates at run time; content
-  that is someone else's mutable image tag.
+- **Some installers genuinely cannot be pinned**, and those are the drop cases.
+  Real examples: an installer whose whole option surface is `--help` and
+  `--channel` and which fetches a literal `latest/` path; a vendor manifest
+  whose asset URL carries an opaque build id beside the version; a tool that
+  self-updates at run time; content that is someone else's mutable image tag.
 - The name must match what v2 mixins asked for via `requires: {agent: X}`, so
   those requires keep resolving.
 
@@ -522,8 +514,9 @@ Before calling a migration done:
 - [ ] every credential that was effectively optional in v2 sets `optional: true`
 - [ ] every inject domain appears in the same phase's allow list
 - [ ] the install/runtime phase split loses no host from the v2 list
-- [ ] `filename:` appears only on the kit that owns the environment — a
-      workload or a set, never a mixin
+- [ ] `filename:` appears only on a workload, or on a set that resolves to
+      one — a set of only mixins derives `kind: mixin` and its `filename` is
+      rejected at publish, not at authoring time
 - [ ] no `sbx@1` or `agent-sessions@1` on a mixin
 - [ ] the mixin's `ENV` is on the recipe's final stage, and profile.d is used
       only for values that collide or that only a shell needs
