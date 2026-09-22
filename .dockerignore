@@ -12,3 +12,13 @@
 /kit-tck
 /bin
 /dist
+node_modules
+
+# Local secrets and credentials — this project has none checked in, but
+# excluded defensively so a local .env or key never lands in a build context
+.env
+.env.*
+*.key
+*.pem
+secrets/
+*.log

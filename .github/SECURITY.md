@@ -27,3 +27,8 @@ Runtime enforcement — the sandbox boundary, the egress proxy, credential
 mediation — lives in the runtime that consumes these kits, not here. A
 finding there should be reported through the same address, naming the
 runtime.
+
+## Further information
+
+For how Docker reviews and responds to security reports generally, see
+Docker's [vulnerability disclosure policy](https://www.docker.com/trust/vulnerability-disclosure-policy/).
