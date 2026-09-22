@@ -278,18 +278,25 @@ sbx run ./hello --kit ./gh .
 Edit `hello/hello.yaml` (say, add an allow entry) and re-run: only hello
 rebuilds; unchanged Kits reuse the cache. `SBX_KIT_BUILDER=sandbox` moves
 these builds into a dedicated builder sandbox (`sbx kit builder status`
-shows it) instead of the host engine. That sandbox also publishes BuildKit
-on a loopback host port so the host's own `docker buildx` can attach:
+shows it) instead of the host engine. Created with
+`--kit-arg buildkitExpose=true`, that sandbox also publishes BuildKit so
+the host's own `docker buildx` can attach to it:
 
 ```sh
 # After the builder sandbox is up, read the published buildkit port from
 # `sbx kit builder status`, then:
 docker buildx create --name sbx-remote --driver remote \
   tcp://127.0.0.1:<host-port> --use
-docker buildx build --builder sbx-remote . -f claude.yaml --output type=cacheonly
+cd claude && docker buildx build --builder sbx-remote . -f claude.yaml \
+  --output type=cacheonly
 ```
 
-BuildKit listens on TCP 3330 inside the sandbox and the engine-store
+That endpoint builds as root and takes no credential, and `port@1` only
+says a host binding *should* be loopback — so it stays off unless asked
+for, and is worth turning on only where you know the runtime binds
+loopback.
+
+The in-sandbox BuildKit port is 3330 and the engine-store
 volume defaults to 20 GiB (`--kit-arg volumeSize=…`);
 `--kit-arg buildkitPort=…` moves the port. Raising size does not grow
 an already-formatted volume —
