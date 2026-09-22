@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "kit.args reference shapes",
+  "description": "Editor-schema companions to ${{ kit.args.* }}. Capability config fields that pin a literal grammar (byte-size, absolute path, port, …) accept these shapes alongside that grammar so an authored descriptor validates before create-phase expansion — matching the Go validator's lenient path for parameterized entries (SPEC-v3 §6). The Go validators stay literal-only; ValidateEffective runs them after expansion.",
+  "definitions": {
+    "whole": {
+      "type": "string",
+      "pattern": "^\\$\\{\\{\\s*kit\\.args\\.[A-Za-z_][A-Za-z0-9_]*\\s*\\}\\}$",
+      "description": "A string that is exactly one ${{ kit.args.<name> }} reference. Whole-value references adopt the arg's type at create (SPEC-v3 §6)."
+    },
+    "bearing": {
+      "type": "string",
+      "pattern": "\\$\\{\\{\\s*kit\\.args\\.[A-Za-z_][A-Za-z0-9_]*\\s*\\}\\}",
+      "description": "A string that embeds at least one ${{ kit.args.<name> }} reference (for example a path prefix)."
+    }
+  }
+}
