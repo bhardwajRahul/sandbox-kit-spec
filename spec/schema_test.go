@@ -158,6 +158,9 @@ func TestSchemaMatchesSpecConstants(t *testing.T) {
 	require.Equal(t, needType.String(), needTypePattern)
 
 	// Field-shape regexes in the per-type schemas match the validator's.
+	// Patterned fields that an authored descriptor may parameterize with
+	// ${{ kit.args.* }} use anyOf: the literal grammar first, then a
+	// whole/bearing kit-arg ref — matching ValidateRaw's lenient path.
 	skills := loadJSON(t, perTypeSchemaPath(CapabilityAgentSkills))
 	require.ElementsMatch(t, []any{SkillsReadOnly, SkillsReadWrite},
 		at(t, skills, "properties", "mode")["enum"].([]any))
@@ -165,16 +168,18 @@ func TestSchemaMatchesSpecConstants(t *testing.T) {
 	// The canonical-path rule exists twice — as path.Clean in the
 	// validator and as a regex in the published schema — so the schema's
 	// verdicts are pinned to the validator's over every alias shape.
-	skillsPath := regexp.MustCompile(at(t, skills, "properties", "path")["pattern"].(string))
+	skillsPath := regexp.MustCompile(literalPattern(t, at(t, skills, "properties", "path")))
 	for _, p := range []string{"/skills", "/home/agent/.claude/skills", "/a/..b", "/a/.hidden"} {
 		require.True(t, skillsPath.MatchString(p), "schema must accept canonical path %q", p)
 	}
 	for _, p := range []string{"/", "relative", "/x/../skills", "/skills/", "//skills", "/skills/.", "/a/.."} {
 		require.False(t, skillsPath.MatchString(p), "schema must reject alias %q", p)
 	}
+	assertAcceptsKitArg(t, at(t, skills, "properties", "path"), "bearing")
 
 	credential := loadJSON(t, perTypeSchemaPath(CapabilityCredential))
-	require.Equal(t, handleName.String(), at(t, credential, "properties", "service")["pattern"])
+	require.Equal(t, handleName.String(), literalPattern(t, at(t, credential, "properties", "service")))
+	assertAcceptsKitArg(t, at(t, credential, "properties", "service"), "whole")
 	// The schema wraps the validator's env-var pattern in an optional
 	// group: an empty name is the inject-only shape, which the validator
 	// accepts only alongside inject rules (a cross-field rule a regex
@@ -205,8 +210,29 @@ func TestSchemaMatchesSpecConstants(t *testing.T) {
 	require.NotContains(t, at(t, credential, "definitions", "tomlValue")["type"].([]any), "null")
 
 	volume := loadJSON(t, perTypeSchemaPath(CapabilityVolume))
-	require.Equal(t, octalMode.String(), at(t, volume, "properties", "mode")["pattern"])
-	require.Equal(t, sizeBytes.String(), at(t, volume, "properties", "size")["pattern"])
+	require.Equal(t, octalMode.String(), literalPattern(t, at(t, volume, "properties", "mode")))
+	require.Equal(t, sizeBytes.String(), literalPattern(t, at(t, volume, "properties", "size")))
+	assertAcceptsKitArg(t, at(t, volume, "properties", "size"), "whole")
+	assertAcceptsKitArg(t, at(t, volume, "properties", "mode"), "whole")
+	assertAcceptsKitArg(t, at(t, volume, "properties", "path"), "bearing")
+
+	resources := loadJSON(t, perTypeSchemaPath(CapabilityResources))
+	require.Equal(t, sizeBytes.String(), literalPattern(t, at(t, resources, "properties", "memory")))
+	assertAcceptsKitArg(t, at(t, resources, "properties", "memory"), "whole")
+	assertAcceptsKitArg(t, at(t, resources, "properties", "cpu"), "whole")
+
+	port := loadJSON(t, perTypeSchemaPath(CapabilityPort))
+	assertAcceptsKitArg(t, at(t, port, "properties", "container"), "whole")
+
+	lifecycle := loadJSON(t, perTypeSchemaPath(CapabilityLifecycle))
+	fileMode := at(t, lifecycle, "properties", "files", "items", "properties", "mode")
+	require.Equal(t, octalMode.String(), literalPattern(t, fileMode))
+	assertAcceptsKitArg(t, fileMode, "whole")
+
+	// The shared kit-arg fragment's whole pattern is the same expression
+	// expand.go uses for a whole-value reference.
+	kitArg := loadJSON(t, "../schema/definitions/kit-arg.schema.json")
+	require.Equal(t, wholeArgRef.String(), at(t, kitArg, "definitions", "whole")["pattern"])
 
 	// The method enum is the validator's set plus ANY, so a method the
 	// schema accepts is one validateNetworkEntry accepts, and stating
@@ -220,6 +246,7 @@ func TestSchemaMatchesSpecConstants(t *testing.T) {
 	methods := at(t, entry, "properties", "methods")
 	require.ElementsMatch(t, wantMethods, methods["items"].(map[string]any)["enum"].([]any))
 	require.Equal(t, []any{any("methods")}, entry["dependencies"].(map[string]any)["paths"].([]any))
+	assertAcceptsKitArg(t, at(t, entry, "properties", "paths", "items"), "bearing")
 
 	// The literal-hosts bound is the allow entry's alone: a deny wins
 	// outright, so an overlap between two of them decides the same way.
@@ -239,6 +266,28 @@ func TestSchemaMatchesSpecConstants(t *testing.T) {
 		require.False(t, host.MatchString(h), "schema must reject pattern %q", h)
 		require.True(t, isHostPattern(h))
 	}
+}
+
+// literalPattern returns the literal-grammar branch of a property that
+// accepts either that grammar or a ${{ kit.args.* }} reference.
+func literalPattern(t *testing.T, prop map[string]any) string {
+	t.Helper()
+	anyOf, ok := prop["anyOf"].([]any)
+	require.True(t, ok && len(anyOf) >= 2, "property must use anyOf (literal | kit-arg)")
+	pattern, ok := anyOf[0].(map[string]any)["pattern"].(string)
+	require.True(t, ok, "first anyOf branch must be the literal pattern")
+	return pattern
+}
+
+// assertAcceptsKitArg pins the second anyOf branch to the shared
+// whole/bearing kit-arg definition.
+func assertAcceptsKitArg(t *testing.T, prop map[string]any, shape string) {
+	t.Helper()
+	anyOf, ok := prop["anyOf"].([]any)
+	require.True(t, ok && len(anyOf) >= 2, "property must use anyOf (literal | kit-arg)")
+	ref, ok := anyOf[1].(map[string]any)["$ref"].(string)
+	require.True(t, ok, "second anyOf branch must $ref a kit-arg shape")
+	require.Equal(t, "../../definitions/kit-arg.schema.json#/definitions/"+shape, ref)
 }
 
 // TestPerTypeCapabilitySchemas pins the per-type schema files: the @version in
@@ -294,7 +343,10 @@ func keys(m map[string]string) []string {
 // TestSchemaPatternsCompileAsRE2 keeps every schema regex loadable by
 // the yaml-language-server's engine (which, like Go, has no lookarounds).
 func TestSchemaPatternsCompileAsRE2(t *testing.T) {
-	paths := []string{"../schema/kit.schema.json"}
+	paths := []string{
+		"../schema/kit.schema.json",
+		"../schema/definitions/kit-arg.schema.json",
+	}
 	for _, typ := range allCapabilityTypes() {
 		paths = append(paths, perTypeSchemaPath(typ))
 	}

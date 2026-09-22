@@ -150,9 +150,16 @@
           "minItems": 1,
           "items": {
             "type": "string",
-            "pattern": "^/"
+            "anyOf": [
+              {
+                "pattern": "^/"
+              },
+              {
+                "$ref": "../../definitions/kit-arg.schema.json#/definitions/bearing"
+              }
+            ]
           },
-          "description": "Globs matched against the request path. Stating one requires stating methods; omitted alongside methods, it means every path."
+          "description": "Globs matched against the request path. Stating one requires stating methods; omitted alongside methods, it means every path. May embed ${{ kit.args.* }}."
         }
       }
     }

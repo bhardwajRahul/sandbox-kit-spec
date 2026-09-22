@@ -10,11 +10,25 @@
   "properties": {
     "path": {
       "type": "string",
-      "pattern": "^/"
+      "anyOf": [
+        {
+          "pattern": "^/"
+        },
+        {
+          "$ref": "../../definitions/kit-arg.schema.json#/definitions/bearing"
+        }
+      ]
     },
     "size": {
       "type": "string",
-      "pattern": "^[0-9]+(\\.[0-9]+)?\\s*([kKmMgGtT]i?[bB]?)?$"
+      "anyOf": [
+        {
+          "pattern": "^[0-9]+(\\.[0-9]+)?\\s*([kKmMgGtT]i?[bB]?)?$"
+        },
+        {
+          "$ref": "../../definitions/kit-arg.schema.json#/definitions/whole"
+        }
+      ]
     },
     "tmpfs": {
       "type": "boolean",
@@ -22,7 +36,14 @@
     },
     "mode": {
       "type": "string",
-      "pattern": "^[0-7]{3,4}$"
+      "anyOf": [
+        {
+          "pattern": "^[0-7]{3,4}$"
+        },
+        {
+          "$ref": "../../definitions/kit-arg.schema.json#/definitions/whole"
+        }
+      ]
     }
   }
 }

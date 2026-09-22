@@ -108,7 +108,14 @@
           },
           "mode": {
             "type": "string",
-            "pattern": "^[0-7]{3,4}$"
+            "anyOf": [
+              {
+                "pattern": "^[0-7]{3,4}$"
+              },
+              {
+                "$ref": "../../definitions/kit-arg.schema.json#/definitions/whole"
+              }
+            ]
           },
           "overwrite": {
             "type": "boolean",
