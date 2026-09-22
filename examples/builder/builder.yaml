@@ -14,9 +14,17 @@ version: "1.1.0"
 
 args:
   volumeSize:
-    default: "50g"
+    default: "20g"
     pattern: '^[0-9]+(\.[0-9]+)?\s*([kKmMgGtT]i?[bB]?)?$'
     description: Capacity of the /var/lib/docker engine-store volume (build cache)
+  # 115 + 98 + 120 — the ASCII codes of "sbx" — is 333, padded with a
+  # trailing zero to land outside the privileged range. Four or five
+  # digits keeps it there; port@1's own 1..65535 check bounds the top
+  # once the reference expands.
+  buildkitPort:
+    default: "3330"
+    pattern: '^[0-9]{4,5}$'
+    description: In-container TCP port BuildKit listens on for the host's remote driver
 
 # Every need is a typed, versioned capability request the host answers —
 # grants, refuses, or prompts. A host refuses a required type it does not
@@ -41,8 +49,13 @@ capabilities:
   # BuildKit's gRPC API for the host's docker buildx remote driver. The
   # runtime publishes to loopback with an ephemeral host port; read it
   # from `sbx kit builder status` (or the sandbox's published-port list).
+  # A whole-value reference adopts the arg's type, so the numeric spelling
+  # reaches this numeric field.
   - type: com.docker.sandbox/port@1
-    config: {name: buildkit, container: 1234, transport: tcp}
+    config:
+      name: buildkit
+      container: ${{ kit.args.buildkitPort }}
+      transport: tcp
 
   # Kit builds are bursty, but without a stated limit the builder inherits
   # the host defaults (every core, most of the memory) and competes with
@@ -112,12 +125,12 @@ capabilities:
         # and the builder container in /var/lib/docker both survive restarts,
         # so inspect succeeds on later boots and create is skipped.
         #
-        # BuildKit also listens on TCP :1234 (published to the host) so a
-        # host `docker buildx create --driver remote` can attach. The unix
+        # BuildKit also listens on the published TCP port so a host
+        # `docker buildx create --driver remote` can attach. The unix
         # socket stays so in-sandbox buildx keeps working. Changing these
         # flags does not retrofit an already-persisted builder container —
         # `docker buildx rm -f sbx-builder` inside the sandbox (or wipe the
-        # volume) once after upgrading.
+        # volume) once after upgrading, which a changed port also needs.
         #
         # The builder runs through the sandbox's egress proxy end to end: the
         # proxy env rides driver-opts (the kit-registry alias has no DNS
@@ -150,7 +163,7 @@ capabilities:
                 docker buildx create --name sbx-builder \
                   --driver docker-container \
                   --driver-opt network=host \
-                  --buildkitd-flags '--addr tcp://0.0.0.0:1234 --addr unix:///run/buildkit/buildkitd.sock' \
+                  --buildkitd-flags '--addr tcp://0.0.0.0:${{ kit.args.buildkitPort }} --addr unix:///run/buildkit/buildkitd.sock' \
                   ${HTTPS_PROXY:+--driver-opt env.HTTPS_PROXY="$HTTPS_PROXY"} \
                   ${HTTP_PROXY:+--driver-opt env.HTTP_PROXY="$HTTP_PROXY"} \
                   --config /home/agent/.config/buildkit/sbx-builder.toml \
@@ -178,13 +191,14 @@ capabilities:
           `docker buildx build --platform linux/amd64,linux/arm64 .`
         - Export for the host: add `--output type=oci,dest=out.tar`.
         - The engine store under /var/lib/docker persists across restarts and
-          serves as the build cache (default 50g; override with
+          serves as the build cache (default 20g; override with
           `--kit-arg volumeSize=…` at create).
 
         ### Attach from the host
 
-        BuildKit listens on TCP 1234 inside the sandbox; the runtime publishes
-        it to a loopback host port. Read the mapping from
+        BuildKit listens on TCP ${{ kit.args.buildkitPort }} inside the
+        sandbox (`--kit-arg buildkitPort=…` to move it); the runtime
+        publishes it to a loopback host port. Read the mapping from
         `sbx kit builder status`, then:
 
             docker buildx create --name sbx-remote --driver remote \

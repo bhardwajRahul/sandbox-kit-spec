@@ -289,8 +289,10 @@ docker buildx create --name sbx-remote --driver remote \
 docker buildx build --builder sbx-remote . -f claude.yaml --output type=cacheonly
 ```
 
-The engine-store volume defaults to 50 GiB (`--kit-arg volumeSize=…` to
-override). Raising size does not grow an already-formatted volume —
+BuildKit listens on TCP 3330 inside the sandbox and the engine-store
+volume defaults to 20 GiB (`--kit-arg volumeSize=…`);
+`--kit-arg buildkitPort=…` moves the port. Raising size does not grow
+an already-formatted volume —
 recreate the builder sandbox once after changing it. When a Kit is ready
 to share, step 2's `task kit:push` is the whole publishing story.
 
