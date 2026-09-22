@@ -12,10 +12,13 @@ import (
 // the current grammar; one the spec has drifted away from is worse than
 // none.
 //
-// The glob covers examples/ and the root-level kits beside it. A kit that
-// has to live next to the content it ships — skills/ is the one today —
-// sits outside examples/ and would otherwise have no coverage at all, so a
-// grammar change could break a published kit with every test still green.
+// Two globs, because a kit that has to live next to the content it ships
+// sits outside examples/ and would otherwise have no coverage at all — a
+// grammar change could then break a published kit with every test green.
+// skills/ is the only such kit today and is named literally rather than
+// discovered: a wildcard over the repository root would silently stop
+// covering a kit that moved, which is the failure this exists to prevent.
+// Another one means another glob here, deliberately.
 func TestExamplesDecodeAndValidate(t *testing.T) {
 	matches, err := filepath.Glob(filepath.Join("..", "examples", "*", "*.yaml"))
 	require.NoError(t, err)

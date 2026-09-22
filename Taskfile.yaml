@@ -271,6 +271,11 @@ tasks:
     vars:
       KIT_DIR:
         sh: test -d "examples/{{.KIT}}" && echo "examples/{{.KIT}}" || echo "{{.KIT}}"
+    # Task creates `dir:` if it is missing, so without this a mistyped KIT
+    # silently leaves an empty directory at the repo root instead of failing.
+    preconditions:
+      - sh: test -f "{{.ROOT_DIR}}/{{.KIT_DIR}}/{{.KIT}}.yaml" || test -f "{{.ROOT_DIR}}/{{.KIT_DIR}}/{{.KIT}}.dockerfile"
+        msg: "no kit named '{{.KIT}}': expected {{.KIT_DIR}}/{{.KIT}}.yaml or .dockerfile"
     dir: '{{.KIT_DIR}}'
     cmds:
       - |
@@ -320,7 +325,12 @@ tasks:
         tag="{{.TAG}}"
         [ -n "$tag" ] || tag=$(hack/kit-version.sh override "{{.BUILD_ARGS}}")
         [ -n "$tag" ] || tag=$(hack/kit-version.sh current {{.KIT}})
-        sed -i '' '1s|^# syntax=.*|# syntax={{.FRONTEND_IMAGE}}:{{.DEV_TAG}}|' {{.BUILD_DIR}}/"$F"
+        # `-i.bak` then remove it: BSD sed needs an argument for -i and GNU
+        # sed reads a bare '' as the script, then treats the expression as a
+        # filename and fails — which under `set -e` aborts this task on Linux.
+        # A suffix both accept is the portable spelling.
+        sed -i.bak '1s|^# syntax=.*|# syntax={{.FRONTEND_IMAGE}}:{{.DEV_TAG}}|' {{.BUILD_DIR}}/"$F"
+        rm -f {{.BUILD_DIR}}/"$F".bak
         docker buildx build {{.BUILD_DIR}} -f {{.BUILD_DIR}}/"$F" \
           {{.SECRETS}} {{.BUILD_ARGS}} -t {{.KIT}}-kit:"$tag"
       - docker rmi {{.FRONTEND_IMAGE}}:{{.DEV_TAG}} >/dev/null
@@ -346,6 +356,10 @@ tasks:
     preconditions:
       - sh: test -n "{{.REGISTRY}}"
         msg: "REGISTRY is required, e.g. REGISTRY=docker.io/me"
+      # As kit:build: `dir:` is created if absent, so a mistyped KIT would
+      # otherwise leave an empty directory behind rather than fail.
+      - sh: test -f "{{.ROOT_DIR}}/{{.KIT_DIR}}/{{.KIT}}.yaml" || test -f "{{.ROOT_DIR}}/{{.KIT_DIR}}/{{.KIT}}.dockerfile"
+        msg: "no kit named '{{.KIT}}': expected {{.KIT_DIR}}/{{.KIT}}.yaml or .dockerfile"
     vars:
       KIT_DIR:
         sh: test -d "examples/{{.KIT}}" && echo "examples/{{.KIT}}" || echo "{{.KIT}}"

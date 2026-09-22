@@ -189,21 +189,18 @@ matters too: without it a uid that resolves to a name in the build image is
 reported by name, and the foreign uids this catches are exactly the ones that
 do not resolve.
 
-**The awk is doing real work, so do not simplify it.** GNU tar prints owner
-and group joined in field 2 (`0/0`); bsdtar splits them across fields 3 and 4.
-A pipeline written for one prints the other's size and date — on Linux, a bare
-`$3":"$4` reports `0:2026-09-21` for every entry, matches none of the values
-above, and reads as a clean audit while checking nothing. `--numeric-owner`
-matters too: without it a uid that resolves to a name in the build image is
-reported by name, and the foreign uids this catches are exactly the ones that
-do not resolve.
-
 **Compose it for real and run the tool.** The assembler is the only thing that
 performs an actual composition, so it is the check that counts:
 
 ```sh
-sbx run ./<workload> --kit ./<kit> . -- tool --version
+sbx run ./<workload> --kit ./<kit> --detached --name t .
+sbx exec t tool --version
 ```
+
+`sbx exec` is the verb that runs a command. Arguments after `--` on `sbx run`
+are **agent** arguments appended to the agent's start command, so
+`sbx run … -- tool --version` starts the workload's agent with `tool --version`
+tacked on and never executes the overlay's binary at all.
 
 That merges the additive image config — the `ENV` and `PATH` the overlay sets
 on its final stage — and puts the overlay on a base that carries the §12

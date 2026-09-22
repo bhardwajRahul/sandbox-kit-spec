@@ -22,8 +22,13 @@ one place to get them:
 git clone https://github.com/docker/sandbox-kit-spec
 ```
 
-Egress is bounded to that one repository, and to reads of it: nothing else on
-github.com is reachable, and the grant covers fetching rather than pushing.
+**That describes this kit's own grant, not the sandbox you are in.** Allow
+entries union across a composition, exactly as credentials do below, so
+another kit layered in alongside may have opened more of github.com — or all
+of it. Do not refuse a `git push` the user asked for on the strength of this
+paragraph; try it and believe the boundary's answer. What this kit adds by
+itself is reads of that one repository plus the fetch half of git, and its own
+entry permits no push.
 
 **This kit contributes no credential of its own**, so on a bare workload the
 clone is unauthenticated: it works while the repository is public and fails on

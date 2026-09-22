@@ -21,13 +21,22 @@ tool-specific copy of it. Where an agent expects to find skills is a local
 choice, so make the link locally — both paths below are git-ignored:
 
 ```sh
-mkdir -p .cursor && ln -sfn ../skills .cursor/skills     # Cursor
-mkdir -p .claude && ln -sfn ../skills .claude/skills     # Claude Code
+for d in .cursor .claude; do
+  if [ -e "$d/skills" ] && [ ! -L "$d/skills" ]; then
+    echo "$d/skills exists and is not a symlink; move it aside first" >&2
+  else
+    mkdir -p "$d" && ln -sfn ../skills "$d/skills"
+  fi
+done
 ```
 
-`mkdir -p` because both directories are git-ignored and so do not exist in a
-fresh clone, and `-sfn` because a plain `ln -s` into a directory that *does*
-exist creates `.cursor/skills/skills` pointing at itself instead of failing.
+The guard earns its lines. `mkdir -p` is needed because both directories are
+git-ignored and so are absent from a fresh clone. `-sfn` replaces an existing
+*symlink* rather than following it. But neither handles `skills` already being
+a **real directory**: `ln` then treats it as the destination and silently
+creates `.cursor/skills/skills` pointing at its own parent. That is why the
+real-directory case is refused rather than linked — you have skills of your
+own there, and this should not bury them under a loop.
 
 A symlink rather than a copy, so there is only ever one version to keep
 correct. An agent with no skills mechanism at all loses nothing: pass the

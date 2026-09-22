@@ -68,7 +68,8 @@ jobs:
           version: 3.53.1
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       # Covers the spec validators and the schema pins, and decodes and
-      # validates every descriptor under examples/.
+      # validates every descriptor under examples/ plus the root-level
+      # skills/ kit (see spec/examples_test.go).
       - run: task test:unit
 
   conformance:

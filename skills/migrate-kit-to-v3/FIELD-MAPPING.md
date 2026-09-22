@@ -102,8 +102,8 @@ too, so leave them alone rather than hunting for something to rewrite. Shell
 variables (`$VAR`, `${VAR}`) pass through untouched, which is the whole point
 of the `${{` opener — it is not valid shell, so the two vocabularies cannot
 collide. Every `${{ kit.args.x }}` must name a declared arg. The one `${…}`
-form v2 did define is `${WORKDIR}`, handled with the other lifecycle
-substitutions below.
+form v2 did define is `${WORKDIR}`, and v3 has no equivalent substitution —
+see `files[].content` under lifecycle@1 for what replaces it.
 
 **That applies inside comments too.** References are found by scanning the
 descriptor's raw text, so a placeholder written in YAML prose is a real

@@ -30,8 +30,9 @@ Three published tools, nothing repo-local:
   `go install github.com/docker/sandbox-kit-spec/v3/cmd/kit-tck@latest`, or take
   an archive from the
   [releases page](https://github.com/docker/sandbox-kit-spec/releases). (A
-  `go install` build reports its version as `dev`; the release archives carry
-  the real version string.)
+  `go install` of an untagged ref reports `dev`; `@v3.x.y` and the release
+  archives both carry the real version, which `internal/version` reads from
+  the build info.)
 
   **This repository is private, so both routes need access to it.** The public
   module proxy cannot serve it — `proxy.golang.org` answers 404 — so `go
@@ -69,7 +70,7 @@ Track progress with this checklist:
 - [ ] 1. Read the v2 kit end to end, including its README and testdata
 - [ ] 2. Write the v3 descriptor, recipe, and context file
 - [ ] 3. Add the -mixin variant (workload kits only)
-- [ ] 4. Validate the descriptor (fast loop, seconds per run)
+- [ ] 4. Validate the descriptor (fails in seconds on a bad field)
 - [ ] 5. Build the kit
 - [ ] 6. Run it with sbx and exercise the agent
 - [ ] 7. Verify with kit-tck
@@ -140,8 +141,9 @@ A malformed descriptor fails in about a second, naming the offending field and
 its line. Be clear about what `cacheonly` does, though: it suppresses the
 **export**, not the build. Once the descriptor is valid the frontend goes on to
 solve the whole recipe — downloads, installs and all — so this is fail-fast for
-bad input rather than a validation-only step. Iterate here
-until it is clean — this is seconds per run where a full build is minutes.
+bad input rather than a validation-only step. Iterate here until it is
+clean: a malformed descriptor still costs only the second it takes to
+reject, even though a valid one costs the whole recipe.
 
 Pass build-phase args by the **kit's** arg name, not the `buildArg` name the
 recipe sees, and supply anything declared `required` or validation fails:
@@ -318,14 +320,17 @@ cheaper checks above it did not. They are ordered by what they cost.
 4. **Composing the overlay and running the tool** catches the rest, and nothing
    else does. Three mixins shipped dangling symlinks whose build-time `test -x`
    passed because the real tree was still present *in the build stage*: the
-   installer had relocated a launcher but not its payload. Compose it for real
-   — `sbx run ./<workload> --kit ./<kit> . -- tool --version` — since that is
-   what merges the overlay's `ENV` and `PATH` and puts it on a base carrying
-   the platform floor. The `--load` plus throwaway `COPY --from=<overlay> / /`
-   trick is faster and finds the same dangling symlinks, but it transfers
-   files only: the image config is dropped, so a mixin relying on its own
-   `ENV` fails there for a reason the assembler would not produce. Full detail
-   in [Verifying an overlay](../create-kit-v3/RECIPES.md#verifying-an-overlay).
+   installer had relocated a launcher but not its payload. Compose it through
+   the assembler, which is what merges the overlay's `ENV` and `PATH` and puts
+   it on a base carrying the platform floor:
+   `sbx run ./<workload> --kit ./<kit> --detached --name t .`, then
+   `sbx exec t tool --version`. Use `sbx exec` and not `sbx run … -- tool`:
+   arguments after `--` are **agent** arguments and never run the binary. The
+   `--load` plus throwaway `COPY --from=<overlay> / /` trick is faster and
+   finds the same dangling symlinks, but it transfers files only — the image
+   config is dropped, so a mixin relying on its own `ENV` fails there for a
+   reason the assembler would not produce. Full detail in
+   [Verifying an overlay](../create-kit-v3/RECIPES.md#verifying-an-overlay).
 5. **`kit-tck`** judges the published artifact — see step 7.
 
 When you change ownership, re-run step 4, not just step 3. A `chown` that fixes

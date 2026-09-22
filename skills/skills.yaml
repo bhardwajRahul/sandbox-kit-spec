@@ -21,7 +21,11 @@ kind: mixin
 # repository's own documentation, so the kit's version IS the content's
 # version; there is no upstream release line for it to misreport.
 version: "3.0.0"
-provides: ["com.docker.sandbox.skills/kits"]
+# A bare name, which normalizes to `com.docker.kit/kit-skills` (§5.1). Not
+# `com.docker.sandbox.skills/...`: that reads as the runtime-contract
+# namespace capability *types* live in, and kit-vocabulary names are a
+# separate space. This file gets copied, so the wrong shape would spread.
+provides: ["kit-skills"]
 
 capabilities:
   # DELIBERATELY NOT agent-skills@1, which is the trap this kit would fall
@@ -42,11 +46,12 @@ capabilities:
   # told to go read something it cannot reach.
   #
   # Bounded rather than a bare `github.com`, which is what a mixin granting
-  # egress for its READER rather than for its own content has to do. §9.5
-  # unions allow entries per phase, so this kit's grant is added to whatever
-  # it is layered onto: on codex or opencode a bare host would be a no-op,
-  # but on claude or cursor — scoped to their vendor endpoints on purpose —
-  # it would quietly open all of GitHub, and the base ships git to use it.
+  # egress for its READER rather than for its own content has to do. Allow
+  # entries union per phase when kits compose (see network-policy@2.md,
+  # "Composition"), so this kit's grant is added to whatever it is layered
+  # onto: on codex or opencode a bare host would be a no-op, but on claude or
+  # cursor — scoped to their vendor endpoints on purpose — it would quietly
+  # open all of GitHub, and the base ships git to use it.
   # Split by method rather than one GET+POST entry, because smart-HTTP puts
   # read and write behind the same path prefix: a POST to */git-upload-pack
   # is a fetch, a POST to */git-receive-pack is a PUSH. Granting POST across

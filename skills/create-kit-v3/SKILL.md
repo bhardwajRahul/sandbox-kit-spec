@@ -120,7 +120,7 @@ often got wrong:
 | Type | Use it for | Easy to get wrong |
 |---|---|---|
 | `network-policy@1` | egress by host | It is **phase-scoped**: an absent phase grants nothing. Hosts your install hooks reach go in `install`, hosts the running agent (or a startup hook) reaches go in `runtime`, hosts both reach go in both. |
-| `network-policy@2` | egress bounded by HTTP method and path | Same phases, plus entries that grant only matching requests. Pick `@2` when a host should carry one API and not the rest; stay on `@1` when host alone is the grant. **Exclusive with `@1`** — declaring both is an error, and a bounded allow entry must name its hosts literally. `gh` and `hello` use `@2`. |
+| `network-policy@2` | egress bounded by HTTP method and path | Same phases, plus entries that grant only matching requests. Pick `@2` when a host should carry one API and not the rest; stay on `@1` when host alone is the grant. **Exclusive with `@1`** — declaring both is an error, and a bounded allow entry must name its hosts literally. `gh` and `hello` use `@2`. **Verify the bound you rely on**: declare the tightest correct policy, but confirm against your target runtime which parts it enforces before treating one as a security boundary — a refusal is a `403` from the boundary, which an origin can also return, so test a case the origin would allow. |
 | `credential@1` | one service's auth | Entries are **required by default** — add `optional: true` unless the kit genuinely cannot run unauthenticated. Every `inject[].domain` must appear in the same phase's allow list, matched **exactly**: a `*.example.com` wildcard does not satisfy `api.example.com`. |
 | `lifecycle@1` | install/startup hooks, staged files | Hook environments are **deny-by-default**. Declare every variable in `env:`, including ones only a child process reads — `curl`, `pip` and `npm` need `HTTP_PROXY`/`HTTPS_PROXY`, and `docker` needs `DOCKER_HOST`. |
 | `volume@1` | persistent paths | Always set `size`. An unsized kit volume is formatted at 512 MiB, which is a cache or a package store running out of room mid-run rather than anything visible at create. |
@@ -280,8 +280,14 @@ cosign sign --yes <registry>/<kit>@"$digest"
 
 **Sign the digest, never the tag.** `--metadata-file` reports the digest the
 push actually produced; a tag is mutable, so a signature naming one attests to
-whatever it happened to point at. For a multi-platform build that digest is
-the index's, which covers the per-platform manifests beneath it.
+whatever it happened to point at.
+
+For a multi-platform build that digest is the **index's**, and signing it
+signs the index alone — the per-platform manifests beneath it carry no
+signature of their own, so a consumer verifying a platform digest directly
+finds nothing. Add `--recursive` to sign each discrete image as well, or say
+plainly that only the index is signed and expect verification to name the
+index.
 
 In CI, keyless signing avoids managing a key at all: grant the job
 `id-token: write` and cosign takes its identity from the OIDC token. The

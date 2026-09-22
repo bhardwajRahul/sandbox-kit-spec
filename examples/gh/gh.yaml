@@ -17,9 +17,13 @@ capabilities:
     config:
       runtime:
         allow:
-          # Git over HTTPS and release downloads: no method or path
-          # narrows usefully, and git is not HTTP the boundary can read,
-          # so this stays the bare host grant.
+          # Git over HTTPS and release downloads. The boundary *can* read
+          # git-over-HTTPS — it terminates TLS, and a bounded entry for
+          # */git-upload-pack passes a clone while */git-receive-pack comes
+          # back 403 — so the reason this stays a bare host grant is scope,
+          # not inspectability: `gh` reaches release assets and arbitrary
+          # repository paths, and no path set narrows that usefully. A kit
+          # wanting one repository, or reads only, should bound it.
           - github.com
           # gh reaches most of the REST and GraphQL surface, so the bound
           # worth stating here is the verb, not the path.
