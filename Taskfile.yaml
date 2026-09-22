@@ -36,8 +36,12 @@ vars:
     sh: |
       sha=$(git rev-parse HEAD 2>/dev/null) || exit 0
       # A tree with uncommitted edits is not the commit it names, and a
-      # stamp that hides that is worse than no stamp at all.
-      git diff --quiet HEAD 2>/dev/null || sha="$sha-dirty"
+      # stamp that hides that is worse than no stamp at all. Untracked
+      # files count: the build context copies them, so a new .go file
+      # changes the binary while `git diff` still reports HEAD clean.
+      # --porcelain lists them and honours .gitignore, which leaves the
+      # build outputs .dockerignore drops out of the context anyway.
+      [ -z "$(git status --porcelain 2>/dev/null)" ] || sha="$sha-dirty"
       printf '%s' "$sha"
 
   # Flags every published artifact carries. Defined once: platforms,
