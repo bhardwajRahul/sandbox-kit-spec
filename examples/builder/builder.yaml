@@ -4,12 +4,19 @@ displayName: Kit Builder
 description: DHI-based Docker-in-Docker sandbox for building kits — dockerd,
   buildx with a dedicated container-driver builder, and QEMU binfmt
   emulators for multi-arch builds. Every package installed from the DHI
-  deb repository.
+  deb repository. BuildKit listens on TCP so the host can attach via
+  docker buildx --driver remote.
 sourceUrl: https://github.com/docker/sandbox-kit-spec
 
 kind: workload
 provides: ["kit-builder"]
-version: "1.0.0"
+version: "1.1.0"
+
+args:
+  volumeSize:
+    default: "50g"
+    pattern: '^[0-9]+(\.[0-9]+)?\s*([kKmMgGtT]i?[bB]?)?$'
+    description: Capacity of the /var/lib/docker engine-store volume (build cache)
 
 # Every need is a typed, versioned capability request the host answers —
 # grants, refuses, or prompts. A host refuses a required type it does not
@@ -25,9 +32,17 @@ capabilities:
     description: Push built kit images into the runtime's image store
 
   # The engine store doubles as the kit build cache; removing the sandbox
-  # is cache GC.
+  # is cache GC. Sized for multi-arch host-attached builds; override with
+  # --kit-arg volumeSize=100g. Raising size does not grow an already-
+  # formatted volume — recreate (or wipe) once after changing it.
   - type: com.docker.sandbox/volume@1
-    config: {path: /var/lib/docker}
+    config: {path: /var/lib/docker, size: "${{ kit.args.volumeSize }}"}
+
+  # BuildKit's gRPC API for the host's docker buildx remote driver. The
+  # runtime publishes to loopback with an ephemeral host port; read it
+  # from `sbx kit builder status` (or the sandbox's published-port list).
+  - type: com.docker.sandbox/port@1
+    config: {name: buildkit, container: 1234, transport: tcp}
 
   # Kit builds are bursty, but without a stated limit the builder inherits
   # the host defaults (every core, most of the memory) and competes with
@@ -97,6 +112,13 @@ capabilities:
         # and the builder container in /var/lib/docker both survive restarts,
         # so inspect succeeds on later boots and create is skipped.
         #
+        # BuildKit also listens on TCP :1234 (published to the host) so a
+        # host `docker buildx create --driver remote` can attach. The unix
+        # socket stays so in-sandbox buildx keeps working. Changing these
+        # flags does not retrofit an already-persisted builder container —
+        # `docker buildx rm -f sbx-builder` inside the sandbox (or wipe the
+        # volume) once after upgrading.
+        #
         # The builder runs through the sandbox's egress proxy end to end: the
         # proxy env rides driver-opts (the kit-registry alias has no DNS
         # record by design — the proxy resolves it), and the buildkitd
@@ -128,6 +150,7 @@ capabilities:
                 docker buildx create --name sbx-builder \
                   --driver docker-container \
                   --driver-opt network=host \
+                  --buildkitd-flags '--addr tcp://0.0.0.0:1234 --addr unix:///run/buildkit/buildkitd.sock' \
                   ${HTTPS_PROXY:+--driver-opt env.HTTPS_PROXY="$HTTPS_PROXY"} \
                   ${HTTP_PROXY:+--driver-opt env.HTTP_PROXY="$HTTP_PROXY"} \
                   --config /home/agent/.config/buildkit/sbx-builder.toml \
@@ -155,4 +178,19 @@ capabilities:
           `docker buildx build --platform linux/amd64,linux/arm64 .`
         - Export for the host: add `--output type=oci,dest=out.tar`.
         - The engine store under /var/lib/docker persists across restarts and
-          serves as the build cache.
+          serves as the build cache (default 50g; override with
+          `--kit-arg volumeSize=…` at create).
+
+        ### Attach from the host
+
+        BuildKit listens on TCP 1234 inside the sandbox; the runtime publishes
+        it to a loopback host port. Read the mapping from
+        `sbx kit builder status`, then:
+
+            docker buildx create --name sbx-remote --driver remote \
+              tcp://127.0.0.1:<host-port> --use
+            docker buildx build --builder sbx-remote . -f <kit>.yaml
+
+        Re-create the remote builder if the host port changes after a
+        sandbox recreate. Plain TCP BuildKit is a root build API — keep the
+        publish on loopback.

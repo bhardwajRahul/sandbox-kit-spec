@@ -278,8 +278,21 @@ sbx run ./hello --kit ./gh .
 Edit `hello/hello.yaml` (say, add an allow entry) and re-run: only hello
 rebuilds; unchanged Kits reuse the cache. `SBX_KIT_BUILDER=sandbox` moves
 these builds into a dedicated builder sandbox (`sbx kit builder status`
-shows it) instead of the host engine. When a Kit is ready to share, step
-2's `task kit:push` is the whole publishing story.
+shows it) instead of the host engine. That sandbox also publishes BuildKit
+on a loopback host port so the host's own `docker buildx` can attach:
+
+```sh
+# After the builder sandbox is up, read the published buildkit port from
+# `sbx kit builder status`, then:
+docker buildx create --name sbx-remote --driver remote \
+  tcp://127.0.0.1:<host-port> --use
+docker buildx build --builder sbx-remote . -f claude.yaml --output type=cacheonly
+```
+
+The engine-store volume defaults to 50 GiB (`--kit-arg volumeSize=…` to
+override). Raising size does not grow an already-formatted volume —
+recreate the builder sandbox once after changing it. When a Kit is ready
+to share, step 2's `task kit:push` is the whole publishing story.
 
 ## Building a Kit
 
