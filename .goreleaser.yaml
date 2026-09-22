@@ -17,7 +17,10 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w -X main.version={{.Version}}
+      - >-
+        -s -w
+        -X github.com/docker/sandbox-kit-spec/v3/internal/version.Version={{.Version}}
+        -X github.com/docker/sandbox-kit-spec/v3/internal/version.Revision={{.FullCommit}}
 
 archives:
   - formats: [tar.gz]

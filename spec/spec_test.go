@@ -125,6 +125,48 @@ func TestOCIAnnotations(t *testing.T) {
 	require.NotContains(t, disagreeing, OCIAnnotationVersion, "an ambiguous version is worse than none")
 }
 
+// The build stamp is written by one frontend and read by anything that
+// pulls the kit, so the pair has to round-trip, and the encoding has to
+// be the compact JSON the manifest carries.
+func TestBuiltByRoundTrips(t *testing.T) {
+	want := BuiltBy{
+		Name:     "docker/sandbox-kit",
+		Version:  "3.0.0-m.5",
+		Revision: "2f9a1c4e8b7d6a5c4b3e2d1f0a9b8c7d6e5f4a3b",
+	}
+	raw, err := want.Marshal()
+	require.NoError(t, err)
+	require.Equal(t,
+		`{"name":"docker/sandbox-kit","version":"3.0.0-m.5","revision":"2f9a1c4e8b7d6a5c4b3e2d1f0a9b8c7d6e5f4a3b"}`,
+		raw, "compact, and byte-deterministic for a given build")
+
+	got, present, err := ParseBuiltBy(map[string]string{AnnotationBuiltBy: raw})
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Equal(t, want, got)
+}
+
+// A build that recorded no commit omits the key rather than carrying an
+// empty one, so a reader can tell "not recorded" from "recorded as
+// nothing".
+func TestBuiltByOmitsAnAbsentRevision(t *testing.T) {
+	raw, err := BuiltBy{Name: "docker/sandbox-kit", Version: "dev"}.Marshal()
+	require.NoError(t, err)
+	require.Equal(t, `{"name":"docker/sandbox-kit","version":"dev"}`, raw)
+}
+
+// Absence is the ordinary case for a kit published before the annotation
+// existed, and it is not an error; a value that will not decode is.
+func TestParseBuiltBySeparatesAbsenceFromMalformed(t *testing.T) {
+	_, present, err := ParseBuiltBy(map[string]string{})
+	require.NoError(t, err)
+	require.False(t, present)
+
+	_, present, err = ParseBuiltBy(map[string]string{AnnotationBuiltBy: "sandbox-kit 3.0.0"})
+	require.True(t, present, "a value that is there but unreadable is still there")
+	require.Error(t, err)
+}
+
 func TestCapabilityTypes(t *testing.T) {
 	require.Empty(t, CapabilityTypes(nil))
 

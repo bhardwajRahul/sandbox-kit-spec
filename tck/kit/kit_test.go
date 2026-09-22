@@ -148,6 +148,71 @@ func TestSchemaVersionAnnotationMustMatchTheDescriptor(t *testing.T) {
 	require.Equal(t, report.Fail, findings(t, a)["schema-version-annotation"].Severity)
 }
 
+// A kit published before the build stamp existed carries none, and there
+// is nothing wrong with it — the check judges shape when there is shape
+// to judge and is otherwise silent.
+func TestAKitWithoutABuildStampIsStillConforming(t *testing.T) {
+	a := conforming(t)
+	require.NotContains(t, a.annotations, spec.AnnotationBuiltBy)
+
+	require.NotContains(t, findings(t, a), "built-by-annotation")
+}
+
+// No reader can verify which frontend built an image, so the stamp is
+// judged only on being readable: a consumer that cannot decode it learns
+// less than one that found nothing there.
+func TestAnUnreadableBuildStampFails(t *testing.T) {
+	a := conforming(t)
+	a.annotations[spec.AnnotationBuiltBy] = "docker/sandbox-kit 3.0.0"
+
+	got := findings(t, a)
+	require.Equal(t, report.Fail, got["built-by-annotation"].Severity)
+	require.Contains(t, got["built-by-annotation"].Detail, "does not decode")
+}
+
+// An empty field is a stamp that names nothing: a frontend that has no
+// release to report says "dev", which is a claim, where "" is silence
+// wearing the shape of one.
+func TestABuildStampMustNameItsFrontendAndVersion(t *testing.T) {
+	for field, want := range map[string]string{
+		"name":    "names no frontend",
+		"version": "names no version",
+	} {
+		stamp := spec.BuiltBy{Name: "docker/sandbox-kit", Version: "3.0.0"}
+		switch field {
+		case "name":
+			stamp.Name = ""
+		case "version":
+			stamp.Version = ""
+		}
+		raw, err := stamp.Marshal()
+		require.NoError(t, err)
+
+		a := conforming(t)
+		a.annotations[spec.AnnotationBuiltBy] = raw
+
+		got := findings(t, a)
+		require.Equal(t, report.Fail, got["built-by-annotation"].Severity, "for an empty %s", field)
+		require.Contains(t, got["built-by-annotation"].Detail, want)
+	}
+}
+
+// The stamp the frontend actually writes has to pass the suite that runs
+// inside that same frontend, or every build would fail its own self-check.
+func TestAWellFormedBuildStampPasses(t *testing.T) {
+	raw, err := spec.BuiltBy{
+		Name:     "docker/sandbox-kit",
+		Version:  "3.0.0-m.5",
+		Revision: "2f9a1c4e8b7d6a5c4b3e2d1f0a9b8c7d6e5f4a3b",
+	}.Marshal()
+	require.NoError(t, err)
+
+	a := conforming(t)
+	a.annotations[spec.AnnotationBuiltBy] = raw
+
+	require.NotContains(t, findings(t, a), "built-by-annotation")
+}
+
 // The capabilities annotation is an index, never a second source, so it
 // has to agree with the descriptor exactly — including being absent when
 // the kit asks for nothing.

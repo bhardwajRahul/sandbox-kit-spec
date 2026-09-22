@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/docker/sandbox-kit-spec/v3/internal/version"
 	"github.com/docker/sandbox-kit-spec/v3/tck/report"
 	"github.com/docker/sandbox-kit-spec/v3/tck/speclink"
 )
@@ -84,7 +85,9 @@ type presentation struct {
 }
 
 func addReportingFlags(fs *flag.FlagSet) *presentation {
-	p := &presentation{spec: speclink.New(version)}
+	// Tag, not String: the resolver builds a URL from this, and a
+	// revision is not a ref — a link carrying one would 404.
+	p := &presentation{spec: speclink.New(version.Tag())}
 	fs.StringVar(&p.format, "format", "text", "text or json")
 	fs.StringVar(&p.color, "color", "auto", "auto, always, or never")
 	fs.BoolVar(&p.verbose, "verbose", false, "list the checks that passed")
@@ -127,7 +130,7 @@ func (p *presentation) writeText(w io.Writer, o outcome) error {
 	style := ansi(color)
 
 	out := &lines{w: w}
-	out.printf("%s", style(dim, fmt.Sprintf("kit-tck %s · %s · %s", version, o.suite, o.target)))
+	out.printf("%s", style(dim, fmt.Sprintf("kit-tck %s · %s · %s", version.String(), o.suite, o.target)))
 	for _, g := range o.groups {
 		out.printf("")
 		if len(g.platforms) > 0 {
@@ -213,8 +216,12 @@ func (l *lines) printf(format string, args ...any) {
 // finding carrying the statement it judged and where that statement is
 // written, so a pipeline can annotate a diff without parsing prose.
 type jsonRun struct {
-	Tool     string       `json:"tool"`
+	Tool string `json:"tool"`
+	// Version is the release alone and Revision the commit beside it,
+	// kept apart because a pipeline compares one and looks up the other.
+	// Revision is absent where the build recorded none.
 	Version  string       `json:"version"`
+	Revision string       `json:"revision,omitempty"`
 	Suite    string       `json:"suite"`
 	Target   string       `json:"target"`
 	Conforms bool         `json:"conforms"`
@@ -247,7 +254,8 @@ type jsonFinding struct {
 
 func (p *presentation) writeJSON(w io.Writer, o outcome) error {
 	out := jsonRun{
-		Tool: "kit-tck", Version: version, Suite: o.suite, Target: o.target,
+		Tool: "kit-tck", Version: version.Tag(), Revision: version.Rev(),
+		Suite: o.suite, Target: o.target,
 		Conforms: o.conforms(), Results: []jsonResult{},
 	}
 	for _, g := range o.groups {

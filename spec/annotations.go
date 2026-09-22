@@ -1,6 +1,52 @@
 package spec
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
+
+// BuiltBy is the value of AnnotationBuiltBy: which frontend build
+// published a kit. JSON rather than one packed string because the fields
+// are read apart — a version is compared, a revision is looked up — and
+// because an object can gain a field without every reader learning a new
+// way to split one.
+type BuiltBy struct {
+	// Name is the frontend's published image, e.g. docker/sandbox-kit.
+	Name string `json:"name"`
+	// Version is the frontend's release, or "dev" for a build no release
+	// stamped.
+	Version string `json:"version"`
+	// Revision is the full commit the frontend was built from, omitted
+	// when the build recorded none.
+	Revision string `json:"revision,omitempty"`
+}
+
+// Marshal renders the annotation's value: compact JSON, matching the
+// published descriptor's own encoding, and byte-deterministic for a given
+// build — a kit rebuilt by the same frontend from the same descriptor
+// keeps its digest.
+func (b BuiltBy) Marshal() (string, error) {
+	out, err := json.Marshal(b)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// ParseBuiltBy reads the annotation's value. The false report is for an
+// absent annotation, which is the ordinary case for a kit published
+// before the annotation existed, not a malformed one.
+func ParseBuiltBy(annotations map[string]string) (BuiltBy, bool, error) {
+	raw, ok := annotations[AnnotationBuiltBy]
+	if !ok {
+		return BuiltBy{}, false, nil
+	}
+	var b BuiltBy
+	if err := json.Unmarshal([]byte(raw), &b); err != nil {
+		return BuiltBy{}, true, err
+	}
+	return b, true, nil
+}
 
 // Standard OCI image annotation keys the frontend populates from the
 // descriptor, so generic registry tooling displays a kit's metadata
