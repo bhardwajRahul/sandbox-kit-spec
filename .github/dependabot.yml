@@ -11,6 +11,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
 
     # Matches the conventional prefixes the history uses (fix(tck),
     # feat(spec), chore(examples)), so a dependency bump reads like every
@@ -44,6 +46,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: chore(deps)
     # Grouped wholesale rather than by update type. An action's major is
