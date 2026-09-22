@@ -198,8 +198,13 @@ docker run --rm --platform linux/amd64 <base> dpkg-query -W -f='${Version} ${Sta
 docker run --rm --platform linux/arm64 <base> dpkg-query -W -f='${Version} ${Status}\n' <pkg>
 ```
 
-A requirement on a package only one arch publishes refuses to compose on the
-other, which is the same failure as inventing a name.
+A requirement on a package only one arch publishes refuses to compose on
+**every** architecture, not just the one missing it. §9.5 makes the merged
+descriptor identical across all published platforms, so the intersection in
+§9.6 drops a disagreeing package from the single descriptor they share —
+there is no per-platform requires list for it to survive in. The failure is
+therefore the same as inventing a name, rather than a partial-coverage
+problem you can ship around.
 
 ```yaml
 requires: ["claude", "deb/apt", "deb/openssl >= 3.5"]

@@ -74,6 +74,7 @@ Track progress with this checklist:
 - [ ] 5. Build the kit
 - [ ] 6. Run it with sbx and exercise the agent
 - [ ] 7. Verify with kit-tck
+- [ ] 8. Publish, and delete the CI that published the v2 pair
 ```
 
 ### 1. Read the v2 kit first
@@ -313,10 +314,14 @@ cheaper checks above it did not. They are ordered by what they cost.
    six, because collapsing to owners throws the paths away and an overlay with
    `/home` and `/home/agent` **swapped** still reports only those two
    permitted ids. Assert that invariant with the pathnames kept:
-   `… | awk '$1 ~ /^d/ { o = ($2 ~ /\//) ? $2 : $3"/"$4; if ($NF == "home/" || $NF == "home/agent/") print o, $NF }'`,
+   `… | awk '$1 ~ /^d/ { o = ($2 ~ /\//) ? $2 : $3"/"$4; if ($NF == "home/" || $NF == "home/agent/") print o, $NF }' | sort -u`,
    which must print `0/0 home/` and `1000/1000 home/agent/` and nothing else.
-   Both pipelines read GNU tar's joined `0/0` field or bsdtar's split pair,
-   because one written for either silently reports the other's size and date.
+   The `sort -u` matters: the loop reads every blob, so a multi-platform kit
+   whose layers differ reports each directory once per platform, and
+   deduplicating pairs collapses agreement while leaving any disagreement as
+   its own line. Both pipelines read GNU tar's joined `0/0` field or bsdtar's
+   split pair, because one written for either silently reports the other's
+   size and date.
 4. **Composing the overlay and running the tool** catches the rest, and nothing
    else does. Three mixins shipped dangling symlinks whose build-time `test -x`
    passed because the real tree was still present *in the build stage*: the

@@ -165,7 +165,8 @@ So assert the directory invariant separately, keeping the pathnames:
 ```sh
 for b in /tmp/layout/blobs/sha256/*; do tar --numeric-owner -tvf "$b" 2>/dev/null; done \
   | awk '$1 ~ /^d/ { own = ($2 ~ /\//) ? $2 : $3"/"$4
-                     if ($NF == "home/" || $NF == "home/agent/") print own, $NF }'
+                     if ($NF == "home/" || $NF == "home/agent/") print own, $NF }' \
+  | sort -u
 ```
 
 Exactly two lines, and they must read:
@@ -179,6 +180,13 @@ Reversed is the inversion this section exists to catch: `/home` handed to uid
 1000, or `/home/agent` taken from the agent. An overlay shipping neither
 directory prints nothing, which is fine — it is staying out of the home
 entirely.
+
+`sort -u` is what makes "exactly two lines" true. The loop reads every blob in
+the layout, so a multi-platform kit whose per-platform layers differ reports
+each directory once per platform — four lines for two platforms, all correct.
+Deduplicating owner-and-path pairs collapses agreement without hiding
+disagreement: a platform that owns `/home` differently still contributes its
+own distinct line.
 
 **The awk is doing real work, so do not simplify it.** GNU tar prints owner
 and group joined in field 2 (`0/0`); bsdtar splits them across fields 3 and 4.

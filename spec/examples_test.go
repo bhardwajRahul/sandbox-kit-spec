@@ -20,13 +20,20 @@ import (
 // covering a kit that moved, which is the failure this exists to prevent.
 // Another one means another glob here, deliberately.
 func TestExamplesDecodeAndValidate(t *testing.T) {
+	// Each glob is asserted non-empty on its own, before they are joined.
+	// A single check on the combined list would be satisfied by either one,
+	// so a renamed examples/ would leave this green while covering only the
+	// skills kit — the same silent loss of coverage the second glob exists
+	// to prevent.
 	matches, err := filepath.Glob(filepath.Join("..", "examples", "*", "*.yaml"))
 	require.NoError(t, err)
+	require.NotEmpty(t, matches, "the examples/ descriptors must be covered")
+
 	rootKits, err := filepath.Glob(filepath.Join("..", "skills", "*.yaml"))
 	require.NoError(t, err)
 	require.NotEmpty(t, rootKits, "the skills kit descriptor must be covered")
+
 	matches = append(matches, rootKits...)
-	require.NotEmpty(t, matches)
 	for _, path := range matches {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			raw, err := os.ReadFile(path)
