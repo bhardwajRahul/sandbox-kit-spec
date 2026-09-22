@@ -163,7 +163,8 @@ func TestSchemaMatchesSpecConstants(t *testing.T) {
 	// whole/bearing kit-arg ref — matching ValidateRaw's lenient path.
 	skills := loadJSON(t, perTypeSchemaPath(CapabilityAgentSkills))
 	require.ElementsMatch(t, []any{SkillsReadOnly, SkillsReadWrite},
-		at(t, skills, "properties", "mode")["enum"].([]any))
+		literalEnum(t, at(t, skills, "properties", "mode")))
+	assertAcceptsKitArg(t, at(t, skills, "properties", "mode"), "bearing")
 
 	// The canonical-path rule exists twice — as path.Clean in the
 	// validator and as a regex in the published schema — so the schema's
@@ -179,28 +180,35 @@ func TestSchemaMatchesSpecConstants(t *testing.T) {
 
 	credential := loadJSON(t, perTypeSchemaPath(CapabilityCredential))
 	require.Equal(t, handleName.String(), literalPattern(t, at(t, credential, "properties", "service")))
-	assertAcceptsKitArg(t, at(t, credential, "properties", "service"), "whole")
+	assertAcceptsKitArg(t, at(t, credential, "properties", "service"), "bearing")
 	// The schema wraps the validator's env-var pattern in an optional
 	// group: an empty name is the inject-only shape, which the validator
 	// accepts only alongside inject rules (a cross-field rule a regex
 	// cannot carry).
 	require.Equal(t, "^("+strings.Trim(envVarName.String(), "^$")+")?$",
-		at(t, credential, "definitions", "apiKey", "properties", "name")["pattern"])
+		literalPattern(t, at(t, credential, "definitions", "apiKey", "properties", "name")))
+	assertAcceptsKitArg(t, at(t, credential, "definitions", "apiKey", "properties", "name"), "bearing")
+	assertAcceptsKitArg(t, at(t, credential, "definitions", "apiKey", "properties", "proxyManaged"), "whole")
 	// The named-key anyOf branch pins the strict pattern, so name: ""
 	// without inject fails the schema as it fails the validator.
 	namedBranch := at(t, credential, "definitions", "apiKey")["anyOf"].([]any)[0].(map[string]any)
-	require.Equal(t, envVarName.String(), at(t, namedBranch, "properties", "name")["pattern"])
+	require.Equal(t, envVarName.String(), literalPattern(t, at(t, namedBranch, "properties", "name")))
+	assertAcceptsKitArg(t, at(t, namedBranch, "properties", "name"), "bearing")
 	// And the inject-only branch pins name to the empty/omitted form, so
 	// an invalid non-empty name cannot slip through it.
 	injectBranch := at(t, credential, "definitions", "apiKey")["anyOf"].([]any)[1].(map[string]any)
-	require.Equal(t, "^$", at(t, injectBranch, "properties", "name")["pattern"])
+	require.Equal(t, "^$", literalPattern(t, at(t, injectBranch, "properties", "name")))
+	assertAcceptsKitArg(t, at(t, injectBranch, "properties", "name"), "bearing")
 	require.ElementsMatch(t, []any{"install", "runtime"},
-		at(t, credential, "properties", "phase")["enum"].([]any))
+		literalEnum(t, at(t, credential, "properties", "phase")))
+	assertAcceptsKitArg(t, at(t, credential, "properties", "phase"), "bearing")
 	// The credential-file encodings the validator accepts, pinned so the
 	// schema cannot silently admit (or drop) one.
 	credentialFile := at(t, credential, "definitions", "oauth", "properties", "credentialFile")
 	require.ElementsMatch(t, []any{"json", "toml"},
-		at(t, credentialFile, "properties", "format")["enum"].([]any))
+		literalEnum(t, at(t, credentialFile, "properties", "format")))
+	assertAcceptsKitArg(t, at(t, credentialFile, "properties", "format"), "bearing")
+	assertAcceptsKitArg(t, at(t, credential, "definitions", "oauth", "properties", "passthrough"), "whole")
 	// Under format: toml, structure values are constrained to the TOML
 	// value model, which has no null — pinned so the schema keeps
 	// rejecting what the validator rejects.
@@ -212,22 +220,32 @@ func TestSchemaMatchesSpecConstants(t *testing.T) {
 	volume := loadJSON(t, perTypeSchemaPath(CapabilityVolume))
 	require.Equal(t, octalMode.String(), literalPattern(t, at(t, volume, "properties", "mode")))
 	require.Equal(t, sizeBytes.String(), literalPattern(t, at(t, volume, "properties", "size")))
-	assertAcceptsKitArg(t, at(t, volume, "properties", "size"), "whole")
-	assertAcceptsKitArg(t, at(t, volume, "properties", "mode"), "whole")
+	assertAcceptsKitArg(t, at(t, volume, "properties", "size"), "bearing")
+	assertAcceptsKitArg(t, at(t, volume, "properties", "mode"), "bearing")
 	assertAcceptsKitArg(t, at(t, volume, "properties", "path"), "bearing")
+	assertAcceptsKitArg(t, at(t, volume, "properties", "tmpfs"), "whole")
 
 	resources := loadJSON(t, perTypeSchemaPath(CapabilityResources))
 	require.Equal(t, sizeBytes.String(), literalPattern(t, at(t, resources, "properties", "memory")))
-	assertAcceptsKitArg(t, at(t, resources, "properties", "memory"), "whole")
+	assertAcceptsKitArg(t, at(t, resources, "properties", "memory"), "bearing")
 	assertAcceptsKitArg(t, at(t, resources, "properties", "cpu"), "whole")
 
 	port := loadJSON(t, perTypeSchemaPath(CapabilityPort))
 	assertAcceptsKitArg(t, at(t, port, "properties", "container"), "whole")
+	assertAcceptsKitArg(t, at(t, port, "properties", "transport"), "bearing")
 
 	lifecycle := loadJSON(t, perTypeSchemaPath(CapabilityLifecycle))
 	fileMode := at(t, lifecycle, "properties", "files", "items", "properties", "mode")
 	require.Equal(t, octalMode.String(), literalPattern(t, fileMode))
-	assertAcceptsKitArg(t, fileMode, "whole")
+	assertAcceptsKitArg(t, fileMode, "bearing")
+	assertAcceptsKitArg(t, at(t, lifecycle, "properties", "files", "items", "properties", "overwrite"), "whole")
+	assertAcceptsKitArg(t, at(t, lifecycle, "properties", "startup", "items", "properties", "background"), "whole")
+	installEnv := at(t, lifecycle, "properties", "install", "items", "properties", "env", "items")
+	require.Equal(t, envVarName.String(), literalPattern(t, installEnv))
+	assertAcceptsKitArg(t, installEnv, "bearing")
+	startupEnv := at(t, lifecycle, "properties", "startup", "items", "properties", "env", "items")
+	require.Equal(t, envVarName.String(), literalPattern(t, startupEnv))
+	assertAcceptsKitArg(t, startupEnv, "bearing")
 
 	// The shared kit-arg fragment's whole pattern is the same expression
 	// expand.go uses for a whole-value reference.
@@ -244,7 +262,8 @@ func TestSchemaMatchesSpecConstants(t *testing.T) {
 		wantMethods = append(wantMethods, any(m))
 	}
 	methods := at(t, entry, "properties", "methods")
-	require.ElementsMatch(t, wantMethods, methods["items"].(map[string]any)["enum"].([]any))
+	require.ElementsMatch(t, wantMethods, literalEnum(t, methods["items"].(map[string]any)))
+	assertAcceptsKitArg(t, methods["items"].(map[string]any), "bearing")
 	require.Equal(t, []any{any("methods")}, entry["dependencies"].(map[string]any)["paths"].([]any))
 	assertAcceptsKitArg(t, at(t, entry, "properties", "paths", "items"), "bearing")
 
@@ -268,23 +287,41 @@ func TestSchemaMatchesSpecConstants(t *testing.T) {
 	}
 }
 
+// literalOrArgRefBranches returns the two-branch anyOf of a property that
+// accepts either a literal grammar or a ${{ kit.args.* }} reference.
+func literalOrArgRefBranches(t *testing.T, prop map[string]any) []any {
+	t.Helper()
+	anyOf, ok := prop["anyOf"].([]any)
+	require.True(t, ok, "property must use anyOf (literal | kit-arg)")
+	require.Len(t, anyOf, 2, "property must have exactly two anyOf branches")
+	return anyOf
+}
+
 // literalPattern returns the literal-grammar branch of a property that
 // accepts either that grammar or a ${{ kit.args.* }} reference.
 func literalPattern(t *testing.T, prop map[string]any) string {
 	t.Helper()
-	anyOf, ok := prop["anyOf"].([]any)
-	require.True(t, ok && len(anyOf) >= 2, "property must use anyOf (literal | kit-arg)")
+	anyOf := literalOrArgRefBranches(t, prop)
 	pattern, ok := anyOf[0].(map[string]any)["pattern"].(string)
 	require.True(t, ok, "first anyOf branch must be the literal pattern")
 	return pattern
+}
+
+// literalEnum returns the literal enum branch of a property that accepts
+// either that enum or a ${{ kit.args.* }} reference.
+func literalEnum(t *testing.T, prop map[string]any) []any {
+	t.Helper()
+	anyOf := literalOrArgRefBranches(t, prop)
+	enum, ok := anyOf[0].(map[string]any)["enum"].([]any)
+	require.True(t, ok, "first anyOf branch must be the literal enum")
+	return enum
 }
 
 // assertAcceptsKitArg pins the second anyOf branch to the shared
 // whole/bearing kit-arg definition.
 func assertAcceptsKitArg(t *testing.T, prop map[string]any, shape string) {
 	t.Helper()
-	anyOf, ok := prop["anyOf"].([]any)
-	require.True(t, ok && len(anyOf) >= 2, "property must use anyOf (literal | kit-arg)")
+	anyOf := literalOrArgRefBranches(t, prop)
 	ref, ok := anyOf[1].(map[string]any)["$ref"].(string)
 	require.True(t, ok, "second anyOf branch must $ref a kit-arg shape")
 	require.Equal(t, "../../definitions/kit-arg.schema.json#/definitions/"+shape, ref)

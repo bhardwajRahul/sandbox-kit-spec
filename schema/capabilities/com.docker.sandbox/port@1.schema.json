@@ -24,9 +24,16 @@
       ]
     },
     "transport": {
-      "enum": [
-        "tcp",
-        "udp"
+      "anyOf": [
+        {
+          "enum": [
+            "tcp",
+            "udp"
+          ]
+        },
+        {
+          "$ref": "../../definitions/kit-arg.schema.json#/definitions/bearing"
+        }
       ]
     }
   }

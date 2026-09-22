@@ -26,12 +26,19 @@
           "pattern": "^[0-9]+(\\.[0-9]+)?\\s*([kKmMgGtT]i?[bB]?)?$"
         },
         {
-          "$ref": "../../definitions/kit-arg.schema.json#/definitions/whole"
+          "$ref": "../../definitions/kit-arg.schema.json#/definitions/bearing"
         }
       ]
     },
     "tmpfs": {
-      "type": "boolean",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "../../definitions/kit-arg.schema.json#/definitions/whole"
+        }
+      ],
       "description": "A tmpfs mount instead of a block volume."
     },
     "mode": {
@@ -41,7 +48,7 @@
           "pattern": "^[0-7]{3,4}$"
         },
         {
-          "$ref": "../../definitions/kit-arg.schema.json#/definitions/whole"
+          "$ref": "../../definitions/kit-arg.schema.json#/definitions/bearing"
         }
       ]
     }
