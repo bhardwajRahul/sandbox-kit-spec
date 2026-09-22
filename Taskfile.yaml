@@ -15,7 +15,7 @@ vars:
   # once those kits have been pushed to the namespace their `registry`
   # arg names. Build one on its own:
   # `task kit:build KIT=team BUILD_ARGS='--build-arg registry=docker.io/me'`.
-  KITS: hello gh tool shell builder motd wordpress claude claude-mixin claude-acp codex codex-mixin codex-acp cursor cursor-mixin devin devin-mixin docker-agent docker-agent-mixin gemini gemini-mixin opencode opencode-mixin
+  KITS: hello gh tool shell builder motd wordpress claude claude-mixin claude-acp codex codex-mixin codex-acp cursor cursor-mixin devin devin-mixin docker-agent docker-agent-mixin gemini gemini-mixin opencode opencode-mixin skills
   # Empty means "the kit's own version answers": build and push refresh an
   # upstream-tracked descriptor from the vendor's latest release and tag
   # with it, so an image tag can never name a version the kit did not
@@ -268,7 +268,15 @@ tasks:
       .dockerfile otherwise.
     requires:
       vars: [KIT]
-    dir: examples/{{.KIT}}
+    vars:
+      KIT_DIR:
+        sh: test -d "examples/{{.KIT}}" && echo "examples/{{.KIT}}" || echo "{{.KIT}}"
+    # Task creates `dir:` if it is missing, so without this a mistyped KIT
+    # silently leaves an empty directory at the repo root instead of failing.
+    preconditions:
+      - sh: test -f "{{.ROOT_DIR}}/{{.KIT_DIR}}/{{.KIT}}.yaml" || test -f "{{.ROOT_DIR}}/{{.KIT_DIR}}/{{.KIT}}.dockerfile"
+        msg: "no kit named '{{.KIT}}': expected {{.KIT_DIR}}/{{.KIT}}.yaml or .dockerfile"
+    dir: '{{.KIT_DIR}}'
     cmds:
       - |
         set -euo pipefail
@@ -292,6 +300,8 @@ tasks:
     requires:
       vars: [KIT]
     vars:
+      KIT_DIR:
+        sh: test -d "examples/{{.KIT}}" && echo "examples/{{.KIT}}" || echo "{{.KIT}}"
       DEV_TAG:
         sh: date +dev-%s
       BUILD_DIR:
@@ -299,7 +309,11 @@ tasks:
     cmds:
       - defer: rm -rf {{.BUILD_DIR}}
       - docker build -q -t {{.FRONTEND_IMAGE}}:{{.DEV_TAG}} . {{.STAMP_FLAGS}} >/dev/null
-      - cp -r examples/{{.KIT}}/ {{.BUILD_DIR}}/
+      # `src/.` rather than `src/`: BSD cp copies the contents of a
+      # trailing-slash source, GNU cp creates <dest>/<src> instead, and the
+      # build below looks for the descriptor directly under BUILD_DIR. The
+      # `/.` spelling copies contents under both.
+      - cp -r {{.KIT_DIR}}/. {{.BUILD_DIR}}/
       # Only line 1 is rewritten: a comment-descriptor kit's SECOND syntax
       # stanza names the content's frontend and must stay untouched. The
       # version is read, never refreshed: iterating on the frontend should
@@ -311,7 +325,12 @@ tasks:
         tag="{{.TAG}}"
         [ -n "$tag" ] || tag=$(hack/kit-version.sh override "{{.BUILD_ARGS}}")
         [ -n "$tag" ] || tag=$(hack/kit-version.sh current {{.KIT}})
-        sed -i '' '1s|^# syntax=.*|# syntax={{.FRONTEND_IMAGE}}:{{.DEV_TAG}}|' {{.BUILD_DIR}}/"$F"
+        # `-i.bak` then remove it: BSD sed needs an argument for -i and GNU
+        # sed reads a bare '' as the script, then treats the expression as a
+        # filename and fails — which under `set -e` aborts this task on Linux.
+        # A suffix both accept is the portable spelling.
+        sed -i.bak '1s|^# syntax=.*|# syntax={{.FRONTEND_IMAGE}}:{{.DEV_TAG}}|' {{.BUILD_DIR}}/"$F"
+        rm -f {{.BUILD_DIR}}/"$F".bak
         docker buildx build {{.BUILD_DIR}} -f {{.BUILD_DIR}}/"$F" \
           {{.SECRETS}} {{.BUILD_ARGS}} -t {{.KIT}}-kit:"$tag"
       - docker rmi {{.FRONTEND_IMAGE}}:{{.DEV_TAG}} >/dev/null
@@ -337,7 +356,14 @@ tasks:
     preconditions:
       - sh: test -n "{{.REGISTRY}}"
         msg: "REGISTRY is required, e.g. REGISTRY=docker.io/me"
-    dir: examples/{{.KIT}}
+      # As kit:build: `dir:` is created if absent, so a mistyped KIT would
+      # otherwise leave an empty directory behind rather than fail.
+      - sh: test -f "{{.ROOT_DIR}}/{{.KIT_DIR}}/{{.KIT}}.yaml" || test -f "{{.ROOT_DIR}}/{{.KIT_DIR}}/{{.KIT}}.dockerfile"
+        msg: "no kit named '{{.KIT}}': expected {{.KIT_DIR}}/{{.KIT}}.yaml or .dockerfile"
+    vars:
+      KIT_DIR:
+        sh: test -d "examples/{{.KIT}}" && echo "examples/{{.KIT}}" || echo "{{.KIT}}"
+    dir: '{{.KIT_DIR}}'
     cmds:
       - |
         set -euo pipefail

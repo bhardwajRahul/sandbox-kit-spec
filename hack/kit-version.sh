@@ -48,7 +48,17 @@ coupled() {
 	return 1
 }
 
-descriptor() { printf 'examples/%s/%s.yaml\n' "$1" "$1"; }
+# examples/<kit>/<kit>.yaml for the examples, <kit>/<kit>.yaml for a kit that
+# has to live beside the content it ships — the same rule the Taskfile's
+# KIT_DIR follows, so `current` answers for every kit the Taskfile can build
+# rather than reporting "dev" for the ones it cannot find.
+descriptor() {
+	if [ -f "examples/$1/$1.yaml" ]; then
+		printf 'examples/%s/%s.yaml\n' "$1" "$1"
+	else
+		printf '%s/%s.yaml\n' "$1" "$1"
+	fi
+}
 
 # npm answers with one line of JSON; sed keeps the dependency surface at curl.
 npm_latest() {

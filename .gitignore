@@ -4,7 +4,10 @@
 /bin/
 /dist/
 
-# Local editor and agent settings
+# Local editor and agent settings. The skills in skills/ are tool-agnostic, so
+# whatever an agent wants them under is a local choice rather than the
+# repository's — see skills/README.md.
 .vscode/
-.claude/settings.local.json
+.cursor/
+.claude/
 .DS_Store
