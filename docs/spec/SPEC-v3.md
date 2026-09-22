@@ -614,7 +614,7 @@ defeat version-constraint resolution. Kits with no provides publish fine.
 
 ### 9.3 Annotations
 
-The frontend sets three manifest annotations, and promotes all three onto
+The frontend sets four manifest annotations, and promotes all four onto
 the image index whenever the export produces one (multi-platform builds,
 single-platform builds with attestation manifests):
 
@@ -623,6 +623,7 @@ single-platform builds with attestation manifests):
 | `vnd.docker.sandbox.kit.descriptor` | The published descriptor as **compact JSON** — `json.Marshal` of the decoded, expanded document. Authoring is YAML; the published form is a derived artifact, and JSON matches the manifest it rides in and is byte-deterministic. Consumers decode with a YAML parser (YAML accepts JSON), so YAML-valued annotations from Kits published before the switch keep decoding. |
 | `vnd.docker.sandbox.kit.schema-version` | The descriptor's `schemaVersion`, so tooling dispatches on the grammar version without parsing the descriptor. Always equal to the field inside. |
 | `vnd.docker.sandbox.kit.capabilities` | The requested capability types — deduplicated, sorted, comma-joined. An **index, never a second source**: existence checks and policy filters read one small canonical value; the descriptor stays authoritative. Omitted when the Kit requests nothing, so absence means "none requested". Commas cannot appear in a type string, so splitting is unambiguous. |
+| `vnd.docker.sandbox.kit.built-by` | Which frontend build published the Kit, as compact JSON: `{"name":"docker/sandbox-kit","version":"3.0.0","revision":"<commit>"}`. `version` is `dev` for a frontend no release stamped, and `revision` is omitted where the build recorded none. Absent on Kits published before this annotation existed, so readers tolerate it missing. |
 
 The frontend also derives the standard `org.opencontainers.image.*`
 annotations from the descriptor, so registry tooling that knows nothing
@@ -637,6 +638,19 @@ reproducibility, and VCS state is the builder's knowledge (buildx
 provenance already records it), not the descriptor's. These carry the
 descriptor fields' authority — self-asserted display metadata, never
 trust inputs.
+
+`built-by` is the one builder fact the manifest carries, and the line it
+sits on the far side of is worth naming. It records the tool that
+produced the artifact, not the source the artifact was produced from:
+`revision` would name the Kit author's tree, which the frontend cannot
+see and provenance already records, whereas `built-by` names the frontend
+itself, which nothing else in the artifact does. It is deterministic,
+which is what `created` is not — the same frontend and the same
+descriptor give the same bytes, so a Kit keeps its digest across
+rebuilds and only moves when the frontend does. And it is self-asserted
+like every other annotation here: it answers "what claims to have built
+this", never "what is this allowed to do". A consumer deciding whether to
+trust a build reads provenance, which is signed; this value is a label.
 
 Index annotations are an optimization, not the contract: a multi-node
 builder merges per-node results into a fresh index client-side, dissolving

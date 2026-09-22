@@ -43,6 +43,16 @@ const AnnotationSchemaVersion = "vnd.docker.sandbox.kit.schema-version"
 // unambiguous. Absent when the kit requests nothing.
 const AnnotationCapabilities = "vnd.docker.sandbox.kit.capabilities"
 
+// AnnotationBuiltBy names the frontend build that published the kit, as
+// compact JSON decoding into BuiltBy. It is the one builder fact the
+// manifest carries, and it is here because it identifies the tool that
+// produced the artifact rather than the source the artifact was produced
+// from — unlike created or revision, which §9.3 refuses. Absent on kits
+// published before the annotation existed, so readers must tolerate it
+// missing; and self-asserted, like every annotation here, so it answers
+// "what claims to have built this", never "what is this allowed to do".
+const AnnotationBuiltBy = "vnd.docker.sandbox.kit.built-by"
+
 // PortTransport reports the transport a port request names, resolving the
 // default. An omitted transport and an explicit "tcp" are the same request,
 // so everything that identifies a port — the permission surface, the
