@@ -112,6 +112,32 @@ rebuild and promote it whenever the grammar gains something kits may
 use, and never repoint it at a frontend that would reject an older v3
 descriptor.
 
+## Build stamps
+
+Both binaries carry the tag they were built from and the commit beside
+it, in `internal/version`. Neither can read git for itself — GoReleaser
+links `kit-tck` from a tagged checkout, and the frontend is linked inside
+a Docker build whose context excludes `.git` — so the values are handed
+down as linker flags, from `{{.Version}}`/`{{.FullCommit}}` in
+[.goreleaser.yaml](.goreleaser.yaml) and from the `VERSION` / `REVISION`
+build args in [Dockerfile](Dockerfile). A build nobody stamped says
+`dev`, which is what a local `docker build` or `task kit:dev` produces.
+
+The stamp is a reflection of the module tag, not a fourth axis: nothing
+here moves on its own. Where it shows up:
+
+| Surface | Form |
+|---|---|
+| `kit-tck version`, report header, `--format json` | `3.0.0-m.5 (2f9a1c4e)`; the JSON envelope keeps `version` and `revision` apart |
+| Frontend build progress | `[internal] load kit descriptor <file> · sandbox-kit 3.0.0-m.5 (2f9a1c4e)` |
+| Every kit the frontend publishes | the `vnd.docker.sandbox.kit.built-by` annotation ([SPEC-v3 §9.3](docs/spec/SPEC-v3.md#93-annotations)) |
+
+`frontend:push` stamps the same string it tags the image with, so a
+frontend can never report a release it was not published as — the rule
+kit tags already follow. Only `kit-tck` feeds its version to spec links,
+and it passes the tag alone: a revision is not a ref, and a URL built
+from one resolves to nothing.
+
 ## Conformance suites and releases
 
 `task tck:runtime ADAPTER=<path>` judges a runtime through its adapter,

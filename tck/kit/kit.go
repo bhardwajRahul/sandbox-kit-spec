@@ -378,6 +378,32 @@ var checks = []check{
 		},
 	},
 	{
+		name:        "built-by-annotation",
+		requirement: "SPEC-v3 §9.3",
+		run: func(_ context.Context, s *state) []report.Finding {
+			// Shape only, and deliberately: no reader can know which
+			// frontend built an image, so the claim is unverifiable and
+			// the check asks the one thing it can — that a stamp which
+			// is present is one a consumer can read.
+			builtBy, present, err := spec.ParseBuiltBy(s.artifact.Annotations())
+			switch {
+			case !present:
+				// Kits published before the annotation existed carry no
+				// stamp, and nothing about them is wrong for it. There
+				// is nothing to judge, which is not the same as having
+				// judged nothing — so no finding, not a skip.
+				return nil
+			case err != nil:
+				return fail("%s does not decode: %v", spec.AnnotationBuiltBy, err)
+			case builtBy.Name == "":
+				return fail("%s names no frontend", spec.AnnotationBuiltBy)
+			case builtBy.Version == "":
+				return fail("%s names no version; an unreleased build says %q", spec.AnnotationBuiltBy, "dev")
+			}
+			return nil
+		},
+	},
+	{
 		name:        "oci-annotations",
 		requirement: "SPEC-v3 §9.3",
 		run: func(_ context.Context, s *state) []report.Finding {
@@ -872,6 +898,7 @@ var checks = []check{
 				spec.AnnotationDescriptor,
 				spec.AnnotationSchemaVersion,
 				spec.AnnotationCapabilities,
+				spec.AnnotationBuiltBy,
 			} {
 				manifestValue, onManifest := manifestAnn[key]
 				value, onIndex := indexAnn[key]

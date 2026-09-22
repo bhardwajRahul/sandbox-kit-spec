@@ -118,20 +118,27 @@
           "minItems": 1,
           "uniqueItems": true,
           "items": {
-            "enum": [
-              "ANY",
-              "CONNECT",
-              "DELETE",
-              "GET",
-              "HEAD",
-              "OPTIONS",
-              "PATCH",
-              "POST",
-              "PUT",
-              "TRACE"
+            "anyOf": [
+              {
+                "enum": [
+                  "ANY",
+                  "CONNECT",
+                  "DELETE",
+                  "GET",
+                  "HEAD",
+                  "OPTIONS",
+                  "PATCH",
+                  "POST",
+                  "PUT",
+                  "TRACE"
+                ]
+              },
+              {
+                "$ref": "../../definitions/kit-arg.schema.json#/definitions/bearing"
+              }
             ]
           },
-          "description": "Uppercase HTTP method tokens, or the single entry ANY. Stating any of them bounds the entry; omit the field to leave it unbounded.",
+          "description": "Uppercase HTTP method tokens, or the single entry ANY. Stating any of them bounds the entry; omit the field to leave it unbounded. May embed ${{ kit.args.* }}.",
           "anyOf": [
             {
               "items": {
@@ -150,9 +157,16 @@
           "minItems": 1,
           "items": {
             "type": "string",
-            "pattern": "^/"
+            "anyOf": [
+              {
+                "pattern": "^/"
+              },
+              {
+                "$ref": "../../definitions/kit-arg.schema.json#/definitions/bearing"
+              }
+            ]
           },
-          "description": "Globs matched against the request path. Stating one requires stating methods; omitted alongside methods, it means every path."
+          "description": "Globs matched against the request path. Stating one requires stating methods; omitted alongside methods, it means every path. May embed ${{ kit.args.* }}."
         }
       }
     }

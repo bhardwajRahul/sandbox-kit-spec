@@ -29,11 +29,32 @@ vars:
   # hardened build from the DHI catalog).
   SBOM_GENERATOR: dhi.io/scout-sbom-indexer:1
 
+  # The commit a frontend build stamps into its binary, and from there
+  # into every kit that frontend publishes. It travels as a build arg
+  # because the build cannot read it: .dockerignore excludes .git.
+  REVISION:
+    sh: |
+      sha=$(git rev-parse HEAD 2>/dev/null) || exit 0
+      # A tree with uncommitted edits is not the commit it names, and a
+      # stamp that hides that is worse than no stamp at all. Untracked
+      # files count: the build context copies them, so a new .go file
+      # changes the binary while `git diff` still reports HEAD clean.
+      # --porcelain lists them and honours .gitignore, which leaves the
+      # build outputs .dockerignore drops out of the context anyway.
+      [ -z "$(git status --porcelain 2>/dev/null)" ] || sha="$sha-dirty"
+      printf '%s' "$sha"
+
   # Flags every published artifact carries. Defined once: platforms,
   # provenance and the SBOM generator drifting between the frontend and
   # the kits, or between two push targets, is the kind of difference
   # nobody notices until an artifact is missing an attestation.
   PUBLISH_FLAGS: "--sbom=generator={{.SBOM_GENERATOR}} --provenance=true --platform=linux/amd64,linux/arm64"
+
+  # The build stamp every frontend build carries. Defined once for the
+  # same reason as PUBLISH_FLAGS: a build that forgets it produces a
+  # frontend, and kits, that cannot say what made them. The version sits
+  # beside it per target — only a push knows the release it publishes as.
+  STAMP_FLAGS: "--build-arg REVISION={{.REVISION}}"
 
 tasks:
   default:
@@ -153,7 +174,7 @@ tasks:
       or frontend:dev while iterating; to publish, frontend:push, which
       carries the guard a build target must not.
     cmds:
-      - docker buildx b -t {{.FRONTEND_IMAGE}}:{{.FRONTEND_TAG}} . {{.PUBLISH_FLAGS}} --output type=cacheonly
+      - docker buildx b -t {{.FRONTEND_IMAGE}}:{{.FRONTEND_TAG}} . {{.PUBLISH_FLAGS}} {{.STAMP_FLAGS}} --output type=cacheonly
 
   frontend:dev:
     desc: >-
@@ -165,7 +186,9 @@ tasks:
       DEV_TAG:
         sh: date +dev-%s
     cmds:
-      - docker build -t {{.FRONTEND_IMAGE}}:{{.DEV_TAG}} .
+      # No VERSION: a dev tag is a cache-busting device, not a release,
+      # and the revision is what makes the build traceable anyway.
+      - docker build -t {{.FRONTEND_IMAGE}}:{{.DEV_TAG}} . {{.STAMP_FLAGS}}
       - 'echo "frontend built — use in descriptors under test:"'
       - 'echo "  # syntax={{.FRONTEND_IMAGE}}:{{.DEV_TAG}}"'
 
@@ -195,7 +218,11 @@ tasks:
           major=$(printf '%s' "$ver" | cut -d. -f1)
           tags+=(-t "{{.FRONTEND_IMAGE}}:$major")
         fi
-        docker buildx b "${tags[@]}" . {{.PUBLISH_FLAGS}} --push
+        # The tag the image publishes under is the version inside the
+        # binary: one fact, the same rule kit tags follow, so a frontend
+        # can never report a release it was not published as.
+        docker buildx b "${tags[@]}" . {{.PUBLISH_FLAGS}} {{.STAMP_FLAGS}} \
+          --build-arg VERSION="$ver" --push
 
   versions:check:
     desc: >-
@@ -276,7 +303,7 @@ tasks:
         sh: mktemp -d /tmp/sandbox-kit-dev-XXXXXX
     cmds:
       - defer: rm -rf {{.BUILD_DIR}}
-      - docker build -q -t {{.FRONTEND_IMAGE}}:{{.DEV_TAG}} . >/dev/null
+      - docker build -q -t {{.FRONTEND_IMAGE}}:{{.DEV_TAG}} . {{.STAMP_FLAGS}} >/dev/null
       # `src/.` rather than `src/`: BSD cp copies the contents of a
       # trailing-slash source, GNU cp creates <dest>/<src> instead, and the
       # build below looks for the descriptor directly under BUILD_DIR. The

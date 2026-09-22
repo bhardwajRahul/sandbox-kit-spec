@@ -4,12 +4,40 @@ displayName: Kit Builder
 description: DHI-based Docker-in-Docker sandbox for building kits — dockerd,
   buildx with a dedicated container-driver builder, and QEMU binfmt
   emulators for multi-arch builds. Every package installed from the DHI
-  deb repository.
+  deb repository. BuildKit can listen on TCP so the host can attach via
+  docker buildx --driver remote.
 sourceUrl: https://github.com/docker/sandbox-kit-spec
 
 kind: workload
 provides: ["kit-builder"]
-version: "1.0.0"
+version: "1.1.0"
+
+args:
+  volumeSize:
+    default: "20g"
+    pattern: '^[0-9]+(\.[0-9]+)?\s*([kKmMgGtT]i?[bB]?)?$'
+    description: Capacity of the /var/lib/docker engine-store volume (build cache)
+  # BuildKit's TCP listener is off unless asked for. The API behind it
+  # builds as root and takes no credential, so reaching it is reaching
+  # the daemon: port@1 only says the host binding SHOULD be loopback
+  # (see docs/spec/capabilities/com.docker.sandbox/port@1.md), and a
+  # runtime that binds wider would put an unauthenticated build daemon
+  # on the network. mTLS would make the endpoint safe wherever it lands,
+  # but the client material has to reach the host and this kit has no
+  # host-readable path to write it to — so the exposure is opt-in, on a
+  # runtime whose binding the operator knows, instead of on a SHOULD.
+  buildkitExpose:
+    default: "false"
+    enum: ["false", "true"]
+    description: Let BuildKit listen on TCP for the host's remote driver (unauthenticated root build API)
+  # 115 + 98 + 120 — the ASCII codes of "sbx" — is 333, padded with a
+  # trailing zero to land outside the privileged range. Four or five
+  # digits keeps it there; port@1's own 1..65535 check bounds the top
+  # once the reference expands.
+  buildkitPort:
+    default: "3330"
+    pattern: '^[0-9]{4,5}$'
+    description: In-container TCP port BuildKit listens on when buildkitExpose is true
 
 # Every need is a typed, versioned capability request the host answers —
 # grants, refuses, or prompts. A host refuses a required type it does not
@@ -25,9 +53,23 @@ capabilities:
     description: Push built kit images into the runtime's image store
 
   # The engine store doubles as the kit build cache; removing the sandbox
-  # is cache GC.
+  # is cache GC. Sized for multi-arch host-attached builds; override with
+  # --kit-arg volumeSize=100g. Raising size does not grow an already-
+  # formatted volume — recreate (or wipe) once after changing it.
   - type: com.docker.sandbox/volume@1
-    config: {path: /var/lib/docker}
+    config: {path: /var/lib/docker, size: "${{ kit.args.volumeSize }}"}
+
+  # BuildKit's gRPC API for the host's docker buildx remote driver, read
+  # from `sbx kit builder status` (or the sandbox's published-port list).
+  # A whole-value reference adopts the arg's type, so the numeric spelling
+  # reaches this numeric field. The entry is unconditional because a
+  # capability cannot be declared conditionally, so the gate shows the
+  # port either way; nothing listens on it until buildkitExpose is true.
+  - type: com.docker.sandbox/port@1
+    config:
+      name: buildkit
+      container: ${{ kit.args.buildkitPort }}
+      transport: tcp
 
   # Kit builds are bursty, but without a stated limit the builder inherits
   # the host defaults (every core, most of the memory) and competes with
@@ -97,6 +139,15 @@ capabilities:
         # and the builder container in /var/lib/docker both survive restarts,
         # so inspect succeeds on later boots and create is skipped.
         #
+        # With buildkitExpose true, BuildKit also listens on the published
+        # TCP port so a host `docker buildx create --driver remote` can
+        # attach; the unix socket is always there, so in-sandbox buildx
+        # works either way. The listen address is fixed when the builder
+        # container is created, so changing buildkitExpose or buildkitPort
+        # on an existing sandbox needs `docker buildx rm -f sbx-builder`
+        # (or a volume wipe) once — the inspect guard below skips create
+        # for a builder that is already there.
+        #
         # The builder runs through the sandbox's egress proxy end to end: the
         # proxy env rides driver-opts (the kit-registry alias has no DNS
         # record by design — the proxy resolves it), and the buildkitd
@@ -121,6 +172,10 @@ capabilities:
                 [ "$i" -lt 15 ] || break
                 sleep 1
               done
+              addrs='--addr unix:///run/buildkit/buildkitd.sock'
+              if [ '${{ kit.args.buildkitExpose }}' = true ]; then
+                addrs="--addr tcp://0.0.0.0:${{ kit.args.buildkitPort }} $addrs"
+              fi
               if ! docker buildx inspect sbx-builder >/dev/null 2>&1; then
                 mkdir -p /home/agent/.config/buildkit
                 printf '[registry."host.docker.internal:5411"]\n  http = true\n' \
@@ -128,6 +183,7 @@ capabilities:
                 docker buildx create --name sbx-builder \
                   --driver docker-container \
                   --driver-opt network=host \
+                  --buildkitd-flags "$addrs" \
                   ${HTTPS_PROXY:+--driver-opt env.HTTPS_PROXY="$HTTPS_PROXY"} \
                   ${HTTP_PROXY:+--driver-opt env.HTTP_PROXY="$HTTP_PROXY"} \
                   --config /home/agent/.config/buildkit/sbx-builder.toml \
@@ -155,4 +211,21 @@ capabilities:
           `docker buildx build --platform linux/amd64,linux/arm64 .`
         - Export for the host: add `--output type=oci,dest=out.tar`.
         - The engine store under /var/lib/docker persists across restarts and
-          serves as the build cache.
+          serves as the build cache (default 20g; override with
+          `--kit-arg volumeSize=…` at create).
+
+        ### Attach from the host
+
+        Off by default. Create the sandbox with
+        `--kit-arg buildkitExpose=true` and BuildKit also listens on TCP
+        ${{ kit.args.buildkitPort }} (`--kit-arg buildkitPort=…` to move
+        it), which the runtime publishes to a host port. Read the mapping
+        from `sbx kit builder status`, then:
+
+            docker buildx create --name sbx-remote --driver remote \
+              tcp://127.0.0.1:<host-port> --use
+            docker buildx build --builder sbx-remote . -f <kit>.yaml
+
+        Re-create the remote builder if the host port changes after a
+        sandbox recreate. That endpoint is an unauthenticated root build
+        API, so only turn it on where the host binds loopback.

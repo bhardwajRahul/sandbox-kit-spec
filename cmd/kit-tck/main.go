@@ -16,13 +16,11 @@ import (
 	"os"
 	"time"
 
+	"github.com/docker/sandbox-kit-spec/v3/internal/version"
 	"github.com/docker/sandbox-kit-spec/v3/tck/adapter"
 	tckkit "github.com/docker/sandbox-kit-spec/v3/tck/kit"
 	tcksandbox "github.com/docker/sandbox-kit-spec/v3/tck/sandbox"
 )
-
-// Set by GoReleaser via -ldflags "-X main.version=…".
-var version = "dev"
 
 // errNotConformant is the verdict, not an error to report: the run said
 // what was wrong on stdout already, and main only has to fail the exit
@@ -49,7 +47,7 @@ func run(args []string) error {
 	case "runtime":
 		return runRuntime(args[1:])
 	case "version", "-version", "--version":
-		fmt.Println(version)
+		fmt.Println(version.String())
 		return nil
 	case "-h", "--help", "help":
 		usage()
@@ -69,13 +67,13 @@ usage:
   kit-tck kit --layout <dir> <tag> check a kit in an OCI layout directory
   kit-tck runtime --adapter <path> [--fixtures <dir>]
                                     check a runtime through its adapter
-  kit-tck version                  print the build version
+  kit-tck version                  print the build version and revision
 
 reporting:
   --verbose, -v                    list the checks that passed
   --format text|json               json reports every check and its spec link
   --color auto|always|never        auto follows the terminal and NO_COLOR
-`, version)
+`, version.String())
 }
 
 // parse reads a subcommand's flags and returns what was left over.

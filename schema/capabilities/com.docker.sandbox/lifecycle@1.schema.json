@@ -37,7 +37,14 @@
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+              "anyOf": [
+                {
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                {
+                  "$ref": "../../definitions/kit-arg.schema.json#/definitions/bearing"
+                }
+              ]
             },
             "description": "The only environment the hook sees \u2014 deny by default."
           },
@@ -75,13 +82,27 @@
             "type": "string"
           },
           "background": {
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "$ref": "../../definitions/kit-arg.schema.json#/definitions/whole"
+              }
+            ]
           },
           "env": {
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+              "anyOf": [
+                {
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                {
+                  "$ref": "../../definitions/kit-arg.schema.json#/definitions/bearing"
+                }
+              ]
             }
           },
           "description": {
@@ -108,10 +129,24 @@
           },
           "mode": {
             "type": "string",
-            "pattern": "^[0-7]{3,4}$"
+            "anyOf": [
+              {
+                "pattern": "^[0-7]{3,4}$"
+              },
+              {
+                "$ref": "../../definitions/kit-arg.schema.json#/definitions/bearing"
+              }
+            ]
           },
           "overwrite": {
-            "type": "boolean",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "$ref": "../../definitions/kit-arg.schema.json#/definitions/whole"
+              }
+            ],
             "default": true,
             "description": "Set false to skip the write when the file already exists (e.g. on a persistent volume)."
           },

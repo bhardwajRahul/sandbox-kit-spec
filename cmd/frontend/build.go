@@ -17,6 +17,7 @@ import (
 	"github.com/moby/buildkit/solver/pb"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/docker/sandbox-kit-spec/v3/internal/version"
 	"github.com/docker/sandbox-kit-spec/v3/spec"
 )
 
@@ -299,11 +300,25 @@ func Build(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 		return nil, fmt.Errorf("encode published descriptor: %w", err)
 	}
 
+	// The one builder fact the manifest carries: which frontend build
+	// published this kit. An unstamped frontend still answers — "dev" is
+	// a true thing to say about a locally built one — so the annotation
+	// is not conditional on having been released.
+	builtBy, err := spec.BuiltBy{
+		Name:     version.Name,
+		Version:  version.Tag(),
+		Revision: version.Rev(),
+	}.Marshal()
+	if err != nil {
+		return nil, fmt.Errorf("encode build stamp: %w", err)
+	}
+
 	// Assembled once and used twice: the self-check judges the same
 	// annotations the exporter writes, so the two cannot disagree.
 	kitAnnotations := map[string]string{
 		spec.AnnotationDescriptor:    string(publishedJSON),
 		spec.AnnotationSchemaVersion: pd.SchemaVersion,
+		spec.AnnotationBuiltBy:       builtBy,
 	}
 	if capabilityTypes := spec.CapabilityTypes(pd.Capabilities); capabilityTypes != "" {
 		kitAnnotations[spec.AnnotationCapabilities] = capabilityTypes
@@ -524,7 +539,12 @@ func readDescriptorSources(ctx context.Context, c gwclient.Client, filename, com
 		llb.FollowPaths([]string{filename, companion}),
 		llb.SessionID(c.BuildOpts().SessionID),
 		llb.SharedKeyHint(dockerui.DefaultLocalNameDockerfile),
-		llb.WithCustomName("[internal] load kit descriptor "+filename),
+		// The frontend names itself on the one step every kit build
+		// runs, and runs first. A gateway frontend has no other voice in
+		// the progress stream, and "which frontend produced this?" is
+		// the first question a surprising build raises.
+		llb.WithCustomName("[internal] load kit descriptor "+filename+
+			" · sandbox-kit "+version.String()),
 	)
 	def, err := st.Marshal(ctx)
 	if err != nil {
