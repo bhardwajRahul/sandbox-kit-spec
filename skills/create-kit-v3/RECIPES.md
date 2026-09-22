@@ -155,9 +155,39 @@ for b in /tmp/layout/blobs/sha256/*; do tar --numeric-owner -tvf "$b" 2>/dev/nul
   | awk '{print ($2 ~ /\//) ? $2 : $3"/"$4}' | sort | uniq -c | sort -rn
 ```
 
-Every count should be `0/0` or `1000/1000`. Filter `^d.*home` to check the
-directory invariant specifically: `home/` must be `0/0` and `home/agent/`
-`1000/1000`.
+Every count should be `0/0` or `1000/1000`, and that is **all** this tells
+you. It collapses the listing to owners, so it finds a foreign uid and nothing
+else — the two `/home` directories could have their owners **swapped** and
+this still reports only the two permitted ids, looking perfectly clean.
+
+So assert the directory invariant separately, keeping the pathnames:
+
+```sh
+for b in /tmp/layout/blobs/sha256/*; do tar --numeric-owner -tvf "$b" 2>/dev/null; done \
+  | awk '$1 ~ /^d/ { own = ($2 ~ /\//) ? $2 : $3"/"$4
+                     if ($NF == "home/" || $NF == "home/agent/") print own, $NF }'
+```
+
+Exactly two lines, and they must read:
+
+```text
+0/0 home/
+1000/1000 home/agent/
+```
+
+Reversed is the inversion this section exists to catch: `/home` handed to uid
+1000, or `/home/agent` taken from the agent. An overlay shipping neither
+directory prints nothing, which is fine — it is staying out of the home
+entirely.
+
+**The awk is doing real work, so do not simplify it.** GNU tar prints owner
+and group joined in field 2 (`0/0`); bsdtar splits them across fields 3 and 4.
+A pipeline written for one prints the other's size and date — on Linux, a bare
+`$3":"$4` reports `0:2026-09-21` for every entry, matches none of the values
+above, and reads as a clean audit while checking nothing. `--numeric-owner`
+matters too: without it a uid that resolves to a name in the build image is
+reported by name, and the foreign uids this catches are exactly the ones that
+do not resolve.
 
 **The awk is doing real work, so do not simplify it.** GNU tar prints owner
 and group joined in field 2 (`0/0`); bsdtar splits them across fields 3 and 4.

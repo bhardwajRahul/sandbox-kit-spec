@@ -302,15 +302,19 @@ cheaper checks above it did not. They are ordered by what they cost.
    they take seconds and they found a kit whose instructions would silently
    never have reached the agent.
 2. **Building** catches recipes. It does not prove the content works.
-3. **Reading the exported layer** catches ownership. Export with
-   `--output type=oci,dest=<dir>,tar=false` and count owners:
+3. **Reading the exported layer** catches ownership, and it takes **two**
+   passes. Export with `--output type=oci,dest=<dir>,tar=false`, then count
+   owners:
    `for b in <dir>/blobs/sha256/*; do tar --numeric-owner -tvf "$b"; done | awk '{print ($2 ~ /\//) ? $2 : $3"/"$4}' | sort | uniq -c`.
-   The awk reads GNU tar's joined `0/0` field or bsdtar's split pair, because
-   a pipeline written for one silently reports the other's size and date.
-   Everything should be `0/0` or `1000/1000`; `home/` must be `0/0` and
-   `home/agent/` `1000/1000`. This found six overlays that gave `/home` away or
-   took `$HOME` from the agent, and four shipping files owned by package
-   publishers' uids.
+   Every count must be `0/0` or `1000/1000`; that is what found four overlays
+   shipping files owned by package publishers' uids. It cannot find the other
+   six, because collapsing to owners throws the paths away and an overlay with
+   `/home` and `/home/agent` **swapped** still reports only those two
+   permitted ids. Assert that invariant with the pathnames kept:
+   `… | awk '$1 ~ /^d/ { o = ($2 ~ /\//) ? $2 : $3"/"$4; if ($NF == "home/" || $NF == "home/agent/") print o, $NF }'`,
+   which must print `0/0 home/` and `1000/1000 home/agent/` and nothing else.
+   Both pipelines read GNU tar's joined `0/0` field or bsdtar's split pair,
+   because one written for either silently reports the other's size and date.
 4. **Composing the overlay and running the tool** catches the rest, and nothing
    else does. Three mixins shipped dangling symlinks whose build-time `test -x`
    passed because the real tree was still present *in the build stage*: the
