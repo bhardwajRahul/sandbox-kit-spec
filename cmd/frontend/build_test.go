@@ -111,6 +111,15 @@ func TestDockerfileFrontendOptsForwarding(t *testing.T) {
 			want: map[string]string{"filename": "kit.build.dockerfile"},
 		},
 		{
+			name: "dockerfile.v0 control attributes stay out: subrequests and dockerfile-local renames",
+			d:    &spec.Descriptor{},
+			opts: map[string]string{
+				"requestid":     "frontend.outline",
+				"dockerfilekey": "dockerfile2",
+			},
+			want: map[string]string{"filename": "kit.build.dockerfile"},
+		},
+		{
 			name: "kit args cannot smuggle reserved keys back in as buildArg destinations",
 			d: &spec.Descriptor{Args: map[string]spec.Arg{
 				"syntax":  {BuildArg: "BUILDKIT_SYNTAX", Default: &def},

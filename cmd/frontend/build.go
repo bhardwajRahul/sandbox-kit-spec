@@ -14,6 +14,7 @@ import (
 	"github.com/moby/buildkit/frontend/attestations"
 	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	gwpb "github.com/moby/buildkit/frontend/gateway/pb"
 	"github.com/moby/buildkit/solver/pb"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 
@@ -30,6 +31,8 @@ const (
 	keyCmdline          = "cmdline"
 	keySource           = "source"
 	keyFrontendCaps     = "frontend.caps"
+	keyRequestID        = "requestid"
+	keyDockerfileKey    = "dockerfilekey"
 	buildArgPrefix      = "build-arg:"
 	attestPrefix        = "attest:"
 
@@ -660,20 +663,24 @@ func solveDockerfile(ctx context.Context, c gwclient.Client, d *spec.Descriptor,
 	// on; the gateway does not forward the parent's inputs by itself.
 	// The dockerfile input is the one exception: the companion is read
 	// from the dockerfile local, never from the parent's input, which
-	// holds the descriptor.
-	inputs, err := c.Inputs(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for name, st := range inputs {
-		if name == dockerui.DefaultLocalNameDockerfile {
-			continue
-		}
-		def, err := st.Marshal(ctx)
+	// holds the descriptor. Gated on the inputs capability the way
+	// dockerfile.v0's own gateway forwarder is: a bridge without it
+	// errors on the Inputs call itself, even when no inputs exist.
+	if caps := c.BuildOpts().Caps; caps.Supports(gwpb.CapFrontendInputs) == nil {
+		inputs, err := c.Inputs(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("marshal frontend input %s: %w", name, err)
+			return nil, err
 		}
-		req.FrontendInputs[name] = def.ToPB()
+		for name, st := range inputs {
+			if name == dockerui.DefaultLocalNameDockerfile {
+				continue
+			}
+			def, err := st.Marshal(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("marshal frontend input %s: %w", name, err)
+			}
+			req.FrontendInputs[name] = def.ToPB()
+		}
 	}
 	if content.inline {
 		def, err := llb.Scratch().
@@ -762,6 +769,15 @@ func dockerfileFrontendOpts(d *spec.Descriptor, opts map[string]string, companio
 //     whenever cmdline is present, so forwarding it would silently build a
 //     companion that names a foreign frontend (# syntax=...-labs) with the
 //     default frontend instead.
+//   - requestid: a subrequest (buildx --call=outline and friends) makes
+//     dockerfile.v0 return a metadata-only result with no image reference,
+//     which the SingleRef and image-config reads that follow cannot
+//     consume. This frontend does not answer subrequests; the companion
+//     sub-solve is always a real build.
+//   - dockerfilekey: renames the local the recipe is read from and forces
+//     reading from a local at all, which would make dockerfile.v0 ignore
+//     the dockerfile frontend input that inline recipes are synthesized
+//     into.
 func reservedSubSolveOpt(k string) bool {
 	switch {
 	case k == buildArgPrefix+"BUILDKIT_SYNTAX",
@@ -770,6 +786,8 @@ func reservedSubSolveOpt(k string) bool {
 		k == keyCmdline,
 		k == keySource,
 		k == keyFrontendCaps,
+		k == keyRequestID,
+		k == keyDockerfileKey,
 		strings.HasPrefix(k, attestPrefix),
 		strings.HasPrefix(k, buildArgPrefix+"BUILDKIT_ATTEST_"):
 		return true
