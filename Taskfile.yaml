@@ -131,7 +131,7 @@ tasks:
     requires:
       vars: [REF]
     cmds:
-      - go run ./cmd/kit-tck kit {{.REF}}
+      - go run ./cmd/kit-tck validate {{.REF}}
 
   tck:kit:layout:
     desc: >-
@@ -140,7 +140,7 @@ tasks:
     requires:
       vars: [DIR, TAG]
     cmds:
-      - go run ./cmd/kit-tck kit --layout {{.DIR}} {{.TAG}}
+      - go run ./cmd/kit-tck validate --layout {{.DIR}} {{.TAG}}
 
   tck:runtime:
     desc: >-

@@ -427,7 +427,7 @@ published artifact catches what only the exporter and the registry can do
 to it — and judges Kits this frontend did not build.
 
 A registry on loopback is reached over plain HTTP without asking, so a
-throwaway `registry:2` works as a target while iterating; `kit-tck kit
+throwaway `registry:2` works as a target while iterating; `kit-tck validate
 --plain-http <ref>` says so explicitly for a TLS-less registry anywhere
 else. An artifact that never reached a registry is judged in place from
 the `--output type=oci` directory:
@@ -448,8 +448,19 @@ than reads. Color follows the terminal and `NO_COLOR`; `--color` settles
 it either way.
 
 ```sh
-kit-tck kit docker.io/me/sbx-kit-gh:1.0.0 --verbose
-kit-tck kit docker.io/me/sbx-kit-gh:1.0.0 --format json
+kit-tck validate docker.io/me/sbx-kit-gh:1.0.0 --verbose
+kit-tck validate docker.io/me/sbx-kit-gh:1.0.0 --format json
+```
+
+`kit-tck inspect` reads a Kit without judging it: the descriptor from its
+manifest annotation, and the content recipe it staged at
+`/usr/share/sandbox/kit/<stem>/kit.dockerfile` — whichever way that recipe
+was authored. It takes the same `--layout` and `--plain-http` as `validate`.
+
+```sh
+kit-tck inspect docker.io/me/sbx-kit-gh:1.0.0                  # both, as YAML and Dockerfile
+kit-tck inspect docker.io/me/sbx-kit-gh:1.0.0 --dockerfile > gh.dockerfile
+kit-tck inspect docker.io/me/sbx-kit-gh:1.0.0 --format json
 ```
 
 ## Development

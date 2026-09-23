@@ -14,7 +14,7 @@ still responsible only for the second.
 ## 1. Kit conformance
 
 An artifact conforms when it satisfies [§9](SPEC-v3.md#9-publishing) and
-[§10](SPEC-v3.md#10-the-oci-layout). `kit-tck kit <reference>` judges a
+[§10](SPEC-v3.md#10-the-oci-layout). `kit-tck validate <reference>` judges a
 published artifact; the reference implementation's BuildKit frontend runs
 the same checks before it exports, so a Kit built by it cannot be
 published malformed.

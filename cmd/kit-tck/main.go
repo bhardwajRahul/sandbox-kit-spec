@@ -1,6 +1,6 @@
 // kit-tck judges conformance to the kit specification.
 //
-// `kit-tck kit` checks one artifact: that its annotations, layers, staged
+// `kit-tck validate` checks one artifact: that its annotations, layers, staged
 // sources, and image config are what the spec requires. The same checks
 // run inside the BuildKit frontend during a build; running them here is
 // how an artifact built by anything else, or changed by an exporter or a
@@ -42,8 +42,10 @@ func run(args []string) error {
 		return fmt.Errorf("a subcommand is required")
 	}
 	switch args[0] {
-	case "kit":
-		return runKit(args[1:])
+	case "validate":
+		return runValidate(args[1:])
+	case "inspect":
+		return runInspect(args[1:])
 	case "runtime":
 		return runRuntime(args[1:])
 	case "version", "-version", "--version":
@@ -62,16 +64,27 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `kit-tck %s
 
 usage:
-  kit-tck kit <reference>          check a kit in a registry
-  kit-tck kit --plain-http <ref>   ... over HTTP (implied for localhost)
-  kit-tck kit --layout <dir> <tag> check a kit in an OCI layout directory
+  kit-tck validate <reference>     check a kit in a registry
+  kit-tck validate --plain-http <ref>
+                                   ... over HTTP (implied for localhost)
+  kit-tck validate --layout <dir> <tag>
+                                   check a kit in an OCI layout directory
+  kit-tck inspect <reference>      print a kit's descriptor and content recipe
+                                   (--layout and --plain-http as for validate)
+  kit-tck inspect --dockerfile <ref>  ... only the recipe, as staged
+  kit-tck inspect --descriptor <ref>  ... only the descriptor
+  kit-tck inspect --platform <os/arch> <ref>
+                                   ... from one image of a multi-platform kit
+                                   (--descriptor/--dockerfile read the host's
+                                   when the images differ)
   kit-tck runtime --adapter <path> [--fixtures <dir>]
                                     check a runtime through its adapter
   kit-tck version                  print the build version and revision
 
 reporting:
-  --verbose, -v                    list the checks that passed
-  --format text|json               json reports every check and its spec link
+  --verbose, -v                    list the checks that passed (validate, runtime)
+  --format text|json               json reports every check and its spec link,
+                                   or for inspect, the sources as data
   --color auto|always|never        auto follows the terminal and NO_COLOR
 `, version.String())
 }
@@ -79,29 +92,37 @@ reporting:
 // parse reads a subcommand's flags and returns what was left over.
 //
 // The flag package stops at the first argument that is not a flag, which
-// would silently ignore `kit-tck kit <ref> --verbose` — the order most
+// would silently ignore `kit-tck validate <ref> --verbose` — the order most
 // people type. Parsing resumes after each operand instead, so a flag is
 // a flag wherever it appears. The package's own output is discarded: a
 // bad flag should produce one usage block, not two.
 func parse(fs *flag.FlagSet, args []string) (*presentation, []string, error) {
 	p := addReportingFlags(fs)
+	operands, err := parseOperands(fs, args)
+	if err != nil {
+		return nil, nil, err
+	}
+	return p, operands, nil
+}
+
+func parseOperands(fs *flag.FlagSet, args []string) ([]string, error) {
 	fs.SetOutput(io.Discard)
 	var operands []string
 	for {
 		if err := fs.Parse(args); err != nil {
 			usage()
-			return nil, nil, err
+			return nil, err
 		}
 		if fs.NArg() == 0 {
-			return p, operands, nil
+			return operands, nil
 		}
 		operands = append(operands, fs.Arg(0))
 		args = fs.Args()[1:]
 	}
 }
 
-func runKit(args []string) error {
-	fs := flag.NewFlagSet("kit", flag.ContinueOnError)
+func runValidate(args []string) error {
+	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	layout := fs.String("layout", "", "read from an OCI layout directory instead of a registry")
 	plainHTTP := fs.Bool("plain-http", false,
 		"reach the registry over HTTP; implied for a loopback registry, which serves no TLS")
@@ -116,27 +137,14 @@ func runKit(args []string) error {
 	reference := operands[0]
 
 	ctx := context.Background()
-	var artifacts []tckkit.Artifact
-	// What was judged, as the reader would have to type it again: a tag
-	// alone does not say which layout on disk it was read from.
-	target := reference
 	// Every runnable platform: §9 and §10 apply to each manifest, so a
 	// multi-platform artifact conforms only if all of them do.
-	if *layout != "" {
-		target = *layout + " " + reference
-		artifacts, err = tckkit.FromLayoutAll(ctx, *layout, reference)
-	} else {
-		var opts []tckkit.RegistryOption
-		if *plainHTTP {
-			opts = append(opts, tckkit.WithPlainHTTP())
-		}
-		artifacts, err = tckkit.FromRegistryAll(ctx, reference, opts...)
-	}
+	target, artifacts, err := loadArtifacts(ctx, *layout, *plainHTTP, reference)
 	if err != nil {
 		return err
 	}
 
-	judged := outcome{suite: "kit", target: target}
+	judged := outcome{suite: "validate", target: target}
 	for _, artifact := range artifacts {
 		rep, err := tckkit.Run(ctx, artifact)
 		if err != nil {
@@ -145,6 +153,22 @@ func runKit(args []string) error {
 		judged.add(platformOf(artifact), rep)
 	}
 	return presentation.write(os.Stdout, judged)
+}
+
+// loadArtifacts reads every runnable platform of a kit from a layout or a
+// registry, and names the target as the reader would have to type it
+// again: a tag alone does not say which layout on disk it was read from.
+func loadArtifacts(ctx context.Context, layout string, plainHTTP bool, reference string) (string, []tckkit.Artifact, error) {
+	if layout != "" {
+		artifacts, err := tckkit.FromLayoutAll(ctx, layout, reference)
+		return layout + " " + reference, artifacts, err
+	}
+	var opts []tckkit.RegistryOption
+	if plainHTTP {
+		opts = append(opts, tckkit.WithPlainHTTP())
+	}
+	artifacts, err := tckkit.FromRegistryAll(ctx, reference, opts...)
+	return reference, artifacts, err
 }
 
 // runRuntime judges a candidate runtime through the adapter contract in

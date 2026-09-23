@@ -85,13 +85,20 @@ type presentation struct {
 }
 
 func addReportingFlags(fs *flag.FlagSet) *presentation {
+	p := addOutputFlags(fs)
+	fs.BoolVar(&p.verbose, "verbose", false, "list the checks that passed")
+	fs.BoolVar(&p.verbose, "v", false, "list the checks that passed")
+	return p
+}
+
+// addOutputFlags is the part of the presentation every subcommand shares,
+// judging or not.
+func addOutputFlags(fs *flag.FlagSet) *presentation {
 	// Tag, not String: the resolver builds a URL from this, and a
 	// revision is not a ref — a link carrying one would 404.
 	p := &presentation{spec: speclink.New(version.Tag())}
 	fs.StringVar(&p.format, "format", "text", "text or json")
 	fs.StringVar(&p.color, "color", "auto", "auto, always, or never")
-	fs.BoolVar(&p.verbose, "verbose", false, "list the checks that passed")
-	fs.BoolVar(&p.verbose, "v", false, "list the checks that passed")
 	return p
 }
 

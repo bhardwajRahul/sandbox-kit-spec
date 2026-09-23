@@ -237,8 +237,8 @@ changed by an exporter or a registry on its way out gets judged — and how a ki
 this frontend did not build gets judged at all.
 
 ```sh
-kit-tck kit --layout /tmp/<kit>-layout <tag>          # the OCI layout from step 5
-kit-tck kit docker.io/<you>/sbx-kit-<kit>:<tag>       # a published kit
+kit-tck validate --layout /tmp/<kit>-layout <tag>     # the OCI layout from step 5
+kit-tck validate docker.io/<you>/sbx-kit-<kit>:<tag>  # a published kit
 ```
 
 For the layout form, `<tag>` is the tag **alone** as the layout records it
