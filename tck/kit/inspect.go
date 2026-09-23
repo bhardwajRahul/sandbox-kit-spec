@@ -1,9 +1,13 @@
 package kit
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"path"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/docker/sandbox-kit-spec/v3/spec"
 )
@@ -12,7 +16,8 @@ import (
 // published with, and the sources it staged into its own filesystem.
 type Inspection struct {
 	// Descriptor is the published descriptor exactly as the manifest
-	// annotation carries it: compact JSON, and the document of record.
+	// annotation carries it, and the document of record: compact JSON, or
+	// YAML on kits published before the annotation became JSON.
 	Descriptor []byte
 
 	// Stem names the kit's own root under StagedKitRoot, empty when no
@@ -45,20 +50,30 @@ func (i *Inspection) DescriptorPath() string {
 // recipe is looked up under the same staged root the conformance checks
 // pick, so in an artifact carrying several kits' sources it is this kit's
 // recipe and not one it was built from.
+//
+// Nothing is judged, so a descriptor the strict decoder refuses — an
+// unknown field, another schemaVersion — is still shown; it only has to
+// parse as YAML.
 func Inspect(ctx context.Context, a Artifact) (*Inspection, error) {
 	raw := a.Annotations()[spec.AnnotationDescriptor]
 	if raw == "" {
 		return nil, fmt.Errorf("manifest carries no %s annotation: %w", spec.AnnotationDescriptor, ErrNotAKit)
 	}
-	d, err := spec.Decode([]byte(raw))
-	if err != nil {
-		return nil, fmt.Errorf("descriptor annotation does not decode: %w", err)
-	}
 	stems, err := a.StagedStems(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list staged kit roots: %w", err)
 	}
-	in := &Inspection{Descriptor: []byte(raw), Stem: ownStem(ctx, a, d, stems)}
+	var stem string
+	if d, err := spec.Decode([]byte(raw)); err == nil {
+		stem = ownStem(ctx, a, d, stems)
+	} else {
+		var doc any
+		if err := yaml.Unmarshal([]byte(raw), &doc); err != nil {
+			return nil, fmt.Errorf("descriptor annotation does not parse: %w", err)
+		}
+		stem = ownStemAsDocument(ctx, a, doc, stems)
+	}
+	in := &Inspection{Descriptor: []byte(raw), Stem: stem}
 	if in.Stem == "" {
 		return in, nil
 	}
@@ -70,4 +85,31 @@ func Inspect(ctx context.Context, a Artifact) (*Inspection, error) {
 		in.Recipe = recipe
 	}
 	return in, nil
+}
+
+// ownStemAsDocument is ownStem for a descriptor the grammar refuses: the
+// staged root whose kit.yaml is the same document as the annotation,
+// compared as parsed YAML since neither decodes into a Descriptor.
+func ownStemAsDocument(ctx context.Context, a Artifact, doc any, stems []string) string {
+	if len(stems) == 1 {
+		return stems[0]
+	}
+	want, err := json.Marshal(doc)
+	if err != nil {
+		return ""
+	}
+	for _, stem := range stems {
+		raw, ok, err := a.ReadFile(ctx, path.Join(StagedKitRoot, stem, stagedDescriptorName))
+		if err != nil || !ok {
+			continue
+		}
+		var staged any
+		if yaml.Unmarshal(raw, &staged) != nil {
+			continue
+		}
+		if got, err := json.Marshal(staged); err == nil && bytes.Equal(got, want) {
+			return stem
+		}
+	}
+	return ""
 }

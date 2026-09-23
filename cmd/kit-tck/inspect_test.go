@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/containerd/platforms"
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/sandbox-kit-spec/v3/internal/version"
@@ -26,6 +27,45 @@ build: |
 provides:
   - demo@1.0.0
 `, out.String())
+}
+
+// Older kits carry their annotation as YAML; embedded raw it would make
+// the whole document invalid JSON.
+func TestInspectJSONConvertsAYAMLAnnotation(t *testing.T) {
+	o := inspection{target: "docker.io/me/old:1"}
+	o.add("", &tckkit.Inspection{
+		Descriptor: []byte("schemaVersion: \"3\"\nkind: mixin\nprovides:\n  - old@1.0.0\n"),
+		Stem:       "old",
+	})
+
+	var out bytes.Buffer
+	require.NoError(t, writeInspectionJSON(&out, o, halves{descriptor: true, recipe: true}))
+	var got struct {
+		Results []struct {
+			Descriptor map[string]any `json:"descriptor"`
+		} `json:"results"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &got))
+	require.Equal(t, "mixin", got.Results[0].Descriptor["kind"])
+	require.Equal(t, []any{"old@1.0.0"}, got.Results[0].Descriptor["provides"])
+}
+
+func TestPlatformMatchingNormalizesDefaultVariants(t *testing.T) {
+	for _, tc := range []struct {
+		label, want string
+		same        bool
+	}{
+		{"linux/arm64/v8", "linux/arm64", true},
+		{"linux/arm64", "linux/arm64/v8", true},
+		{"linux/amd64/v1", "linux/amd64", true},
+		{"linux/amd64", "linux/amd64", true},
+		{"linux/arm/v7", "linux/arm/v6", false},
+		{"linux/arm64", "linux/amd64", false},
+	} {
+		want, err := platforms.Parse(tc.want)
+		require.NoError(t, err)
+		require.Equal(t, tc.same, samePlatform(tc.label, want), "%s against --platform %s", tc.label, tc.want)
+	}
 }
 
 func demoInspection(recipe string) *tckkit.Inspection {

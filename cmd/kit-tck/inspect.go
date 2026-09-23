@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/containerd/platforms"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"gopkg.in/yaml.v3"
 
 	"github.com/docker/sandbox-kit-spec/v3/internal/version"
@@ -92,15 +94,32 @@ func selectPlatform(artifacts []tckkit.Artifact, want string) ([]tckkit.Artifact
 	if want == "" {
 		return artifacts, nil
 	}
+	wanted, err := platforms.Parse(want)
+	if err != nil {
+		return nil, fmt.Errorf("--platform %q: %w", want, err)
+	}
 	var have []string
 	for _, a := range artifacts {
 		p := platformOf(a)
-		if p == want {
+		if samePlatform(p, wanted) {
 			return []tckkit.Artifact{a}, nil
 		}
 		have = append(have, p)
 	}
 	return nil, fmt.Errorf("no %s image; the kit carries %s", want, strings.Join(have, ", "))
+}
+
+// samePlatform compares an image's platform label with a requested one the
+// way the resolver compares platforms: normalized, so linux/arm64 answers
+// for the linux/arm64/v8 an index commonly writes and amd64 for amd64/v1,
+// while arm/v7 still does not answer for arm/v6.
+func samePlatform(label string, want ocispec.Platform) bool {
+	have, err := platforms.Parse(label)
+	if err != nil {
+		return false
+	}
+	have, want = platforms.Normalize(have), platforms.Normalize(want)
+	return have.OS == want.OS && have.Architecture == want.Architecture && have.Variant == want.Variant
 }
 
 // inspection is one run's result, grouped the way a validate run's reports
@@ -124,11 +143,11 @@ func (o *inspection) add(platform string, in *tckkit.Inspection) {
 			return
 		}
 	}
-	var platforms []string
+	var labels []string
 	if platform != "" {
-		platforms = []string{platform}
+		labels = []string{platform}
 	}
-	o.groups = append(o.groups, inspectedGroup{platforms: platforms, kit: in})
+	o.groups = append(o.groups, inspectedGroup{platforms: labels, kit: in})
 }
 
 // single is the one reading raw output can print. Images that disagree —
@@ -139,17 +158,17 @@ func (o inspection) single(host string) (*tckkit.Inspection, error) {
 	if len(o.groups) == 1 {
 		return o.groups[0].kit, nil
 	}
-	var platforms []string
+	var labels []string
 	for _, g := range o.groups {
 		for _, p := range g.platforms {
 			if sameOSArch(p, host) {
 				return g.kit, nil
 			}
 		}
-		platforms = append(platforms, g.platforms...)
+		labels = append(labels, g.platforms...)
 	}
 	return nil, fmt.Errorf("the images of %s carry different kit sources and none is %s; pick one with --platform (%s)",
-		o.target, host, strings.Join(platforms, ", "))
+		o.target, host, strings.Join(labels, ", "))
 }
 
 // hostPlatform is the image a container here would run. Kits are Linux
@@ -262,8 +281,12 @@ func writeInspectionJSON(w io.Writer, o inspection, show halves) error {
 		in := g.kit
 		result := jsonInspectionResult{Platforms: g.platforms}
 		if show.descriptor {
+			descriptor, err := descriptorJSON(in.Descriptor)
+			if err != nil {
+				return err
+			}
 			result.DescriptorPath = in.DescriptorPath()
-			result.Descriptor = json.RawMessage(in.Descriptor)
+			result.Descriptor = descriptor
 		}
 		if show.recipe {
 			result.Dockerfile = json.RawMessage("null")
@@ -281,6 +304,24 @@ func writeInspectionJSON(w io.Writer, o inspection, show halves) error {
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(out)
+}
+
+// descriptorJSON is the annotation as JSON. A JSON annotation passes
+// through untouched, keeping its published key order; an older kit's YAML
+// annotation is converted, since embedding it raw would not be JSON.
+func descriptorJSON(annotation []byte) (json.RawMessage, error) {
+	if json.Valid(annotation) {
+		return json.RawMessage(annotation), nil
+	}
+	var doc any
+	if err := yaml.Unmarshal(annotation, &doc); err != nil {
+		return nil, fmt.Errorf("descriptor annotation does not parse: %w", err)
+	}
+	converted, err := json.Marshal(doc)
+	if err != nil {
+		return nil, fmt.Errorf("descriptor annotation has no JSON form: %w", err)
+	}
+	return converted, nil
 }
 
 // writeDescriptorYAML renders the annotation's JSON as block YAML. It goes
