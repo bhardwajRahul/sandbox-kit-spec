@@ -15,6 +15,7 @@ import (
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	"github.com/moby/buildkit/frontend/dockerfile/instructions"
 	"github.com/moby/buildkit/frontend/dockerfile/parser"
+	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 
@@ -117,6 +118,39 @@ func lowerFor(ctx context.Context, c gwclient.Client, d *spec.Descriptor, opts m
 		return st, lower.Config, err
 	}
 
+	p := platformOrDefault(plat)
+
+	// A named context shadows an external base for dockerfile.v0
+	// (--build-context deps=local:...), so the upper side may never have
+	// pulled final.base at all. The lower side goes through the same
+	// lookup, or the delta would be computed against the wrong
+	// filesystem. The name "context" is excluded exactly as dockerfile.v0
+	// excludes it: it names the main context, never a base.
+	if !strings.EqualFold(final.base, "context") {
+		bc, err := dockerui.NewClient(c)
+		if err != nil {
+			return llb.State{}, ocispecs.ImageConfig{}, err
+		}
+		nc, err := bc.NamedContext(final.base, dockerui.ContextOpt{
+			Platform:    &p,
+			ResolveMode: opts[keyImageResolveMode],
+		})
+		if err != nil {
+			return llb.State{}, ocispecs.ImageConfig{}, fmt.Errorf("overlay base %q: %w", final.base, err)
+		}
+		if nc != nil {
+			st, img, err := nc.Load(ctx)
+			if err != nil {
+				return llb.State{}, ocispecs.ImageConfig{}, fmt.Errorf("load overlay base %s from its named context: %w", final.base, err)
+			}
+			var lower ocispecs.ImageConfig
+			if img != nil {
+				lower = img.Config.ImageConfig
+			}
+			return *st, lower, nil
+		}
+	}
+
 	// External base: pin the digest so the lower side is exactly what
 	// dockerfile.v0 pulled for the upper side, not whatever the tag points
 	// at by the time this second resolve happens.
@@ -125,8 +159,6 @@ func lowerFor(ctx context.Context, c gwclient.Client, d *spec.Descriptor, opts m
 		return llb.State{}, ocispecs.ImageConfig{}, fmt.Errorf("overlay base %q: %w", final.base, err)
 	}
 	baseRef := reference.TagNameOnly(named).String()
-
-	p := platformOrDefault(plat)
 	pinned, dgst, configRaw, err := c.ResolveImageConfig(ctx, baseRef, sourceresolver.Opt{
 		ImageOpt: &sourceresolver.ResolveImageOpt{
 			Platform: &p,

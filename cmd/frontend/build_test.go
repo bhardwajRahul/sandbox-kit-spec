@@ -12,10 +12,10 @@ import (
 // dockerfileFrontendOpts forwarded only target/label/build-arg options, so
 // --no-cache, --pull, cache imports, network mode, and named contexts were
 // silently dropped on the way into the companion's dockerfile.v0 sub-solve.
-// The forwarding is a denylist now: everything passes except the keys this
-// frontend owns (filename, platform), the dispatch escape hatch
-// (BUILDKIT_SYNTAX), and the keys that would shape the sub-result as
-// multi-ref, which SingleRef refuses (multi-platform, attestations).
+// The forwarding is a denylist now: everything passes except filename and
+// platform, which this frontend sets itself, and the keys screened by
+// reservedSubSolveOpt — that function's doc comment is the authoritative
+// list and the reasons; the cases here exercise each screened category.
 func TestDockerfileFrontendOptsForwarding(t *testing.T) {
 	amd64 := ocispecs.Platform{OS: "linux", Architecture: "amd64"}
 	def := "def"
