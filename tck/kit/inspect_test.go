@@ -2,6 +2,7 @@ package kit
 
 import (
 	"context"
+	"errors"
 	"path"
 	"testing"
 
@@ -76,6 +77,30 @@ func TestInspectOfAnUnparseableDescriptorFails(t *testing.T) {
 
 	_, err := Inspect(context.Background(), a)
 	require.ErrorContains(t, err, "does not parse")
+}
+
+// The descriptor alone comes from the manifest, so it must not reach for
+// the filesystem the layers would have to be fetched for.
+func TestInspectDescriptorReadsNoLayer(t *testing.T) {
+	a := conforming(t)
+
+	in, err := InspectDescriptor(noLayers{a})
+	require.NoError(t, err)
+	require.Equal(t, a.annotations[spec.AnnotationDescriptor], string(in.Descriptor))
+	require.Empty(t, in.Stem)
+	require.Nil(t, in.Recipe)
+}
+
+// noLayers is an artifact whose filesystem cannot be reached, as if every
+// layer fetch failed.
+type noLayers struct{ *fake }
+
+var errLayerRead = errors.New("layer read")
+
+func (noLayers) StagedStems(context.Context) ([]string, error) { return nil, errLayerRead }
+
+func (noLayers) ReadFile(context.Context, string) ([]byte, bool, error) {
+	return nil, false, errLayerRead
 }
 
 func TestInspectOfSomethingThatIsNotAKitFails(t *testing.T) {

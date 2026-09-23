@@ -55,25 +55,19 @@ func (i *Inspection) DescriptorPath() string {
 // unknown field, another schemaVersion — is still shown; it only has to
 // parse as YAML.
 func Inspect(ctx context.Context, a Artifact) (*Inspection, error) {
-	raw := a.Annotations()[spec.AnnotationDescriptor]
-	if raw == "" {
-		return nil, fmt.Errorf("manifest carries no %s annotation: %w", spec.AnnotationDescriptor, ErrNotAKit)
+	in, doc, err := inspectDescriptor(a)
+	if err != nil {
+		return nil, err
 	}
 	stems, err := a.StagedStems(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list staged kit roots: %w", err)
 	}
-	var stem string
-	if d, err := spec.Decode([]byte(raw)); err == nil {
-		stem = ownStem(ctx, a, d, stems)
+	if d, err := spec.Decode(in.Descriptor); err == nil {
+		in.Stem = ownStem(ctx, a, d, stems)
 	} else {
-		var doc any
-		if err := yaml.Unmarshal([]byte(raw), &doc); err != nil {
-			return nil, fmt.Errorf("descriptor annotation does not parse: %w", err)
-		}
-		stem = ownStemAsDocument(ctx, a, doc, stems)
+		in.Stem = ownStemAsDocument(ctx, a, doc, stems)
 	}
-	in := &Inspection{Descriptor: []byte(raw), Stem: stem}
 	if in.Stem == "" {
 		return in, nil
 	}
@@ -85,6 +79,26 @@ func Inspect(ctx context.Context, a Artifact) (*Inspection, error) {
 		in.Recipe = recipe
 	}
 	return in, nil
+}
+
+// InspectDescriptor reads only the descriptor, from the manifest
+// annotation. It touches no layer, so it costs no more than the manifest
+// fetch; the Inspection it returns has no Stem and no Recipe.
+func InspectDescriptor(a Artifact) (*Inspection, error) {
+	in, _, err := inspectDescriptor(a)
+	return in, err
+}
+
+func inspectDescriptor(a Artifact) (*Inspection, any, error) {
+	raw := a.Annotations()[spec.AnnotationDescriptor]
+	if raw == "" {
+		return nil, nil, fmt.Errorf("manifest carries no %s annotation: %w", spec.AnnotationDescriptor, ErrNotAKit)
+	}
+	var doc any
+	if err := yaml.Unmarshal([]byte(raw), &doc); err != nil {
+		return nil, nil, fmt.Errorf("descriptor annotation does not parse: %w", err)
+	}
+	return &Inspection{Descriptor: []byte(raw)}, doc, nil
 }
 
 // ownStemAsDocument is ownStem for a descriptor the grammar refuses: the

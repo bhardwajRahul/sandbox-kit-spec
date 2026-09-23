@@ -55,8 +55,14 @@ func runInspect(args []string) error {
 		return err
 	}
 	inspected := inspection{target: target}
+	// The descriptor is in the manifest annotation, so asking for it alone
+	// fetches no layer; the staged sources are what cost the download.
+	read := func(a tckkit.Artifact) (*tckkit.Inspection, error) { return tckkit.Inspect(ctx, a) }
+	if *onlyDescriptor {
+		read = func(a tckkit.Artifact) (*tckkit.Inspection, error) { return tckkit.InspectDescriptor(a) }
+	}
 	for _, artifact := range artifacts {
-		in, err := tckkit.Inspect(ctx, artifact)
+		in, err := read(artifact)
 		if err != nil {
 			return err
 		}
