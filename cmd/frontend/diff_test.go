@@ -213,6 +213,57 @@ RUN true
 		require.NoError(t, err)
 		require.Equal(t, "busybox:1.37", got.base)
 	})
+
+	multiStage := []byte(`
+FROM debian:13 AS Build
+RUN make
+FROM alpine:3.21 AS runtime
+COPY --from=build /out /usr/local/bin
+`)
+
+	t.Run("a forwarded --target selects the analyzed stage, case-insensitively", func(t *testing.T) {
+		got, err := finalStage(multiStage, map[string]string{"target": "BUILD"}, target, build)
+		require.NoError(t, err)
+		// instructions.Parse lowercases stage names, so the alias is
+		// already in the form the named-context lookup expects.
+		require.Equal(t, stageBase{base: "debian:13", alias: "build"}, got)
+	})
+
+	t.Run("without a target the last stage is analyzed", func(t *testing.T) {
+		got, err := finalStage(multiStage, nil, target, build)
+		require.NoError(t, err)
+		require.Equal(t, stageBase{base: "alpine:3.21", alias: "runtime"}, got)
+	})
+
+	t.Run("an unknown target is an error", func(t *testing.T) {
+		_, err := finalStage(multiStage, map[string]string{"target": "missing"}, target, build)
+		require.ErrorContains(t, err, `target stage "missing" could not be found`)
+	})
+
+	t.Run("a targeted first stage cannot resolve its base as a later stage", func(t *testing.T) {
+		got, err := finalStage([]byte(`
+FROM build AS setup
+RUN true
+FROM debian:13 AS build
+RUN make
+`), map[string]string{"target": "setup"}, target, build)
+		require.NoError(t, err)
+		require.False(t, got.isStage, "only stages defined before the analyzed one are FROM-able")
+		require.Equal(t, "build", got.base)
+	})
+
+	t.Run("TARGETSTAGE expands to the requested target, default otherwise", func(t *testing.T) {
+		got, err := finalStage([]byte("FROM ghcr.io/org/tool:$TARGETSTAGE\n"), map[string]string{"target": ""}, target, build)
+		require.NoError(t, err)
+		require.Equal(t, "ghcr.io/org/tool:default", got.base)
+	})
+
+	t.Run("a caller build-arg overrides an automatic platform arg", func(t *testing.T) {
+		got, err := finalStage([]byte("FROM ghcr.io/org/tool:latest-$TARGETARCH\nRUN true\n"),
+			map[string]string{"build-arg:TARGETARCH": "custom"}, target, build)
+		require.NoError(t, err)
+		require.Equal(t, "ghcr.io/org/tool:latest-custom", got.base)
+	})
 }
 
 // dockerfile.v0's implicit target platform is the worker's platform, not

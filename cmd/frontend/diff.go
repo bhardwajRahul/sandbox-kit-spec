@@ -218,8 +218,9 @@ func builtinPlatformArgs(target, build ocispecs.Platform) map[string]string {
 	}
 }
 
-// finalStage parses the companion and identifies what its final stage
-// builds FROM, with ARG references in the FROM line expanded exactly the
+// finalStage parses the companion and identifies what the stage the upper
+// solve builds — the forwarded target when the caller named one, the last
+// stage otherwise — builds FROM, with ARG references in the FROM line expanded exactly the
 // way dockerfile.v0 expands them (buildMetaArgs): builtin platform args
 // first, then each meta-ARG in order — a frontend build-arg override taken
 // verbatim, a default shell-expanded against the args accumulated so far,
@@ -241,7 +242,20 @@ func finalStage(companionBytes []byte, frontendOpts map[string]string, target, b
 
 	shlex := shell.NewLex(ast.EscapeToken)
 	env := &llb.EnvList{}
-	for k, v := range builtinPlatformArgs(target, build) {
+	builtins := builtinPlatformArgs(target, build)
+	// dockerfile.v0's defaultArgs also predeclares TARGETSTAGE — the
+	// requested target's name, "default" when none — and lets caller
+	// build-args override every automatic value, so --build-arg
+	// TARGETARCH=custom shapes FROM expansion on both sides identically.
+	if t := frontendOpts[keyTarget]; t != "" {
+		builtins["TARGETSTAGE"] = t
+	} else {
+		builtins["TARGETSTAGE"] = "default"
+	}
+	for k, v := range builtins {
+		if ov, ok := frontendOpts[buildArgPrefix+k]; ok {
+			v = ov
+		}
 		env = env.AddOrReplace(k, v)
 	}
 	for _, ma := range metaArgs {
@@ -260,7 +274,24 @@ func finalStage(companionBytes []byte, frontendOpts map[string]string, target, b
 		}
 	}
 
-	last := stages[len(stages)-1]
+	// The stage under analysis is the one the upper solve builds: the
+	// caller's target when one was forwarded — matched case-insensitively,
+	// exactly as dockerfile.v0 matches it — and the last stage otherwise.
+	lastIdx := len(stages) - 1
+	if t := frontendOpts[keyTarget]; t != "" {
+		found := false
+		for i, s := range stages {
+			if strings.EqualFold(s.Name, t) {
+				lastIdx = i
+				found = true
+				break
+			}
+		}
+		if !found {
+			return stageBase{}, fmt.Errorf("target stage %q could not be found", t)
+		}
+	}
+	last := stages[lastIdx]
 	base, _, err := shlex.ProcessWord(last.BaseName, env)
 	if err != nil {
 		return stageBase{}, fmt.Errorf("expand final stage FROM %q: %w", last.BaseName, err)
@@ -286,7 +317,7 @@ func finalStage(companionBytes []byte, frontendOpts map[string]string, target, b
 		explicit = &pp
 	}
 
-	for _, s := range stages[:len(stages)-1] {
+	for _, s := range stages[:lastIdx] {
 		if s.Name != "" && strings.EqualFold(s.Name, base) {
 			return stageBase{base: s.Name, isStage: true, alias: last.Name, platform: explicit}, nil
 		}
