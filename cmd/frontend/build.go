@@ -700,27 +700,11 @@ func dockerfileFrontendOpts(d *spec.Descriptor, opts map[string]string, companio
 	fo := map[string]string{}
 	for k, v := range opts {
 		switch {
-		case k == buildArgPrefix+"BUILDKIT_SYNTAX":
-			// Never forwarded: this is how THIS frontend was dispatched
-			// when the descriptor's own syntax line cannot resolve (an
-			// unpublished frontend served through the kit registry).
-			// dockerfile.v0 honors it like a syntax line, so forwarding
-			// it would re-dispatch the companion back into this frontend
-			// as a descriptor — recursion the syntax-line self-reference
-			// guard cannot see.
+		case reservedSubSolveOpt(k):
 		case k == keyFilename, k == keyPlatform:
 			// This frontend names the companion as the file and solves
 			// one platform at a time; both are set below, never inherited
 			// from the descriptor build's own values.
-		case k == keyMultiPlatform, k == buildArgPrefix+"BUILDKIT_MULTI_PLATFORM":
-			// The sub-solve is always single-platform — this frontend
-			// assembles the index itself — and a multi-platform result
-			// cannot be read back through SingleRef.
-		case strings.HasPrefix(k, attestPrefix), strings.HasPrefix(k, buildArgPrefix+"BUILDKIT_ATTEST_"):
-			// Attestations attach to the final exported result; the
-			// controller produces them at the top level from this
-			// frontend's output. Forwarded into the sub-solve they would
-			// shape its result as multi-ref, which SingleRef refuses.
 		default:
 			fo[k] = v
 		}
@@ -734,13 +718,51 @@ func dockerfileFrontendOpts(d *spec.Descriptor, opts map[string]string, companio
 		if decl.BuildArg == "" {
 			continue
 		}
+		dst := buildArgPrefix + decl.BuildArg
+		// The mapping runs after the reserved-key screen, so a descriptor
+		// declaring buildArg: BUILDKIT_SYNTAX (or the multi-platform or
+		// attestation names) would reinsert exactly what the screen
+		// removed; the destination gets the same check the caller's own
+		// options got.
+		if reservedSubSolveOpt(dst) {
+			continue
+		}
 		if v, ok := opts[buildArgPrefix+name]; ok {
-			fo[buildArgPrefix+decl.BuildArg] = v
+			fo[dst] = v
 		} else if decl.Default != nil {
-			fo[buildArgPrefix+decl.BuildArg] = *decl.Default
+			fo[dst] = *decl.Default
 		}
 	}
 	return fo
+}
+
+// reservedSubSolveOpt reports the option keys never handed to the
+// dockerfile.v0 sub-solve, whether they arrive as caller options or as a
+// descriptor arg's declared buildArg destination:
+//
+//   - BUILDKIT_SYNTAX is how THIS frontend was dispatched when the
+//     descriptor's own syntax line cannot resolve (an unpublished frontend
+//     served through the kit registry). dockerfile.v0 honors it like a
+//     syntax line, so forwarding it would re-dispatch the companion back
+//     into this frontend as a descriptor — recursion the syntax-line
+//     self-reference guard cannot see.
+//   - multi-platform (and its build-arg spelling): the sub-solve is always
+//     single-platform — this frontend assembles the index itself — and a
+//     multi-platform result cannot be read back through SingleRef.
+//   - attest:* (and the BUILDKIT_ATTEST_* spelling): attestations attach
+//     to the final exported result; the controller produces them at the
+//     top level from this frontend's output. Forwarded into the sub-solve
+//     they would shape its result as multi-ref, which SingleRef refuses.
+func reservedSubSolveOpt(k string) bool {
+	switch {
+	case k == buildArgPrefix+"BUILDKIT_SYNTAX",
+		k == keyMultiPlatform,
+		k == buildArgPrefix+"BUILDKIT_MULTI_PLATFORM",
+		strings.HasPrefix(k, attestPrefix),
+		strings.HasPrefix(k, buildArgPrefix+"BUILDKIT_ATTEST_"):
+		return true
+	}
+	return false
 }
 
 // scratchResult is the declaration-only mixin's base: empty, before

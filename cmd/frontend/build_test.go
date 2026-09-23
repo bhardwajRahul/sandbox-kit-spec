@@ -101,6 +101,21 @@ func TestDockerfileFrontendOptsForwarding(t *testing.T) {
 			want: map[string]string{"filename": "kit.build.dockerfile"},
 		},
 		{
+			name: "kit args cannot smuggle reserved keys back in as buildArg destinations",
+			d: &spec.Descriptor{Args: map[string]spec.Arg{
+				"syntax":  {BuildArg: "BUILDKIT_SYNTAX", Default: &def},
+				"multi":   {BuildArg: "BUILDKIT_MULTI_PLATFORM", Default: &def},
+				"sbom":    {BuildArg: "BUILDKIT_ATTEST_SBOM", Default: &def},
+				"version": {BuildArg: "APP_VERSION", Default: &def},
+			}},
+			opts: map[string]string{"build-arg:syntax": "docker/sandbox-kit"},
+			want: map[string]string{
+				"build-arg:syntax":      "docker/sandbox-kit",
+				"build-arg:APP_VERSION": "def",
+				"filename":              "kit.build.dockerfile",
+			},
+		},
+		{
 			name: "kit args map onto their declared build-arg names",
 			d: &spec.Descriptor{Args: map[string]spec.Arg{
 				"version": {BuildArg: "APP_VERSION"},
