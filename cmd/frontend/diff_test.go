@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/require"
 )
@@ -172,4 +173,61 @@ RUN true
 		_, err := finalStage([]byte("ARG P\nFROM --platform=${P} alpine:3.21\nRUN true\n"), nil, target, build)
 		require.ErrorContains(t, err, "does not resolve to a literal platform")
 	})
+
+	t.Run("meta-ARG defaults expand sequentially, like dockerfile.v0", func(t *testing.T) {
+		got, err := finalStage([]byte(`
+ARG BASE=alpine
+ARG REF=$BASE:3.21
+FROM ${REF}
+RUN true
+`), nil, target, build)
+		require.NoError(t, err)
+		require.Equal(t, "alpine:3.21", got.base)
+	})
+
+	t.Run("a meta-ARG default can reference a builtin platform arg", func(t *testing.T) {
+		amd64Build := ocispecs.Platform{OS: "linux", Architecture: "amd64"}
+		got, err := finalStage([]byte(`
+ARG P=$BUILDPLATFORM
+FROM --platform=$P alpine:3.21
+RUN true
+`), nil, target, amd64Build)
+		require.NoError(t, err)
+		require.NotNil(t, got.platform)
+		require.Equal(t, amd64Build, *got.platform)
+	})
+
+	t.Run("a build-arg override feeds later meta-ARG defaults", func(t *testing.T) {
+		got, err := finalStage([]byte(`
+ARG BASE=debian
+ARG REF=$BASE:latest
+FROM ${REF}
+RUN true
+`), map[string]string{"build-arg:BASE": "alpine"}, target, build)
+		require.NoError(t, err)
+		require.Equal(t, "alpine:latest", got.base)
+	})
+
+	t.Run("shell default expansion works in FROM", func(t *testing.T) {
+		got, err := finalStage([]byte("ARG BASE\nFROM ${BASE:-busybox:1.37}\nRUN true\n"), nil, target, build)
+		require.NoError(t, err)
+		require.Equal(t, "busybox:1.37", got.base)
+	})
+}
+
+// dockerfile.v0's implicit target platform is the worker's platform, not
+// the frontend process's: on a heterogeneous builder DefaultSpec can
+// describe neither the worker nor the caller. An explicit request always
+// wins.
+func TestEffectiveTargetPlatform(t *testing.T) {
+	s390x := ocispecs.Platform{OS: "linux", Architecture: "s390x"}
+	c := &fakeGatewayClient{bopts: gwclient.BuildOpts{
+		Workers: []gwclient.WorkerInfo{{Platforms: []ocispecs.Platform{s390x}}},
+	}}
+
+	require.Equal(t, s390x, effectiveTargetPlatform(c, nil),
+		"no requested platform: the worker's platform, as dockerfile.v0 would target")
+
+	amd64 := ocispecs.Platform{OS: "linux", Architecture: "amd64"}
+	require.Equal(t, amd64, effectiveTargetPlatform(c, &amd64))
 }

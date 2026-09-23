@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 
@@ -16,6 +15,7 @@ import (
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	"github.com/moby/buildkit/frontend/dockerfile/instructions"
 	"github.com/moby/buildkit/frontend/dockerfile/parser"
+	"github.com/moby/buildkit/frontend/dockerfile/shell"
 	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
@@ -44,7 +44,8 @@ import (
 // anchors the composed runtime contract.
 func buildMixinOverlay(ctx context.Context, c gwclient.Client, d *spec.Descriptor, opts map[string]string, content *companionSource, plat *ocispecs.Platform) (gwclient.Reference, []byte, error) {
 	fo := dockerfileFrontendOpts(d, opts, content.name, plat)
-	final, err := finalStage(content.bytes, fo, platformOrDefault(plat), buildPlatformOf(c))
+	target := effectiveTargetPlatform(c, plat)
+	final, err := finalStage(content.bytes, fo, target, buildPlatformOf(c))
 	if err != nil {
 		return nil, nil, fmt.Errorf("content recipe %s: %w", content.name, err)
 	}
@@ -69,7 +70,7 @@ func buildMixinOverlay(ctx context.Context, c gwclient.Client, d *spec.Descripto
 	// upper result is the context itself. The consistent lower side is
 	// that same context — the recipe contributed nothing on top — so this
 	// check comes before every base-derived shape, including scratch.
-	aliasLower, aliasCfg, aliasOK, err := namedContextBase(ctx, c, opts, final.alias, lowerPlatform(final, plat))
+	aliasLower, aliasCfg, aliasOK, err := namedContextBase(ctx, c, opts, final.alias, lowerPlatform(final, target))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -136,7 +137,7 @@ func lowerFor(ctx context.Context, c gwclient.Client, d *spec.Descriptor, opts m
 	// --platform when the FROM line states one, and only then falls back
 	// to the target platform — for the named-context key match and the
 	// image pull alike.
-	p := lowerPlatform(final, plat)
+	p := lowerPlatform(final, effectiveTargetPlatform(c, plat))
 
 	// A named context shadows an external base for dockerfile.v0
 	// (--build-context deps=local:...), so the upper side may never have
@@ -218,9 +219,11 @@ func builtinPlatformArgs(target, build ocispecs.Platform) map[string]string {
 }
 
 // finalStage parses the companion and identifies what its final stage
-// builds FROM, with ARG references in the FROM line expanded from the
-// build args dockerfile.v0 will see (builtin platform args, overridden by
-// meta-ARG defaults, overridden by frontend build-arg options). The
+// builds FROM, with ARG references in the FROM line expanded exactly the
+// way dockerfile.v0 expands them (buildMetaArgs): builtin platform args
+// first, then each meta-ARG in order — a frontend build-arg override taken
+// verbatim, a default shell-expanded against the args accumulated so far,
+// so ARG P=$BUILDPLATFORM feeding FROM --platform=$P resolves. The
 // overlay's shape hangs on this one name, so an unresolvable reference is
 // an error, not a guess — and the same holds for an explicit --platform.
 func finalStage(companionBytes []byte, frontendOpts map[string]string, target, build ocispecs.Platform) (stageBase, error) {
@@ -236,30 +239,43 @@ func finalStage(companionBytes []byte, frontendOpts map[string]string, target, b
 		return stageBase{}, fmt.Errorf("no FROM stage found")
 	}
 
-	args := builtinPlatformArgs(target, build)
+	shlex := shell.NewLex(ast.EscapeToken)
+	env := &llb.EnvList{}
+	for k, v := range builtinPlatformArgs(target, build) {
+		env = env.AddOrReplace(k, v)
+	}
 	for _, ma := range metaArgs {
 		for _, kv := range ma.Args {
-			if kv.Value != nil {
-				args[kv.Key] = *kv.Value
+			if v, ok := frontendOpts[buildArgPrefix+kv.Key]; ok {
+				env = env.AddOrReplace(kv.Key, v)
+				continue
 			}
-		}
-	}
-	for k, v := range frontendOpts {
-		if name, ok := strings.CutPrefix(k, buildArgPrefix); ok {
-			args[name] = v
+			if kv.Value != nil {
+				v, _, err := shlex.ProcessWord(*kv.Value, env)
+				if err != nil {
+					return stageBase{}, fmt.Errorf("expand ARG %s: %w", kv.Key, err)
+				}
+				env = env.AddOrReplace(kv.Key, v)
+			}
 		}
 	}
 
 	last := stages[len(stages)-1]
-	base := os.Expand(last.BaseName, func(name string) string { return args[name] })
-	if strings.Contains(base, "$") || base == "" {
+	base, _, err := shlex.ProcessWord(last.BaseName, env)
+	if err != nil {
+		return stageBase{}, fmt.Errorf("expand final stage FROM %q: %w", last.BaseName, err)
+	}
+	if base == "" {
 		return stageBase{}, fmt.Errorf("final stage FROM %q does not resolve to a literal base", last.BaseName)
 	}
 
 	var explicit *ocispecs.Platform
 	if last.Platform != "" {
-		pstr := os.Expand(last.Platform, func(name string) string { return args[name] })
-		if strings.Contains(pstr, "$") || pstr == "" {
+		pstr, _, err := shlex.ProcessWord(last.Platform, env)
+		if err != nil {
+			return stageBase{}, fmt.Errorf("expand final stage FROM --platform=%q: %w", last.Platform, err)
+		}
+		if pstr == "" {
 			return stageBase{}, fmt.Errorf("final stage FROM --platform=%q does not resolve to a literal platform", last.Platform)
 		}
 		pp, err := platforms.Parse(pstr)
@@ -280,12 +296,23 @@ func finalStage(companionBytes []byte, frontendOpts map[string]string, target, b
 
 // lowerPlatform is the platform dockerfile.v0 resolves the final stage's
 // base (and any named context shadowing it) under: an explicit FROM
-// --platform wins over the requested target platform.
-func lowerPlatform(final stageBase, plat *ocispecs.Platform) ocispecs.Platform {
+// --platform wins over the target platform.
+func lowerPlatform(final stageBase, target ocispecs.Platform) ocispecs.Platform {
 	if final.platform != nil {
 		return *final.platform
 	}
-	return platformOrDefault(plat)
+	return target
+}
+
+// effectiveTargetPlatform is the platform the nested dockerfile.v0 solve
+// targets. When the caller requested none, dockerfile.v0 falls back to the
+// worker's own platform — not the frontend process's, which DefaultSpec
+// would describe and which can differ on a heterogeneous builder.
+func effectiveTargetPlatform(c gwclient.Client, plat *ocispecs.Platform) ocispecs.Platform {
+	if plat != nil {
+		return *plat
+	}
+	return buildPlatformOf(c)
 }
 
 // buildPlatformOf is the worker's native platform, the value dockerfile.v0
