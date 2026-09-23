@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	gwpb "github.com/moby/buildkit/frontend/gateway/pb"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/require"
+
+	"github.com/docker/sandbox-kit-spec/v3/spec"
 )
 
 func TestConfigDelta(t *testing.T) {
@@ -264,6 +268,29 @@ RUN make
 		require.NoError(t, err)
 		require.Equal(t, "ghcr.io/org/tool:latest-custom", got.base)
 	})
+}
+
+// With --no-cache forwarded, the upper solve executes the base stage
+// freshly and records the results. Forwarding no-cache to the lower
+// (target=base) solve as well would execute the stage a second time — a
+// nondeterministic base command would then hand the diff two different
+// filesystems, leaking base content into the overlay. The lower solve must
+// drop no-cache so its identical vertices reuse the upper's results, while
+// everything else (target, build args) is forwarded unchanged and the
+// caller's map is not mutated.
+func TestLowerStageSolveReusesTheUpperSolvesFreshResults(t *testing.T) {
+	c := &fakeGatewayClient{bopts: gwclient.BuildOpts{Caps: gwpb.Caps.CapSet(gwpb.Caps.All())}}
+	opts := map[string]string{"no-cache": "", "build-arg:FOO": "bar"}
+	recipe := &companionSource{name: "kit.build.dockerfile", bytes: []byte("FROM scratch\n")}
+
+	_, _, err := lowerFor(context.Background(), c, &spec.Descriptor{}, opts, recipe, nil,
+		stageBase{base: "base", isStage: true})
+	require.NoError(t, err)
+	require.Equal(t, "base", c.lastReq.FrontendOpt["target"])
+	require.NotContains(t, c.lastReq.FrontendOpt, "no-cache",
+		"the lower solve must reuse the upper's freshly recorded base results, not re-execute them")
+	require.Equal(t, "bar", c.lastReq.FrontendOpt["build-arg:FOO"])
+	require.Contains(t, opts, "no-cache", "the caller's options are not mutated")
 }
 
 // dockerfile.v0's implicit target platform is the worker's platform, not

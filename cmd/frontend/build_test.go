@@ -13,6 +13,7 @@ import (
 	digest "github.com/opencontainers/go-digest"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/require"
+	fstypes "github.com/tonistiigi/fsutil/types"
 
 	"github.com/docker/sandbox-kit-spec/v3/spec"
 )
@@ -175,7 +176,24 @@ type fakeGatewayClient struct {
 
 func (f *fakeGatewayClient) Solve(_ context.Context, req gwclient.SolveRequest) (*gwclient.Result, error) {
 	f.lastReq = req
-	return gwclient.NewResult(), nil
+	res := gwclient.NewResult()
+	res.SetRef(fakeReference{})
+	return res, nil
+}
+
+// fakeReference satisfies solve-result reads with an empty state.
+type fakeReference struct{}
+
+func (fakeReference) ToState() (llb.State, error)    { return llb.Scratch(), nil }
+func (fakeReference) Evaluate(context.Context) error { return nil }
+func (fakeReference) ReadFile(context.Context, gwclient.ReadRequest) ([]byte, error) {
+	return nil, nil
+}
+func (fakeReference) StatFile(context.Context, gwclient.StatRequest) (*fstypes.Stat, error) {
+	return nil, nil
+}
+func (fakeReference) ReadDir(context.Context, gwclient.ReadDirRequest) ([]*fstypes.Stat, error) {
+	return nil, nil
 }
 
 func (f *fakeGatewayClient) BuildOpts() gwclient.BuildOpts { return f.bopts }

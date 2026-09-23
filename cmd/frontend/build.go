@@ -28,6 +28,7 @@ const (
 	keyPlatform         = "platform"
 	keyImageResolveMode = "image-resolve-mode"
 	keyMultiPlatform    = "multi-platform"
+	keyNoCache          = "no-cache"
 	keyCmdline          = "cmdline"
 	keySource           = "source"
 	keyFrontendCaps     = "frontend.caps"

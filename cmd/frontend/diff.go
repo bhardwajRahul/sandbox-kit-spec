@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -115,7 +116,22 @@ func buildMixinOverlay(ctx context.Context, c gwclient.Client, d *spec.Descripto
 // computed against.
 func lowerFor(ctx context.Context, c gwclient.Client, d *spec.Descriptor, opts map[string]string, content *companionSource, plat *ocispecs.Platform, final stageBase) (llb.State, ocispecs.ImageConfig, error) {
 	if final.isStage {
-		lowerRes, err := solveDockerfile(ctx, c, d, opts, content, plat, final.base)
+		// The upper solve just executed this very stage — with a
+		// forwarded no-cache, freshly. Forwarding no-cache here too would
+		// execute the stage a second time, and a nondeterministic base
+		// command would hand the diff two different filesystems, leaking
+		// base content into the overlay. Stripped, the lower solve's
+		// vertices are identical to the upper's base sub-graph
+		// (ignore_cache is op metadata, not vertex identity), so the
+		// solver merges them with the upper's still-active results in
+		// the same job — exact reuse, never a stale entry and never a
+		// second roll of the dice.
+		lowerOpts := opts
+		if _, ok := opts[keyNoCache]; ok {
+			lowerOpts = maps.Clone(opts)
+			delete(lowerOpts, keyNoCache)
+		}
+		lowerRes, err := solveDockerfile(ctx, c, d, lowerOpts, content, plat, final.base)
 		if err != nil {
 			return llb.State{}, ocispecs.ImageConfig{}, err
 		}
