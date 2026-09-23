@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
@@ -43,7 +44,7 @@ import (
 // anchors the composed runtime contract.
 func buildMixinOverlay(ctx context.Context, c gwclient.Client, d *spec.Descriptor, opts map[string]string, content *companionSource, plat *ocispecs.Platform) (gwclient.Reference, []byte, error) {
 	fo := dockerfileFrontendOpts(d, opts, content.name, plat)
-	final, err := finalStage(content.bytes, fo)
+	final, err := finalStage(content.bytes, fo, platformOrDefault(plat), buildPlatformOf(c))
 	if err != nil {
 		return nil, nil, fmt.Errorf("content recipe %s: %w", content.name, err)
 	}
@@ -63,7 +64,17 @@ func buildMixinOverlay(ctx context.Context, c gwclient.Client, d *spec.Descripto
 		}
 	}
 
-	if strings.EqualFold(final.base, "scratch") {
+	// A named context matching the final stage's ALIAS replaces the whole
+	// stage for dockerfile.v0: the stage's instructions never run and the
+	// upper result is the context itself. The consistent lower side is
+	// that same context — the recipe contributed nothing on top — so this
+	// check comes before every base-derived shape, including scratch.
+	aliasLower, aliasCfg, aliasOK, err := namedContextBase(ctx, c, opts, final.alias, lowerPlatform(final, plat))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if !aliasOK && strings.EqualFold(final.base, "scratch") {
 		configJSON, cfgErr := mixinImageConfig(plat, configDelta(ocispecs.ImageConfig{}, upper.Config))
 		return upperRef, configJSON, cfgErr
 	}
@@ -72,9 +83,12 @@ func buildMixinOverlay(ctx context.Context, c gwclient.Client, d *spec.Descripto
 	if err != nil {
 		return nil, nil, err
 	}
-	lowerState, lower, err := lowerFor(ctx, c, d, opts, content, plat, final)
-	if err != nil {
-		return nil, nil, err
+	lowerState, lower := aliasLower, aliasCfg
+	if !aliasOK {
+		lowerState, lower, err = lowerFor(ctx, c, d, opts, content, plat, final)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	diff := llb.Diff(lowerState, upperState,
@@ -118,37 +132,22 @@ func lowerFor(ctx context.Context, c gwclient.Client, d *spec.Descriptor, opts m
 		return st, lower.Config, err
 	}
 
-	p := platformOrDefault(plat)
+	// dockerfile.v0 resolves the base under the stage's explicit
+	// --platform when the FROM line states one, and only then falls back
+	// to the target platform — for the named-context key match and the
+	// image pull alike.
+	p := lowerPlatform(final, plat)
 
 	// A named context shadows an external base for dockerfile.v0
 	// (--build-context deps=local:...), so the upper side may never have
 	// pulled final.base at all. The lower side goes through the same
-	// lookup, or the delta would be computed against the wrong
-	// filesystem. The name "context" is excluded exactly as dockerfile.v0
-	// excludes it: it names the main context, never a base.
-	if !strings.EqualFold(final.base, "context") {
-		bc, err := dockerui.NewClient(c)
-		if err != nil {
-			return llb.State{}, ocispecs.ImageConfig{}, err
-		}
-		nc, err := bc.NamedContext(final.base, dockerui.ContextOpt{
-			Platform:    &p,
-			ResolveMode: opts[keyImageResolveMode],
-		})
-		if err != nil {
-			return llb.State{}, ocispecs.ImageConfig{}, fmt.Errorf("overlay base %q: %w", final.base, err)
-		}
-		if nc != nil {
-			st, img, err := nc.Load(ctx)
-			if err != nil {
-				return llb.State{}, ocispecs.ImageConfig{}, fmt.Errorf("load overlay base %s from its named context: %w", final.base, err)
-			}
-			var lower ocispecs.ImageConfig
-			if img != nil {
-				lower = img.Config.ImageConfig
-			}
-			return *st, lower, nil
-		}
+	// lookup, or the delta would be computed against the wrong filesystem.
+	st, cfg, ok, err := namedContextBase(ctx, c, opts, final.base, p)
+	if err != nil {
+		return llb.State{}, ocispecs.ImageConfig{}, fmt.Errorf("overlay base %q: %w", final.base, err)
+	}
+	if ok {
+		return st, cfg, nil
 	}
 
 	// External base: pin the digest so the lower side is exactly what
@@ -187,18 +186,44 @@ func lowerFor(ctx context.Context, c gwclient.Client, d *spec.Descriptor, opts m
 }
 
 // stageBase names the final stage's base: either an earlier stage (isStage)
-// or an external image reference.
+// or an external image reference. The alias and the explicit FROM
+// --platform value ride along because dockerfile.v0 consults both when it
+// decides what the stage is actually built from: a named context matching
+// the alias replaces the whole stage, and the explicit platform selects
+// which platform-suffixed context key (and base image) matches.
 type stageBase struct {
-	base    string
-	isStage bool
+	base     string
+	isStage  bool
+	alias    string
+	platform *ocispecs.Platform // explicit FROM --platform; nil means the target platform
+}
+
+// builtinPlatformArgs are the ARG values dockerfile.v0 predeclares
+// (dockerfile2llb defaultArgs): BUILDPLATFORM formats without OS version,
+// TARGETPLATFORM with, matching upstream exactly so FROM
+// --platform=$BUILDPLATFORM expands to the same value on both sides.
+func builtinPlatformArgs(target, build ocispecs.Platform) map[string]string {
+	return map[string]string{
+		"BUILDPLATFORM":   platforms.Format(build),
+		"BUILDOS":         build.OS,
+		"BUILDOSVERSION":  build.OSVersion,
+		"BUILDARCH":       build.Architecture,
+		"BUILDVARIANT":    build.Variant,
+		"TARGETPLATFORM":  platforms.FormatAll(target),
+		"TARGETOS":        target.OS,
+		"TARGETOSVERSION": target.OSVersion,
+		"TARGETARCH":      target.Architecture,
+		"TARGETVARIANT":   target.Variant,
+	}
 }
 
 // finalStage parses the companion and identifies what its final stage
 // builds FROM, with ARG references in the FROM line expanded from the
-// build args dockerfile.v0 will see (meta-ARG defaults overridden by
-// frontend build-arg options). The overlay's shape hangs on this one name,
-// so an unresolvable reference is an error, not a guess.
-func finalStage(companionBytes []byte, frontendOpts map[string]string) (stageBase, error) {
+// build args dockerfile.v0 will see (builtin platform args, overridden by
+// meta-ARG defaults, overridden by frontend build-arg options). The
+// overlay's shape hangs on this one name, so an unresolvable reference is
+// an error, not a guess — and the same holds for an explicit --platform.
+func finalStage(companionBytes []byte, frontendOpts map[string]string, target, build ocispecs.Platform) (stageBase, error) {
 	ast, err := parser.Parse(bytes.NewReader(companionBytes))
 	if err != nil {
 		return stageBase{}, fmt.Errorf("parse: %w", err)
@@ -211,7 +236,7 @@ func finalStage(companionBytes []byte, frontendOpts map[string]string) (stageBas
 		return stageBase{}, fmt.Errorf("no FROM stage found")
 	}
 
-	args := map[string]string{}
+	args := builtinPlatformArgs(target, build)
 	for _, ma := range metaArgs {
 		for _, kv := range ma.Args {
 			if kv.Value != nil {
@@ -231,12 +256,80 @@ func finalStage(companionBytes []byte, frontendOpts map[string]string) (stageBas
 		return stageBase{}, fmt.Errorf("final stage FROM %q does not resolve to a literal base", last.BaseName)
 	}
 
+	var explicit *ocispecs.Platform
+	if last.Platform != "" {
+		pstr := os.Expand(last.Platform, func(name string) string { return args[name] })
+		if strings.Contains(pstr, "$") || pstr == "" {
+			return stageBase{}, fmt.Errorf("final stage FROM --platform=%q does not resolve to a literal platform", last.Platform)
+		}
+		pp, err := platforms.Parse(pstr)
+		if err != nil {
+			return stageBase{}, fmt.Errorf("final stage FROM --platform=%q: %w", pstr, err)
+		}
+		pp = platforms.Normalize(pp)
+		explicit = &pp
+	}
+
 	for _, s := range stages[:len(stages)-1] {
 		if s.Name != "" && strings.EqualFold(s.Name, base) {
-			return stageBase{base: s.Name, isStage: true}, nil
+			return stageBase{base: s.Name, isStage: true, alias: last.Name, platform: explicit}, nil
 		}
 	}
-	return stageBase{base: base}, nil
+	return stageBase{base: base, alias: last.Name, platform: explicit}, nil
+}
+
+// lowerPlatform is the platform dockerfile.v0 resolves the final stage's
+// base (and any named context shadowing it) under: an explicit FROM
+// --platform wins over the requested target platform.
+func lowerPlatform(final stageBase, plat *ocispecs.Platform) ocispecs.Platform {
+	if final.platform != nil {
+		return *final.platform
+	}
+	return platformOrDefault(plat)
+}
+
+// buildPlatformOf is the worker's native platform, the value dockerfile.v0
+// gives $BUILDPLATFORM: the first worker's first platform, or the host
+// default when the bridge reports none.
+func buildPlatformOf(c gwclient.Client) ocispecs.Platform {
+	if ws := c.BuildOpts().Workers; len(ws) > 0 && len(ws[0].Platforms) > 0 {
+		return ws[0].Platforms[0]
+	}
+	return platforms.Normalize(platforms.DefaultSpec())
+}
+
+// namedContextBase looks name up among the build's named contexts through
+// the same dockerui lookup dockerfile.v0 uses — platform-suffixed keys
+// first, reference normalization, image-resolve-mode honored. The names
+// "scratch" and "context" are excluded exactly as dockerfile.v0 excludes
+// them. ok reports whether a context claimed the name.
+func namedContextBase(ctx context.Context, c gwclient.Client, opts map[string]string, name string, p ocispecs.Platform) (llb.State, ocispecs.ImageConfig, bool, error) {
+	if name == "" || strings.EqualFold(name, "scratch") || strings.EqualFold(name, "context") {
+		return llb.State{}, ocispecs.ImageConfig{}, false, nil
+	}
+	bc, err := dockerui.NewClient(c)
+	if err != nil {
+		return llb.State{}, ocispecs.ImageConfig{}, false, err
+	}
+	nc, err := bc.NamedContext(name, dockerui.ContextOpt{
+		Platform:    &p,
+		ResolveMode: opts[keyImageResolveMode],
+	})
+	if err != nil {
+		return llb.State{}, ocispecs.ImageConfig{}, false, fmt.Errorf("named context %q: %w", name, err)
+	}
+	if nc == nil {
+		return llb.State{}, ocispecs.ImageConfig{}, false, nil
+	}
+	st, img, err := nc.Load(ctx)
+	if err != nil {
+		return llb.State{}, ocispecs.ImageConfig{}, false, fmt.Errorf("load named context %s: %w", name, err)
+	}
+	var cfg ocispecs.ImageConfig
+	if img != nil {
+		cfg = img.Config.ImageConfig
+	}
+	return *st, cfg, true, nil
 }
 
 // minimalImageConfig is the config of an image that is content only: a

@@ -74,19 +74,22 @@ func TestConfigDeltaFromScratch(t *testing.T) {
 }
 
 func TestFinalStage(t *testing.T) {
+	target := ocispecs.Platform{OS: "linux", Architecture: "arm64"}
+	build := ocispecs.Platform{OS: "linux", Architecture: "arm64"}
+
 	t.Run("scratch final stage", func(t *testing.T) {
 		got, err := finalStage([]byte(`
 FROM debian:13 AS build
 RUN make
 FROM scratch
 COPY --from=build /out /usr/local/bin
-`), nil)
+`), nil, target, build)
 		require.NoError(t, err)
 		require.Equal(t, stageBase{base: "scratch"}, got)
 	})
 
 	t.Run("external image base", func(t *testing.T) {
-		got, err := finalStage([]byte("FROM busybox:1.37\nRUN touch /a\n"), nil)
+		got, err := finalStage([]byte("FROM busybox:1.37\nRUN touch /a\n"), nil, target, build)
 		require.NoError(t, err)
 		require.Equal(t, stageBase{base: "busybox:1.37"}, got)
 	})
@@ -97,7 +100,7 @@ FROM debian:13 AS base
 RUN apt-get update
 FROM base
 RUN apt-get install -y gh
-`), nil)
+`), nil, target, build)
 		require.NoError(t, err)
 		require.Equal(t, stageBase{base: "base", isStage: true}, got)
 	})
@@ -107,7 +110,7 @@ RUN apt-get install -y gh
 ARG BASE=debian:13
 FROM ${BASE}
 RUN true
-`), nil)
+`), nil, target, build)
 		require.NoError(t, err)
 		require.Equal(t, stageBase{base: "debian:13"}, got)
 	})
@@ -117,13 +120,13 @@ RUN true
 ARG BASE=debian:13
 FROM ${BASE}
 RUN true
-`), map[string]string{"build-arg:BASE": "alpine:3.21"})
+`), map[string]string{"build-arg:BASE": "alpine:3.21"}, target, build)
 		require.NoError(t, err)
 		require.Equal(t, stageBase{base: "alpine:3.21"}, got)
 	})
 
 	t.Run("unresolvable base is an error", func(t *testing.T) {
-		_, err := finalStage([]byte("ARG BASE\nFROM ${BASE}\nRUN true\n"), nil)
+		_, err := finalStage([]byte("ARG BASE\nFROM ${BASE}\nRUN true\n"), nil, target, build)
 		require.ErrorContains(t, err, "does not resolve")
 	})
 
@@ -133,8 +136,40 @@ FROM debian:13 AS Build
 RUN make
 FROM build
 RUN true
-`), nil)
+`), nil, target, build)
 		require.NoError(t, err)
 		require.True(t, got.isStage)
+	})
+
+	t.Run("the final stage's alias is retained for named-context shadowing", func(t *testing.T) {
+		got, err := finalStage([]byte("FROM alpine:3.21 AS runtime\nRUN true\n"), nil, target, build)
+		require.NoError(t, err)
+		require.Equal(t, stageBase{base: "alpine:3.21", alias: "runtime"}, got)
+	})
+
+	t.Run("an explicit FROM --platform is retained, normalized", func(t *testing.T) {
+		got, err := finalStage([]byte("FROM --platform=linux/amd64 deps\nRUN true\n"), nil, target, build)
+		require.NoError(t, err)
+		require.NotNil(t, got.platform)
+		require.Equal(t, ocispecs.Platform{OS: "linux", Architecture: "amd64"}, *got.platform)
+	})
+
+	t.Run("FROM --platform=$BUILDPLATFORM expands from the builtin args", func(t *testing.T) {
+		amd64Build := ocispecs.Platform{OS: "linux", Architecture: "amd64"}
+		got, err := finalStage([]byte("FROM --platform=$BUILDPLATFORM alpine:3.21\nRUN true\n"), nil, target, amd64Build)
+		require.NoError(t, err)
+		require.NotNil(t, got.platform)
+		require.Equal(t, amd64Build, *got.platform)
+	})
+
+	t.Run("$TARGETARCH in the base name expands from the builtin args", func(t *testing.T) {
+		got, err := finalStage([]byte("FROM ghcr.io/org/tool:latest-$TARGETARCH\nRUN true\n"), nil, target, build)
+		require.NoError(t, err)
+		require.Equal(t, "ghcr.io/org/tool:latest-arm64", got.base)
+	})
+
+	t.Run("an unresolvable --platform is an error", func(t *testing.T) {
+		_, err := finalStage([]byte("ARG P\nFROM --platform=${P} alpine:3.21\nRUN true\n"), nil, target, build)
+		require.ErrorContains(t, err, "does not resolve to a literal platform")
 	})
 }
