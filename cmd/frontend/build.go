@@ -14,6 +14,7 @@ import (
 	"github.com/moby/buildkit/frontend/attestations"
 	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	gwpb "github.com/moby/buildkit/frontend/gateway/pb"
 	"github.com/moby/buildkit/solver/pb"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 
@@ -22,10 +23,19 @@ import (
 )
 
 const (
-	keyFilename    = "filename"
-	keyTarget      = "target"
-	keyPlatform    = "platform"
-	buildArgPrefix = "build-arg:"
+	keyFilename         = "filename"
+	keyTarget           = "target"
+	keyPlatform         = "platform"
+	keyImageResolveMode = "image-resolve-mode"
+	keyMultiPlatform    = "multi-platform"
+	keyNoCache          = "no-cache"
+	keyCmdline          = "cmdline"
+	keySource           = "source"
+	keyFrontendCaps     = "frontend.caps"
+	keyRequestID        = "requestid"
+	keyDockerfileKey    = "dockerfilekey"
+	buildArgPrefix      = "build-arg:"
+	attestPrefix        = "attest:"
 
 	// stagedKitRoot is where a kit's sources land in the image: the
 	// published descriptor as <stem>/kit.yaml, the content recipe as
@@ -645,8 +655,33 @@ func solveDockerfile(ctx context.Context, c gwclient.Client, d *spec.Descriptor,
 		fo[keyTarget] = target
 	}
 	req := gwclient.SolveRequest{
-		Frontend:    "dockerfile.v0",
-		FrontendOpt: fo,
+		Frontend:       "dockerfile.v0",
+		FrontendOpt:    fo,
+		FrontendInputs: map[string]*pb.Definition{},
+	}
+	// Named contexts a caller sent as frontend inputs (bake wiring one
+	// target's output into another) only reach the sub-solve if handed
+	// on; the gateway does not forward the parent's inputs by itself.
+	// The dockerfile input is the one exception: the companion is read
+	// from the dockerfile local, never from the parent's input, which
+	// holds the descriptor. Gated on the inputs capability the way
+	// dockerfile.v0's own gateway forwarder is: a bridge without it
+	// errors on the Inputs call itself, even when no inputs exist.
+	if caps := c.BuildOpts().Caps; caps.Supports(gwpb.CapFrontendInputs) == nil {
+		inputs, err := c.Inputs(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for name, st := range inputs {
+			if name == dockerui.DefaultLocalNameDockerfile {
+				continue
+			}
+			def, err := st.Marshal(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("marshal frontend input %s: %w", name, err)
+			}
+			req.FrontendInputs[name] = def.ToPB()
+		}
 	}
 	if content.inline {
 		def, err := llb.Scratch().
@@ -656,9 +691,7 @@ func solveDockerfile(ctx context.Context, c gwclient.Client, d *spec.Descriptor,
 		if err != nil {
 			return nil, err
 		}
-		req.FrontendInputs = map[string]*pb.Definition{
-			dockerui.DefaultLocalNameDockerfile: def.ToPB(),
-		}
+		req.FrontendInputs[dockerui.DefaultLocalNameDockerfile] = def.ToPB()
 	}
 	res, err := c.Solve(ctx, req)
 	if err != nil {
@@ -668,7 +701,9 @@ func solveDockerfile(ctx context.Context, c gwclient.Client, d *spec.Descriptor,
 }
 
 // dockerfileFrontendOpts assembles the option set forwarded to dockerfile.v0:
-// passthrough of target/labels/build-args, the companion as the file, one
+// everything the caller passed — no-cache, cache imports, network, resolve
+// mode, named contexts, and the rest — except the few keys this frontend
+// owns or that would break a sub-solve, plus the companion as the file, one
 // platform, and the kit args mapped onto the Dockerfile ARG names they
 // declare — the caller passes --build-arg <kitArgName>=<value>; the
 // Dockerfile sees <buildArg>=<value> after validation.
@@ -676,19 +711,12 @@ func dockerfileFrontendOpts(d *spec.Descriptor, opts map[string]string, companio
 	fo := map[string]string{}
 	for k, v := range opts {
 		switch {
-		case k == buildArgPrefix+"BUILDKIT_SYNTAX":
-			// Never forwarded: this is how THIS frontend was dispatched
-			// when the descriptor's own syntax line cannot resolve (an
-			// unpublished frontend served through the kit registry).
-			// dockerfile.v0 honors it like a syntax line, so forwarding
-			// it would re-dispatch the companion back into this frontend
-			// as a descriptor — recursion the syntax-line self-reference
-			// guard cannot see.
-		case k == keyTarget:
-			fo[k] = v
-		case strings.HasPrefix(k, "label:"):
-			fo[k] = v
-		case strings.HasPrefix(k, buildArgPrefix):
+		case reservedSubSolveOpt(k):
+		case k == keyFilename, k == keyPlatform:
+			// This frontend names the companion as the file and solves
+			// one platform at a time; both are set below, never inherited
+			// from the descriptor build's own values.
+		default:
 			fo[k] = v
 		}
 	}
@@ -701,13 +729,71 @@ func dockerfileFrontendOpts(d *spec.Descriptor, opts map[string]string, companio
 		if decl.BuildArg == "" {
 			continue
 		}
+		dst := buildArgPrefix + decl.BuildArg
+		// The mapping runs after the reserved-key screen, so a descriptor
+		// declaring buildArg: BUILDKIT_SYNTAX (or the multi-platform or
+		// attestation names) would reinsert exactly what the screen
+		// removed; the destination gets the same check the caller's own
+		// options got.
+		if reservedSubSolveOpt(dst) {
+			continue
+		}
 		if v, ok := opts[buildArgPrefix+name]; ok {
-			fo[buildArgPrefix+decl.BuildArg] = v
+			fo[dst] = v
 		} else if decl.Default != nil {
-			fo[buildArgPrefix+decl.BuildArg] = *decl.Default
+			fo[dst] = *decl.Default
 		}
 	}
 	return fo
+}
+
+// reservedSubSolveOpt reports the option keys never handed to the
+// dockerfile.v0 sub-solve, whether they arrive as caller options or as a
+// descriptor arg's declared buildArg destination:
+//
+//   - BUILDKIT_SYNTAX is how THIS frontend was dispatched when the
+//     descriptor's own syntax line cannot resolve (an unpublished frontend
+//     served through the kit registry). dockerfile.v0 honors it like a
+//     syntax line, so forwarding it would re-dispatch the companion back
+//     into this frontend as a descriptor — recursion the syntax-line
+//     self-reference guard cannot see.
+//   - multi-platform (and its build-arg spelling): the sub-solve is always
+//     single-platform — this frontend assembles the index itself — and a
+//     multi-platform result cannot be read back through SingleRef.
+//   - attest:* (and the BUILDKIT_ATTEST_* spelling): attestations attach
+//     to the final exported result; the controller produces them at the
+//     top level from this frontend's output. Forwarded into the sub-solve
+//     they would shape its result as multi-ref, which SingleRef refuses.
+//   - cmdline, source, frontend.caps: gateway-control attributes injected
+//     when THIS frontend was dispatched through the kit's syntax line, not
+//     caller build options. dockerfile.v0 skips its own syntax detection
+//     whenever cmdline is present, so forwarding it would silently build a
+//     companion that names a foreign frontend (# syntax=...-labs) with the
+//     default frontend instead.
+//   - requestid: a subrequest (buildx --call=outline and friends) makes
+//     dockerfile.v0 return a metadata-only result with no image reference,
+//     which the SingleRef and image-config reads that follow cannot
+//     consume. This frontend does not answer subrequests; the companion
+//     sub-solve is always a real build.
+//   - dockerfilekey: renames the local the recipe is read from and forces
+//     reading from a local at all, which would make dockerfile.v0 ignore
+//     the dockerfile frontend input that inline recipes are synthesized
+//     into.
+func reservedSubSolveOpt(k string) bool {
+	switch {
+	case k == buildArgPrefix+"BUILDKIT_SYNTAX",
+		k == keyMultiPlatform,
+		k == buildArgPrefix+"BUILDKIT_MULTI_PLATFORM",
+		k == keyCmdline,
+		k == keySource,
+		k == keyFrontendCaps,
+		k == keyRequestID,
+		k == keyDockerfileKey,
+		strings.HasPrefix(k, attestPrefix),
+		strings.HasPrefix(k, buildArgPrefix+"BUILDKIT_ATTEST_"):
+		return true
+	}
+	return false
 }
 
 // scratchResult is the declaration-only mixin's base: empty, before

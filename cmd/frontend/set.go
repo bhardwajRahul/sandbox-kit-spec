@@ -708,7 +708,12 @@ func resolveKit(ctx context.Context, c gwclient.Client, k spec.Kit, p ocispecs.P
 	}
 
 	pinned, dgst, configRaw, err := c.ResolveImageConfig(ctx, ref, sourceresolver.Opt{
-		ImageOpt: &sourceresolver.ResolveImageOpt{Platform: &p},
+		ImageOpt: &sourceresolver.ResolveImageOpt{
+			Platform: &p,
+			// --pull reaches a frontend as image-resolve-mode; honoring
+			// it is what lets a set re-pin against a tag that moved.
+			ResolveMode: c.BuildOpts().Opts[keyImageResolveMode],
+		},
 	})
 	if err != nil {
 		return nil, err
