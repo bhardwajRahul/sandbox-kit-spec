@@ -633,6 +633,9 @@ func (a *ociArtifact) HasFile(ctx context.Context, name string) (bool, error) {
 // link cycle would otherwise resolve forever.
 const maxLinkDepth = 8
 
+// errLinkDepth is a chain that ran past maxLinkDepth.
+var errLinkDepth = errors.New("links nest deeper than any kit should")
+
 // winningLayer names the layer within layers[:upto+1] whose entry the
 // composed filesystem exposes for name, or -1. Only the cached
 // inventories are consulted; nothing is fetched.
@@ -713,7 +716,7 @@ func (a *ociArtifact) composedKind(ctx context.Context, name string, upto int) (
 // directory, but it happily exposes one through a symlink to one.
 func (a *ociArtifact) resolveAncestors(ctx context.Context, name string, depth, upto int) (string, bool, error) {
 	if depth > maxLinkDepth {
-		return "", false, fmt.Errorf("%s: links nest deeper than any kit should", name)
+		return "", false, fmt.Errorf("%s: %w", name, errLinkDepth)
 	}
 	target := strings.TrimPrefix(name, "/")
 	segments := strings.Split(target, "/")
@@ -1016,6 +1019,169 @@ func (a *ociArtifact) hasHardLink(ctx context.Context, winner, upto int, alias, 
 	default:
 		return a.hasFileFrom(ctx, target, alias, depth+1, winner-1, upto)
 	}
+}
+
+// DirStat is the metadata of the directory entry the layers finally
+// expose at name, read literally rather than through links: what a
+// layer's own entry says is exactly what replaces the base's.
+func (a *ociArtifact) DirStat(ctx context.Context, name string) (FileStat, bool, error) {
+	upto := len(a.manifest.Layers) - 1
+	target := strings.TrimPrefix(name, "/")
+	at, hidden, err := a.resolveAncestors(ctx, name, 0, upto)
+	if err != nil || hidden || at != "/"+target {
+		return FileStat{}, false, err
+	}
+	kind, _, err := a.composedKind(ctx, name, upto)
+	if err != nil || kind != kindDir {
+		return FileStat{}, false, err
+	}
+	for i := upto; i >= 0; i-- {
+		_, dirs, _, err := a.layerEntries(ctx, a.manifest.Layers[i])
+		if err != nil {
+			return FileStat{}, false, err
+		}
+		carried := false
+		for _, d := range dirs {
+			if d == target {
+				carried = true
+				break
+			}
+		}
+		if !carried {
+			continue
+		}
+		layer := a.manifest.Layers[i]
+		rc, err := a.fetcher.Fetch(ctx, layer)
+		if err != nil {
+			return FileStat{}, false, fmt.Errorf("fetch layer %s: %w", layer.Digest, err)
+		}
+		entry, err := assemble.StatDirEntry(rc, name)
+		_ = rc.Close()
+		if err != nil {
+			return FileStat{}, false, err
+		}
+		return FileStat{Mode: entry.Mode, Uid: entry.Uid, Gid: entry.Gid}, entry.OK, nil
+	}
+	return FileStat{}, false, nil
+}
+
+// DanglingSymlinks lists the symlinks the composed filesystem exposes
+// whose targets it does not carry, following chains and symlinked
+// ancestors the way a lookup would.
+func (a *ociArtifact) DanglingSymlinks(ctx context.Context) ([]Symlink, error) {
+	upto := len(a.manifest.Layers) - 1
+	seen := map[string]bool{}
+	var names []string
+	for i := 0; i <= upto; i++ {
+		_, _, links, err := a.layerEntries(ctx, a.manifest.Layers[i])
+		if err != nil {
+			return nil, err
+		}
+		for name, l := range links {
+			if !l.Hard && !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
+		}
+	}
+	sort.Strings(names)
+
+	var dangling []Symlink
+	for _, name := range names {
+		kind, target, err := a.composedKind(ctx, name, upto)
+		if err != nil {
+			return nil, err
+		}
+		if kind != kindSymlink {
+			continue
+		}
+		// A link beneath a symlinked or replaced ancestor is not at the
+		// path it was written to, and wherever it is reached from is
+		// judged there.
+		at, hidden, err := a.resolveAncestors(ctx, "/"+name, 0, upto)
+		if errors.Is(err, errLinkDepth) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if hidden || at != "/"+name {
+			continue
+		}
+		ok, err := a.resolves(ctx, "/"+name, 0)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			dangling = append(dangling, Symlink{Path: "/" + name, Target: target})
+		}
+	}
+	return dangling, nil
+}
+
+// resolves reports whether name reaches something the composed
+// filesystem carries: a file, a directory, or a chain of links ending in
+// one. A chain longer than a checker follows reaches nothing it can vouch
+// for.
+func (a *ociArtifact) resolves(ctx context.Context, name string, depth int) (bool, error) {
+	if depth > maxLinkDepth {
+		return false, nil
+	}
+	upto := len(a.manifest.Layers) - 1
+	name, hidden, err := a.resolveAncestors(ctx, name, depth, upto)
+	if errors.Is(err, errLinkDepth) {
+		return false, nil
+	}
+	if err != nil || hidden {
+		return false, err
+	}
+	target := strings.TrimPrefix(name, "/")
+	if target == "" {
+		return true, nil
+	}
+	kind, link, err := a.composedKind(ctx, name, upto)
+	if err != nil {
+		return false, err
+	}
+	switch kind {
+	case kindDir, kindFile:
+		return true, nil
+	case kindSymlink:
+		if link == "" {
+			return false, nil
+		}
+		return a.resolves(ctx, resolveLinkTarget(name, assemble.FileEntry{Link: link}), depth+1)
+	}
+	return a.impliedDir(ctx, target, upto)
+}
+
+// impliedDir reports a directory the layers carry entries beneath without
+// an entry of its own, which applying a tar creates all the same.
+func (a *ociArtifact) impliedDir(ctx context.Context, target string, upto int) (bool, error) {
+	prefix := target + "/"
+	found := false
+	for i := 0; i <= upto; i++ {
+		paths, dirs, _, err := a.layerEntries(ctx, a.manifest.Layers[i])
+		if err != nil {
+			return false, err
+		}
+		if whitesOut(paths, "/"+target) {
+			found = false
+		}
+		for _, p := range paths {
+			if p == prefix+".wh..wh..opq" {
+				found = false
+			}
+		}
+		for _, group := range [][]string{paths, dirs} {
+			for _, p := range group {
+				if strings.HasPrefix(p, prefix) && !strings.HasPrefix(path.Base(p), ".wh.") {
+					found = true
+				}
+			}
+		}
+	}
+	return found, nil
 }
 
 // layerPaths lists one layer's entries, cached because resolution walks

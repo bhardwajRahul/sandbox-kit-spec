@@ -827,6 +827,94 @@ func writeFile(t *testing.T, tw *tar.Writer, name string, mode int64, uid, gid i
 	require.NoError(t, err)
 }
 
+func writeDir(t *testing.T, tw *tar.Writer, name string, uid, gid int) {
+	t.Helper()
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: name, Typeflag: tar.TypeDir, Mode: 0o755, Uid: uid, Gid: gid,
+	}))
+}
+
+func writeLink(t *testing.T, tw *tar.Writer, name, target string) {
+	t.Helper()
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: name, Typeflag: tar.TypeSymlink, Linkname: target, Mode: 0o777,
+	}))
+}
+
+// The owner that counts is the directory entry's own, from the last layer
+// that carries it; a file at the path is not a directory entry at all.
+func TestDirStatReadsTheLastDirectoryEntry(t *testing.T) {
+	a := buildLayeredArtifact(t,
+		func(tw *tar.Writer) {
+			writeDir(t, tw, "home/", 1000, 1000)
+			writeDir(t, tw, "home/agent/", 0, 0)
+			writeFile(t, tw, "etc", 0o644, 0, 0)
+		},
+		func(tw *tar.Writer) {
+			writeDir(t, tw, "home/", 0, 0)
+		},
+	)
+	w, ok := a.(overlayWalker)
+	require.True(t, ok)
+	ctx := context.Background()
+
+	st, present, err := w.DirStat(ctx, "/home")
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Equal(t, 0, st.Uid, "the later layer's entry replaces the earlier one")
+
+	st, present, err = w.DirStat(ctx, "/home/agent")
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Equal(t, 0, st.Uid)
+
+	_, present, err = w.DirStat(ctx, "/etc")
+	require.NoError(t, err)
+	require.False(t, present)
+
+	_, present, err = w.DirStat(ctx, "/opt")
+	require.NoError(t, err)
+	require.False(t, present)
+}
+
+// A link resolves if the overlay carries what it points at — a file, a
+// directory with or without an entry of its own, or another link that
+// does — and dangles if the target is absent, deleted by a later layer,
+// or a cycle.
+func TestDanglingSymlinksAreTheOnesTheOverlayCannotResolve(t *testing.T) {
+	a := buildLayeredArtifact(t,
+		func(tw *tar.Writer) {
+			writeDir(t, tw, "opt/", 0, 0)
+			writeDir(t, tw, "opt/tool/", 0, 0)
+			writeFile(t, tw, "opt/tool/tool", 0o755, 0, 0)
+			writeFile(t, tw, "srv/implied/tool", 0o755, 0, 0)
+			writeFile(t, tw, "opt/removed/tool", 0o755, 0, 0)
+			writeLink(t, tw, "usr/local/bin/file", "../../../opt/tool/tool")
+			writeLink(t, tw, "usr/local/bin/dir", "/opt/tool")
+			writeLink(t, tw, "usr/local/bin/chain", "file")
+			writeLink(t, tw, "usr/local/bin/implied", "/srv/implied")
+			writeLink(t, tw, "usr/local/bin/root", "/")
+			writeLink(t, tw, "usr/local/bin/stage", "/root/.local/share/tool/bin/tool")
+			writeLink(t, tw, "usr/local/bin/removed", "/opt/removed/tool")
+			writeLink(t, tw, "usr/local/bin/loop-a", "loop-b")
+			writeLink(t, tw, "usr/local/bin/loop-b", "loop-a")
+		},
+		func(tw *tar.Writer) {
+			writeFile(t, tw, "opt/.wh.removed", 0o644, 0, 0)
+		},
+	)
+	w := a.(overlayWalker)
+
+	dangling, err := w.DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{
+		{Path: "/usr/local/bin/loop-a", Target: "loop-b"},
+		{Path: "/usr/local/bin/loop-b", Target: "loop-a"},
+		{Path: "/usr/local/bin/removed", Target: "/opt/removed/tool"},
+		{Path: "/usr/local/bin/stage", Target: "/root/.local/share/tool/bin/tool"},
+	}, dangling)
+}
+
 // An ancestor symlink with an empty target is dangling, and one targeting
 // the root must join canonically instead of producing a double slash no
 // archive path matches.

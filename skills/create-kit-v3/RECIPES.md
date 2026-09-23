@@ -154,46 +154,32 @@ not to the tool's own tree.
 
 A build proves the recipe ran. It does not prove the overlay works.
 
-**Read the ownership out of the exported layer:**
+**Judge the exported layout with `kit-tck`:**
 
 ```sh
-docker buildx build . -f <kit>.yaml --output type=oci,dest=/tmp/layout,tar=false
+docker buildx build . -f <kit>.yaml -t <kit>:<version> \
+  --output type=oci,dest=/tmp/layout,tar=false
+kit-tck validate --layout /tmp/layout <version>
+```
+
+`kit-tck` judges the two directory levels on every platform manifest:
+`overlay-home-ownership` fails an overlay that ships `/home` owned by anyone
+but root or `/home/agent` by anyone but uid 1000 — `/home` handed to the agent,
+or `/home/agent` taken from it. An overlay shipping neither directory passes,
+because it is staying out of the home entirely. The same run warns under
+`overlay-links-resolve` for every symlink the overlay's own layers do not
+resolve; see the composition shortcut below for why that is a warning.
+
+What it does not judge is **every other owner**. Count those out of the layer:
+
+```sh
 for b in /tmp/layout/blobs/sha256/*; do tar --numeric-owner -tvf "$b" 2>/dev/null; done \
   | awk '{print ($2 ~ /\//) ? $2 : $3"/"$4}' | sort | uniq -c | sort -rn
 ```
 
-Every count should be `0/0` or `1000/1000`, and that is **all** this tells
-you. It collapses the listing to owners, so it finds a foreign uid and nothing
-else — the two `/home` directories could have their owners **swapped** and
-this still reports only the two permitted ids, looking perfectly clean.
-
-So assert the directory invariant separately, keeping the pathnames:
-
-```sh
-for b in /tmp/layout/blobs/sha256/*; do tar --numeric-owner -tvf "$b" 2>/dev/null; done \
-  | awk '$1 ~ /^d/ { own = ($2 ~ /\//) ? $2 : $3"/"$4
-                     if ($NF == "home/" || $NF == "home/agent/") print own, $NF }' \
-  | sort -u
-```
-
-Exactly two lines, and they must read:
-
-```text
-0/0 home/
-1000/1000 home/agent/
-```
-
-Reversed is the inversion this section exists to catch: `/home` handed to uid
-1000, or `/home/agent` taken from the agent. An overlay shipping neither
-directory prints nothing, which is fine — it is staying out of the home
-entirely.
-
-`sort -u` is what makes "exactly two lines" true. The loop reads every blob in
-the layout, so a multi-platform kit whose per-platform layers differ reports
-each directory once per platform — four lines for two platforms, all correct.
-Deduplicating owner-and-path pairs collapses agreement without hiding
-disagreement: a platform that owns `/home` differently still contributes its
-own distinct line.
+Every count should be `0/0` or `1000/1000`. It collapses the listing to owners,
+so it finds a foreign uid and nothing else — which is why the directory levels
+are `kit-tck`'s job and not this pipeline's.
 
 **The awk is doing real work, so do not simplify it.** GNU tar prints owner
 and group joined in field 2 (`0/0`); bsdtar splits them across fields 3 and 4.
@@ -246,11 +232,13 @@ pointing it at `/tmp` uploads whatever else is sitting there, including the
 layout you just exported, to build two lines. And `sh -lc` sources any
 `/etc/profile.d` drop the overlay ships, which a bare `sh -c` does not.
 
-What the shortcut is genuinely good for is **dangling symlinks**, because those
-are a filesystem property and nothing cheaper finds them. Installers routinely
-relocate a launcher without its payload — a `--prefix` or `INSTALL_DIR` option
-moves the symlink while the real tree stays in `$TOOL_HOME` or a `downloads/`
-directory — and a build-stage `test -x` on the launcher passes because the
-payload is still sitting behind it *in that stage*. The overlay then ships a
-link to nothing. Gate on the resolved binary, and confirm with the real
-composition above.
+What the shortcut is genuinely good for is **dangling symlinks** against a real
+base. Installers routinely relocate a launcher without its payload — a
+`--prefix` or `INSTALL_DIR` option moves the symlink while the real tree stays
+in `$TOOL_HOME` or a `downloads/` directory — and a build-stage `test -x` on the
+launcher passes because the payload is still sitting behind it *in that stage*.
+The overlay then ships a link to nothing. `kit-tck`'s `overlay-links-resolve`
+warns about every link the overlay cannot resolve by itself, but only warns:
+from the artifact alone, a link into the base looks the same as one into a
+vanished build stage. The composition tells the two apart. Gate on the resolved
+binary, and confirm with the real composition above.

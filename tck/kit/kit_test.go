@@ -37,7 +37,18 @@ type fake struct {
 	// kits are the artifacts a merged set lists, keyed by reference,
 	// so the declaration check has something to compare against.
 	kits map[string]Artifact
+	// dirs are the directory entries the layers carry, and dangling the
+	// links they do not resolve.
+	dirs     map[string]FileStat
+	dangling []Symlink
 }
+
+func (f *fake) DirStat(_ context.Context, name string) (FileStat, bool, error) {
+	st, ok := f.dirs[name]
+	return st, ok, nil
+}
+
+func (f *fake) DanglingSymlinks(context.Context) ([]Symlink, error) { return f.dangling, nil }
 
 func (f *fake) ResolveKit(_ context.Context, ref, _ string) (Artifact, error) {
 	if a, ok := f.kits[ref]; ok {
@@ -276,6 +287,73 @@ func TestLayerCountIsSkippedWhenTheSourceCannotSeeLayers(t *testing.T) {
 	a.layers, a.layersKnown = nil, false
 
 	require.Equal(t, report.Skip, findings(t, a)["at-least-one-layer"].Severity)
+}
+
+// An overlay's directory entries replace the base's, so the two home
+// levels are judged from both directions: /home handed to the agent, and
+// /home/agent taken from it.
+func TestAnOverlayMustKeepTheHomeOwners(t *testing.T) {
+	a := conforming(t)
+	a.dirs = map[string]FileStat{
+		"/home":       {Mode: 0o755, Uid: 1000, Gid: 1000},
+		"/home/agent": {Mode: 0o755, Uid: 0, Gid: 0},
+	}
+
+	rep, err := Run(context.Background(), a)
+	require.NoError(t, err)
+	var details []string
+	for _, f := range rep.Findings {
+		if f.Check == "overlay-home-ownership" {
+			require.Equal(t, report.Fail, f.Severity)
+			details = append(details, f.Detail)
+		}
+	}
+	require.Len(t, details, 2)
+	require.Contains(t, details[0], "/home owned by uid 1000")
+	require.Contains(t, details[1], "/home/agent owned by uid 0")
+}
+
+func TestAnOverlayOwningTheHomeLevelsCorrectlyReportsNothing(t *testing.T) {
+	a := conforming(t)
+	a.dirs = map[string]FileStat{
+		"/home":       {Mode: 0o755},
+		"/home/agent": {Mode: 0o755, Uid: 1000, Gid: 1000},
+	}
+
+	require.Empty(t, findings(t, a))
+}
+
+// A workload's layers are the whole root filesystem, not an overlay on
+// someone else's home, so neither overlay check judges it.
+func TestAWorkloadIsNotJudgedAsAnOverlay(t *testing.T) {
+	a := sbxWorkload(t)
+	a.dirs = map[string]FileStat{"/home/agent": {Mode: 0o755}}
+	a.dangling = []Symlink{{Path: "/etc/mtab", Target: "/proc/mounts"}}
+
+	require.Empty(t, findings(t, a))
+}
+
+// A link the overlay cannot resolve may still find its target on the
+// base, so it is a warning, not a verdict.
+func TestADanglingOverlaySymlinkWarns(t *testing.T) {
+	a := conforming(t)
+	a.dangling = []Symlink{{Path: "/usr/local/bin/tool", Target: "/root/.local/share/tool/bin/tool"}}
+
+	rep, err := Run(context.Background(), a)
+	require.NoError(t, err)
+	require.False(t, rep.Failed())
+	got := findings(t, a)["overlay-links-resolve"]
+	require.Equal(t, report.Warn, got.Severity)
+	require.Contains(t, got.Detail, "/usr/local/bin/tool links to /root/.local/share/tool/bin/tool")
+}
+
+func TestOverlayChecksAreSkippedBeforeLayersExist(t *testing.T) {
+	a := conforming(t)
+	a.layers, a.layersKnown = nil, false
+
+	got := findings(t, a)
+	require.Equal(t, report.Skip, got["overlay-home-ownership"].Severity)
+	require.Equal(t, report.Skip, got["overlay-links-resolve"].Severity)
 }
 
 // The regression this suite exists for: staging silently not running.

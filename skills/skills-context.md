@@ -57,10 +57,11 @@ Two things in them are worth knowing before you need them, because they are
 the mistakes that cost the most time:
 
 - **A build proves a recipe ran, not that a kit works.** For a mixin, compose
-  the built overlay onto a bare base and run the tool. That is the only check
-  that catches an overlay shipping a dangling symlink, which happens whenever
-  an installer relocates a launcher without its payload.
+  the built overlay onto a bare base and run the tool. `kit-tck validate` warns
+  about a symlink the overlay does not resolve by itself, which happens
+  whenever an installer relocates a launcher without its payload, but only the
+  composition shows whether the base supplies the target.
 - **An overlay states ownership for every directory level it ships**, and its
   entries override the base's. `/home` owned by uid 1000 hands away a
   directory the kit does not own; `/home/agent` owned by root takes `$HOME`
-  from the agent user.
+  from the agent user. `kit-tck validate` fails either.

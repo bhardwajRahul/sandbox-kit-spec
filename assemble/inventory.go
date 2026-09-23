@@ -234,6 +234,38 @@ func StatFileEntry(r io.Reader, path string) (FileEntry, error) {
 	return readEntry(tr, path, false, -1)
 }
 
+// StatDirEntry returns one path's final entry from a layer blob when that
+// entry is a directory, reporting OK false otherwise. The other readers
+// treat a directory as the absence of a file; this one exists because a
+// directory entry's own metadata is what replaces the base's when the
+// layer applies.
+func StatDirEntry(r io.Reader, path string) (FileEntry, error) {
+	tr, closeLayer, err := openLayer(r)
+	if err != nil {
+		return FileEntry{}, err
+	}
+	defer closeLayer()
+	want := strings.TrimSuffix(normalizePath(path), "/")
+	var entry FileEntry
+	for idx := 0; ; idx++ {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return entry, nil
+		}
+		if err != nil {
+			return FileEntry{}, fmt.Errorf("read layer: %w", err)
+		}
+		if strings.TrimSuffix(normalizePath(hdr.Name), "/") != want {
+			continue
+		}
+		if hdr.Typeflag != tar.TypeDir {
+			entry = FileEntry{}
+			continue
+		}
+		entry = FileEntry{Index: idx, Mode: hdr.Mode, Uid: hdr.Uid, Gid: hdr.Gid, OK: true}
+	}
+}
+
 // regular reports whether a tar type is an ordinary file. The reader
 // rewrites the historical spelling to TypeReg before this sees it.
 func regular(typeflag byte) bool {

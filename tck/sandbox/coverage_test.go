@@ -96,6 +96,11 @@ var kitCovers = map[string][]string{
 	// artifact can be held to from outside.
 	"merged-set": {"SPEC-v3 §10/merged-set-carries-sources"},
 
+	// A mixin's layers are its overlay, so what they carry at the home
+	// levels and where their links point are read straight off them.
+	"overlay-home-ownership": {"SPEC-v3 §10/overlay-home-ownership"},
+	"overlay-links-resolve":  {"SPEC-v3 §10/overlay-links-resolve"},
+
 	// The floor a workload promises by declaring sbx@1 is a property of
 	// the artifact, so the kit suite is where it is judged: the shells
 	// the host runs things through, and an identity it can resolve out
