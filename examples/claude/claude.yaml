@@ -98,17 +98,6 @@ capabilities:
               scopes: "{{.Scopes}}"
             primaryApiKey: "{{.PrimaryApiKey}}"
 
-  # Volumes persist across container recreation; deterministic naming
-  # reattaches the same sandbox name to the same volumes on recreate, so
-  # session state survives kit changes. Subdirectories rather than all of
-  # ~/.claude/, so kit-managed files (settings.json, .credentials.json)
-  # keep coming from the image and hooks on every create.
-  #
-  # Every volume sets a size: an unsized block volume inherits a 50 GiB
-  # default whose ext4 inode tables cost ~800 MiB of host space while
-  # empty. 512m is the floor worth using — below it mke2fs switches to
-  # the "small" profile and spends as much on inode tables as a volume
-  # a quarter the size.
   # The session control surface: how a harness drives claude without a
   # human at the terminal. Argv tails append to the entrypoint the way
   # user args do; the host substitutes the placeholders. list enumerates
@@ -122,6 +111,17 @@ capabilities:
       resume: ["--resume", "{{.SessionID}}"]
       list: ["claude", "agents", "--json", "--all"]
 
+  # Volumes persist across container recreation; deterministic naming
+  # reattaches the same sandbox name to the same volumes on recreate, so
+  # session state survives kit changes. Subdirectories rather than all of
+  # ~/.claude/, so kit-managed files (settings.json, .credentials.json)
+  # keep coming from the image and hooks on every create.
+  #
+  # Every volume sets a size: sbx formats an unsized kit volume at
+  # 512 MiB, so a path that outgrows that fails with ENOSPC mid-session
+  # rather than at create. 512m is also the floor worth stating — below
+  # it mke2fs switches to the "small" profile and spends as much on
+  # inode tables as a volume a quarter the size.
   - type: com.docker.sandbox/volume@1
     description: Conversation history; grows without bound, gets the headroom
     config: {path: /home/agent/.claude/projects, size: 2g}

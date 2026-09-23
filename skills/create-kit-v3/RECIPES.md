@@ -8,12 +8,12 @@ overlay has to satisfy. Reference for [SKILL.md](SKILL.md).
 A workload's layers are the root filesystem, so its recipe is an ordinary
 image build. Build on a base carrying the runtime's platform floor — `bash`,
 `sh`, `curl`, `git`, a CA store, and a non-root `agent` user at uid 1000 with
-home `/home/agent` — which the published `docker/sandbox-templates:*` images
+home `/home/agent` — which the hardened `dhi.io/sbx-templates:*` images
 provide. A bare distro base builds fine and fails at agent launch.
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-ARG BASE_IMAGE=docker/sandbox-templates:shell-docker
+ARG BASE_IMAGE=dhi.io/sbx-templates:shell-docker
 FROM ${BASE_IMAGE}
 
 ARG TOOL_VERSION
@@ -61,6 +61,13 @@ COPY --from=build /out /
 # agent process; an /etc/profile.d drop would only reach a login shell.
 ENV TOOL_HOME=/opt/tool
 ```
+
+A merged env key other than `PATH` is first-writer-owned: a second kit may
+restate the same value, and a different one refuses the composition. Keep
+`ENV` to keys the tool owns. A key a base may already set to something else —
+`BROWSER`, `TERM`, `LANG` — is what the `codex-mixin` and `cursor-mixin`
+examples leave to a login profile instead, which applies over the base's value
+and reaches only login shells.
 
 Prefer `/usr/local` and `/opt`, and **avoid the agent's home
 entirely** where you can — whatever is at `/home/agent` on the composed base

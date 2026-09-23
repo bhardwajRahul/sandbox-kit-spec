@@ -13,7 +13,11 @@ RUN HOME=/build bash -c 'curl -fsS https://cursor.com/install | bash' \
  && ln -s "$target" /out/usr/local/bin/cursor-agent
 
 # v2's environment.variables ride the overlay, sourced by the base's
-# login shell.
+# login shell. An ENV on the final stage would merge into the composed
+# image too (SPEC-v3 §10), but a merged key is first-writer-owned and a
+# base disagreeing on its value would refuse the composition; a login
+# profile applies over the base's value instead, at the cost of not
+# reaching a process started outside a login shell.
 RUN mkdir -p /out/etc/profile.d && printf 'export IS_SANDBOX=1
 export AGENT_CLI_CREDENTIAL_STORE=memory
 ' > /out/etc/profile.d/cursor-env.sh

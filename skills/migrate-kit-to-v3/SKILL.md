@@ -178,8 +178,8 @@ docker buildx build . -f <kit>.yaml -t <kit>-kit:<tag> \
 ```
 
 A workload's recipe must build on a base carrying the platform floor — `bash`,
-the `agent` user (uid 1000), `git`, a CA store — which the published
-`docker/sandbox-templates:*` images carry. A bare distro base builds fine and
+the `agent` user (uid 1000), `git`, a CA store — which the hardened
+`dhi.io/sbx-templates:*` images carry. A bare distro base builds fine and
 fails at agent launch.
 
 ### 6. Run it with sbx

@@ -80,7 +80,8 @@ capabilities:
   # Session state persists across container recreation; subdirectories
   # rather than all of ~/.claude/, so kit-managed files (settings.json,
   # .credentials.json) keep coming from the hooks on every create. Every
-  # volume sets a size: an unsized block volume inherits a 50 GiB default.
+  # volume sets a size: sbx formats an unsized kit volume at 512 MiB, and
+  # a path that outgrows it fails with ENOSPC mid-session.
   - type: com.docker.sandbox/volume@1
     description: Conversation history; grows without bound, gets the headroom
     config: {path: /home/agent/.claude/projects, size: 2g}
@@ -193,4 +194,4 @@ capabilities:
 
   - type: com.docker.sandbox/agent-context@1
     config:
-      contentFile: ./claude-mixin-context.md
+      contentFile: ./claude-context.md

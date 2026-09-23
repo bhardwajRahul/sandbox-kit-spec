@@ -30,8 +30,8 @@ for d in .cursor .claude; do
 done
 ```
 
-The guard earns its lines. `mkdir -p` is needed because both directories are
-git-ignored and so are absent from a fresh clone. `-sfn` replaces an existing
+The guard earns its lines. `mkdir -p` is needed because the repository
+carries neither directory, so both are absent from a fresh clone. `-sfn` replaces an existing
 *symlink* rather than following it. But neither handles `skills` already being
 a **real directory**: `ln` then treats it as the destination and silently
 creates `.cursor/skills/skills` pointing at its own parent. That is why the
