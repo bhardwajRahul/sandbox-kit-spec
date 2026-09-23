@@ -211,7 +211,7 @@ docker buildx build . -f <kit>.yaml -t <kit>:<version> \
   --output type=oci,dest=/tmp/<kit>-layout,tar=false
 
 # 3. conformance — NB the tag alone, not <kit>:<version>
-kit-tck kit --layout /tmp/<kit>-layout <version>
+kit-tck validate --layout /tmp/<kit>-layout <version>
 
 # 4. run it, no registry needed
 sbx run ./<kit> .                          # a workload
