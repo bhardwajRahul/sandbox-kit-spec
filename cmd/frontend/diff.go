@@ -128,7 +128,13 @@ func lowerFor(ctx context.Context, c gwclient.Client, d *spec.Descriptor, opts m
 
 	p := platformOrDefault(plat)
 	pinned, dgst, configRaw, err := c.ResolveImageConfig(ctx, baseRef, sourceresolver.Opt{
-		ImageOpt: &sourceresolver.ResolveImageOpt{Platform: &p},
+		ImageOpt: &sourceresolver.ResolveImageOpt{
+			Platform: &p,
+			// --pull reaches a frontend as image-resolve-mode; an
+			// explicit resolve that ignored it would pin a stale local
+			// copy of the base the upper side just re-pulled.
+			ResolveMode: opts[keyImageResolveMode],
+		},
 	})
 	if err != nil {
 		return llb.State{}, ocispecs.ImageConfig{}, fmt.Errorf("resolve overlay base %s: %w", baseRef, err)

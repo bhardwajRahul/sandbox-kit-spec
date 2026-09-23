@@ -22,10 +22,13 @@ import (
 )
 
 const (
-	keyFilename    = "filename"
-	keyTarget      = "target"
-	keyPlatform    = "platform"
-	buildArgPrefix = "build-arg:"
+	keyFilename         = "filename"
+	keyTarget           = "target"
+	keyPlatform         = "platform"
+	keyImageResolveMode = "image-resolve-mode"
+	keyMultiPlatform    = "multi-platform"
+	buildArgPrefix      = "build-arg:"
+	attestPrefix        = "attest:"
 
 	// stagedKitRoot is where a kit's sources land in the image: the
 	// published descriptor as <stem>/kit.yaml, the content recipe as
@@ -645,8 +648,29 @@ func solveDockerfile(ctx context.Context, c gwclient.Client, d *spec.Descriptor,
 		fo[keyTarget] = target
 	}
 	req := gwclient.SolveRequest{
-		Frontend:    "dockerfile.v0",
-		FrontendOpt: fo,
+		Frontend:       "dockerfile.v0",
+		FrontendOpt:    fo,
+		FrontendInputs: map[string]*pb.Definition{},
+	}
+	// Named contexts a caller sent as frontend inputs (bake wiring one
+	// target's output into another) only reach the sub-solve if handed
+	// on; the gateway does not forward the parent's inputs by itself.
+	// The dockerfile input is the one exception: the companion is read
+	// from the dockerfile local, never from the parent's input, which
+	// holds the descriptor.
+	inputs, err := c.Inputs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for name, st := range inputs {
+		if name == dockerui.DefaultLocalNameDockerfile {
+			continue
+		}
+		def, err := st.Marshal(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("marshal frontend input %s: %w", name, err)
+		}
+		req.FrontendInputs[name] = def.ToPB()
 	}
 	if content.inline {
 		def, err := llb.Scratch().
@@ -656,9 +680,7 @@ func solveDockerfile(ctx context.Context, c gwclient.Client, d *spec.Descriptor,
 		if err != nil {
 			return nil, err
 		}
-		req.FrontendInputs = map[string]*pb.Definition{
-			dockerui.DefaultLocalNameDockerfile: def.ToPB(),
-		}
+		req.FrontendInputs[dockerui.DefaultLocalNameDockerfile] = def.ToPB()
 	}
 	res, err := c.Solve(ctx, req)
 	if err != nil {
@@ -668,7 +690,9 @@ func solveDockerfile(ctx context.Context, c gwclient.Client, d *spec.Descriptor,
 }
 
 // dockerfileFrontendOpts assembles the option set forwarded to dockerfile.v0:
-// passthrough of target/labels/build-args, the companion as the file, one
+// everything the caller passed — no-cache, cache imports, network, resolve
+// mode, named contexts, and the rest — except the few keys this frontend
+// owns or that would break a sub-solve, plus the companion as the file, one
 // platform, and the kit args mapped onto the Dockerfile ARG names they
 // declare — the caller passes --build-arg <kitArgName>=<value>; the
 // Dockerfile sees <buildArg>=<value> after validation.
@@ -684,11 +708,20 @@ func dockerfileFrontendOpts(d *spec.Descriptor, opts map[string]string, companio
 			// it would re-dispatch the companion back into this frontend
 			// as a descriptor — recursion the syntax-line self-reference
 			// guard cannot see.
-		case k == keyTarget:
-			fo[k] = v
-		case strings.HasPrefix(k, "label:"):
-			fo[k] = v
-		case strings.HasPrefix(k, buildArgPrefix):
+		case k == keyFilename, k == keyPlatform:
+			// This frontend names the companion as the file and solves
+			// one platform at a time; both are set below, never inherited
+			// from the descriptor build's own values.
+		case k == keyMultiPlatform, k == buildArgPrefix+"BUILDKIT_MULTI_PLATFORM":
+			// The sub-solve is always single-platform — this frontend
+			// assembles the index itself — and a multi-platform result
+			// cannot be read back through SingleRef.
+		case strings.HasPrefix(k, attestPrefix), strings.HasPrefix(k, buildArgPrefix+"BUILDKIT_ATTEST_"):
+			// Attestations attach to the final exported result; the
+			// controller produces them at the top level from this
+			// frontend's output. Forwarded into the sub-solve they would
+			// shape its result as multi-ref, which SingleRef refuses.
+		default:
 			fo[k] = v
 		}
 	}
