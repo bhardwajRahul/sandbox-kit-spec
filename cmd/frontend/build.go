@@ -27,6 +27,9 @@ const (
 	keyPlatform         = "platform"
 	keyImageResolveMode = "image-resolve-mode"
 	keyMultiPlatform    = "multi-platform"
+	keyCmdline          = "cmdline"
+	keySource           = "source"
+	keyFrontendCaps     = "frontend.caps"
 	buildArgPrefix      = "build-arg:"
 	attestPrefix        = "attest:"
 
@@ -753,11 +756,20 @@ func dockerfileFrontendOpts(d *spec.Descriptor, opts map[string]string, companio
 //     to the final exported result; the controller produces them at the
 //     top level from this frontend's output. Forwarded into the sub-solve
 //     they would shape its result as multi-ref, which SingleRef refuses.
+//   - cmdline, source, frontend.caps: gateway-control attributes injected
+//     when THIS frontend was dispatched through the kit's syntax line, not
+//     caller build options. dockerfile.v0 skips its own syntax detection
+//     whenever cmdline is present, so forwarding it would silently build a
+//     companion that names a foreign frontend (# syntax=...-labs) with the
+//     default frontend instead.
 func reservedSubSolveOpt(k string) bool {
 	switch {
 	case k == buildArgPrefix+"BUILDKIT_SYNTAX",
 		k == keyMultiPlatform,
 		k == buildArgPrefix+"BUILDKIT_MULTI_PLATFORM",
+		k == keyCmdline,
+		k == keySource,
+		k == keyFrontendCaps,
 		strings.HasPrefix(k, attestPrefix),
 		strings.HasPrefix(k, buildArgPrefix+"BUILDKIT_ATTEST_"):
 		return true

@@ -101,6 +101,16 @@ func TestDockerfileFrontendOptsForwarding(t *testing.T) {
 			want: map[string]string{"filename": "kit.build.dockerfile"},
 		},
 		{
+			name: "gateway dispatch attributes never suppress the companion's own syntax line",
+			d:    &spec.Descriptor{},
+			opts: map[string]string{
+				"cmdline":       "docker/sandbox-kit:latest",
+				"source":        "docker/sandbox-kit:latest",
+				"frontend.caps": "moby.buildkit.frontend.inputs",
+			},
+			want: map[string]string{"filename": "kit.build.dockerfile"},
+		},
+		{
 			name: "kit args cannot smuggle reserved keys back in as buildArg destinations",
 			d: &spec.Descriptor{Args: map[string]spec.Arg{
 				"syntax":  {BuildArg: "BUILDKIT_SYNTAX", Default: &def},
