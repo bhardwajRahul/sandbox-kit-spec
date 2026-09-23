@@ -1,3 +1,8 @@
 # Review routing: the people in the MAINTAINERS file, in the form GitHub
 # reads.
+
+# Maintainers, including external
+* @cdupuis
+
+# Admins
 * @docker/sbx-admins
