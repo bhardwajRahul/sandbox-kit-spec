@@ -228,11 +228,11 @@ tasks:
     desc: >-
       Compare the example kits' version-arg defaults against upstream
       latest releases, changing nothing. Which kits track what lives in
-      hack/kit-version.sh, the same map build and push resolve a tag
+      scripts/kit-version.sh, the same map build and push resolve a tag
       through, so the report and the build cannot disagree about latest.
     silent: true
     cmds:
-      - hack/kit-version.sh check
+      - scripts/kit-version.sh check
 
   versions:update:
     desc: >-
@@ -244,9 +244,9 @@ tasks:
     cmds:
       - |
         set -euo pipefail
-        for kit in ${KIT:-$(hack/kit-version.sh kits)}; do
-          before=$(hack/kit-version.sh current "$kit")
-          after=$(hack/kit-version.sh update "$kit")
+        for kit in ${KIT:-$(scripts/kit-version.sh kits)}; do
+          before=$(scripts/kit-version.sh current "$kit")
+          after=$(scripts/kit-version.sh update "$kit")
           if [ "$before" = "$after" ]; then
             printf '%-16s %s\n' "$kit" "$after"
           else
@@ -285,8 +285,8 @@ tasks:
         # the tag follows it rather than the file — and a build pinned
         # that way refreshes nothing. Both argument sources are read, in
         # the order the build line puts them.
-        [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/hack/kit-version.sh override "{{.BUILD_ARGS}}" "{{.CLI_ARGS}}")
-        [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/hack/kit-version.sh update {{.KIT}})
+        [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/scripts/kit-version.sh override "{{.BUILD_ARGS}}" "{{.CLI_ARGS}}")
+        [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/scripts/kit-version.sh update {{.KIT}})
         docker buildx build . -f "$(test -f {{.KIT}}.yaml && echo {{.KIT}}.yaml || echo {{.KIT}}.dockerfile)" \
           {{.BUILD_ARGS}} -t {{.KIT}}-kit:"$tag" {{.CLI_ARGS}}
 
@@ -323,8 +323,8 @@ tasks:
         set -euo pipefail
         F="$(test -f {{.BUILD_DIR}}/{{.KIT}}.yaml && echo {{.KIT}}.yaml || echo {{.KIT}}.dockerfile)"
         tag="{{.TAG}}"
-        [ -n "$tag" ] || tag=$(hack/kit-version.sh override "{{.BUILD_ARGS}}")
-        [ -n "$tag" ] || tag=$(hack/kit-version.sh current {{.KIT}})
+        [ -n "$tag" ] || tag=$(scripts/kit-version.sh override "{{.BUILD_ARGS}}")
+        [ -n "$tag" ] || tag=$(scripts/kit-version.sh current {{.KIT}})
         # `-i.bak` then remove it: BSD sed needs an argument for -i and GNU
         # sed reads a bare '' as the script, then treats the expression as a
         # filename and fails — which under `set -e` aborts this task on Linux.
@@ -372,8 +372,8 @@ tasks:
         # the tag follows it rather than the file — and a build pinned
         # that way refreshes nothing. Both argument sources are read, in
         # the order the build line puts them.
-        [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/hack/kit-version.sh override "{{.BUILD_ARGS}}" "{{.CLI_ARGS}}")
-        [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/hack/kit-version.sh update {{.KIT}})
+        [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/scripts/kit-version.sh override "{{.BUILD_ARGS}}" "{{.CLI_ARGS}}")
+        [ -n "$tag" ] || tag=$({{.ROOT_DIR}}/scripts/kit-version.sh update {{.KIT}})
         docker buildx build . -f "$(test -f {{.KIT}}.yaml && echo {{.KIT}}.yaml || echo {{.KIT}}.dockerfile)" \
           {{.SECRETS}} {{.BUILD_ARGS}} \
           --push -t {{.REGISTRY}}/sbx-kit-{{.KIT}}:"$tag" {{.PUBLISH_FLAGS}} {{.CLI_ARGS}}

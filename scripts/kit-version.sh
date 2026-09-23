@@ -28,7 +28,7 @@ COUPLED=(codex-acp)
 
 usage() {
 	cat >&2 <<'EOF'
-usage: hack/kit-version.sh <command> [kit]
+usage: scripts/kit-version.sh <command> [kit]
 
   kits              the kits whose version tracks an upstream release
   upstream <kit>    the release upstream publishes (exit 1 when untracked)
