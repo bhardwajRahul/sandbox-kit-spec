@@ -327,11 +327,6 @@ varies, keep the rest exact and vary only that part:
   support Kits v3 in local and cloud mode. Note `sbx kit validate` does
   **not** accept a v3 source kit; `sbx kit inspect` does.
 - **`kit-tck`** — `go install github.com/docker/sandbox-kit-spec/v3/cmd/kit-tck@latest`.
-
-  *While the repository is private* this also needs access to it plus
-  `GOPRIVATE=github.com/docker/*`; without access you can still validate by
-  building. Delete this paragraph when the repository goes public — nothing
-  else here depends on it.
 - **`cosign`** — only if you sign. Nothing in the kit grammar requires it and
   no consumer needs it to run a kit.
 
