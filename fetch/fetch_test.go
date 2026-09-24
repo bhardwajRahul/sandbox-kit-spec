@@ -129,6 +129,40 @@ func TestCreatePhaseArgsAreResolvedPerKitBeforeMerge(t *testing.T) {
 	require.Empty(t, merged.Descriptor.Args)
 }
 
+func TestCreatePhaseEnvExportsAreReturned(t *testing.T) {
+	reg := newRegistry(t)
+	exporting := func(name string) []byte {
+		return kitJSON(t, &spec.Descriptor{
+			SchemaVersion: spec.SchemaVersion,
+			Kind:          spec.KindMixin,
+			Version:       "1.0.0",
+			Provides:      []string{name + "@1.0.0"},
+			Args: map[string]spec.Arg{
+				"token": {Required: true, Env: "KIT_TOKEN"},
+			},
+		})
+	}
+	reg.tag("kits/a", "1.0.0", reg.image(t, exporting("a")))
+	reg.tag("kits/b", "1.0.0", reg.image(t, exporting("b")))
+
+	client, err := New()
+	require.NoError(t, err)
+	refA, refB := reg.ref("kits/a", "1.0.0"), reg.ref("kits/b", "1.0.0")
+	_, err = client.AssemblePartial(context.Background(), []Request{
+		{Reference: refA, Args: map[string]string{"token": "alpha"}},
+		{Reference: refB, Args: map[string]string{"token": "beta"}},
+	}, spec.MergeOptions{})
+	require.ErrorContains(t, err, "KIT_TOKEN")
+
+	merged, err := client.AssemblePartial(context.Background(), []Request{
+		{Reference: refA, Args: map[string]string{"token": "alpha"}},
+		{Reference: refB, Args: map[string]string{"token": "alpha"}},
+	}, spec.MergeOptions{})
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"KIT_TOKEN": "alpha"}, merged.Env)
+	require.Empty(t, merged.Descriptor.Args)
+}
+
 func TestIndexAnnotationIsEnough(t *testing.T) {
 	reg := newRegistry(t)
 	// The platform manifest is deliberately not stored. Reading it

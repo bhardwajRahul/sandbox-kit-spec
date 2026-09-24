@@ -20,5 +20,7 @@
 // Assemble resolves a runnable set (exactly one workload) and merges
 // descriptors with spec.Merge. AssemblePartial is the mixin-only form.
 // The merged image config is assemble.Merge, which needs the manifests
-// and configs, not just these descriptors.
+// and configs, not just these descriptors. Result.Env carries
+// create-phase env: exports, which do not survive in the descriptor;
+// the caller applies them to that config.
 package fetch
