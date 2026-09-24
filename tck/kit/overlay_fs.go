@@ -86,6 +86,9 @@ func (a *ociArtifact) overlayModel(ctx context.Context) (*overlayFS, error) {
 		}
 		upper := newDir()
 		err = assemble.WalkLayer(rc, func(hdr *tar.Header) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			extract(upper, layers, hdr)
 			return nil
 		})
