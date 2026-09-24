@@ -126,6 +126,71 @@ func TestMergeConfigAdditive(t *testing.T) {
 	require.Empty(t, merged.Config.Config.WorkingDir)
 }
 
+func TestMergePreservesSandboxConfig(t *testing.T) {
+	sandbox := input("shell-kit", "rootfs")
+	sandbox.Config.Config = ocispec.ImageConfig{
+		Env:          []string{"PATH=/usr/bin"},
+		Labels:       map[string]string{"vendor": "docker"},
+		ExposedPorts: map[string]struct{}{"80/tcp": {}},
+		Volumes:      map[string]struct{}{"/data": {}},
+	}
+	original, err := Merge(sandbox, nil)
+	require.NoError(t, err)
+
+	tool := input("tool-kit", "tool-overlay")
+	tool.Config.Config = ocispec.ImageConfig{
+		Env:          []string{"PATH=/opt/tool/bin"},
+		Labels:       map[string]string{"tool": "1"},
+		ExposedPorts: map[string]struct{}{"8080/tcp": {}},
+		Volumes:      map[string]struct{}{"/var/cache/tool": {}},
+	}
+
+	merged, err := Merge(sandbox, []Input{tool})
+	require.NoError(t, err)
+	require.Equal(t, []string{"PATH=/usr/bin:/opt/tool/bin"}, merged.Config.Config.Env)
+	require.Equal(t, "1", merged.Config.Config.Labels["tool"])
+	require.Contains(t, merged.Config.Config.ExposedPorts, "8080/tcp")
+	require.Contains(t, merged.Config.Config.Volumes, "/var/cache/tool")
+	require.Equal(t, ocispec.ImageConfig{
+		Env:          []string{"PATH=/usr/bin"},
+		Labels:       map[string]string{"vendor": "docker"},
+		ExposedPorts: map[string]struct{}{"80/tcp": {}},
+		Volumes:      map[string]struct{}{"/data": {}},
+	}, sandbox.Config.Config)
+
+	withoutTool, err := Merge(sandbox, nil)
+	require.NoError(t, err)
+	require.Equal(t, original.ConfigJSON, withoutTool.ConfigJSON)
+}
+
+func TestMergePreservesSandboxConfigOnError(t *testing.T) {
+	sandbox := input("shell-kit", "rootfs")
+	sandbox.Config.Config = ocispec.ImageConfig{
+		Env:          []string{"PATH=/usr/bin", "EDITOR=vim"},
+		Labels:       map[string]string{"vendor": "docker"},
+		ExposedPorts: map[string]struct{}{"80/tcp": {}},
+		Volumes:      map[string]struct{}{"/data": {}},
+	}
+	tool := input("tool-kit", "tool-overlay")
+	tool.Config.Config = ocispec.ImageConfig{
+		Env:          []string{"PATH=/opt/tool/bin"},
+		Labels:       map[string]string{"tool": "1"},
+		ExposedPorts: map[string]struct{}{"8080/tcp": {}},
+		Volumes:      map[string]struct{}{"/var/cache/tool": {}},
+	}
+	conflicting := input("editor-kit", "editor-overlay")
+	conflicting.Config.Config.Env = []string{"EDITOR=nano"}
+
+	_, err := Merge(sandbox, []Input{tool, conflicting})
+	require.ErrorContains(t, err, "env conflict on EDITOR")
+	require.Equal(t, ocispec.ImageConfig{
+		Env:          []string{"PATH=/usr/bin", "EDITOR=vim"},
+		Labels:       map[string]string{"vendor": "docker"},
+		ExposedPorts: map[string]struct{}{"80/tcp": {}},
+		Volumes:      map[string]struct{}{"/data": {}},
+	}, sandbox.Config.Config)
+}
+
 func TestMergeConfigPathOnSandboxWithoutPath(t *testing.T) {
 	sandbox := input("bare-kit", "rootfs")
 	mixin := input("tool-kit", "overlay")
