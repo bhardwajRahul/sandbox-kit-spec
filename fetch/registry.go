@@ -160,6 +160,12 @@ func (c *Client) annotation(ctx context.Context, repo *remote.Repository, desc o
 	if index.SchemaVersion != 2 {
 		return nil, nil, false, fmt.Errorf("an index declares schemaVersion 2, got %d", index.SchemaVersion)
 	}
+	// An index annotation is trusted without opening a child. An
+	// artifactType would make that trust accept an OCI artifact, which
+	// a kit is not — the same rule an image manifest is held to.
+	if index.ArtifactType != "" {
+		return nil, nil, false, fmt.Errorf("a kit sets no artifactType, got %q", index.ArtifactType)
+	}
 	// Only the tagged index's annotation counts. A nested index is not
 	// what the reference resolved to, and adopting its annotation would
 	// hide an absent one on the index a consumer actually reads.

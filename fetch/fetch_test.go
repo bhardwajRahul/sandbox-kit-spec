@@ -347,6 +347,38 @@ func TestAnArtifactIsNotAKit(t *testing.T) {
 	require.ErrorContains(t, err, "artifactType")
 }
 
+func TestAnArtifactIndexIsNotAKit(t *testing.T) {
+	reg := newRegistry(t)
+	desc := kitJSON(t, &spec.Descriptor{
+		SchemaVersion: spec.SchemaVersion,
+		Kind:          spec.KindMixin,
+		Version:       "1.0.0",
+		Provides:      []string{"demo@1.0.0"},
+	})
+	// The child manifest is not stored. Success would mean the index
+	// annotation was trusted without looking at what the index is.
+	missing := ocispec.Descriptor{
+		MediaType: ocispec.MediaTypeImageManifest,
+		Digest:    digest.FromString("absent"),
+		Size:      1,
+		Platform:  &ocispec.Platform{OS: "linux", Architecture: "amd64"},
+	}
+	raw, err := json.Marshal(ocispec.Index{
+		Versioned:    specs.Versioned{SchemaVersion: 2},
+		MediaType:    ocispec.MediaTypeImageIndex,
+		ArtifactType: "application/vnd.example.artifact",
+		Manifests:    []ocispec.Descriptor{missing},
+		Annotations:  map[string]string{spec.AnnotationDescriptor: string(desc)},
+	})
+	require.NoError(t, err)
+	reg.tag("kits/demo", "1.0.0", raw)
+
+	client, err := New()
+	require.NoError(t, err)
+	_, err = client.Fetch(context.Background(), reg.ref("kits/demo", "1.0.0"))
+	require.ErrorContains(t, err, "artifactType")
+}
+
 func TestANonImageConfigIsNotAKit(t *testing.T) {
 	reg := newRegistry(t)
 	desc := kitJSON(t, &spec.Descriptor{
