@@ -1168,9 +1168,12 @@ func (a *ociArtifact) impliedDir(ctx context.Context, target string, upto int) (
 		if whitesOut(paths, "/"+target) {
 			found = false
 		}
+		// An opaque marker hides what lower layers put beneath the
+		// directory, not the directory holding it: it keeps the
+		// directory, empty.
 		for _, p := range paths {
 			if p == prefix+".wh..wh..opq" {
-				found = false
+				found = true
 			}
 		}
 		for _, group := range [][]string{paths, dirs} {

@@ -915,6 +915,29 @@ func TestDanglingSymlinksAreTheOnesTheOverlayCannotResolve(t *testing.T) {
 	}, dangling)
 }
 
+// An opaque marker empties the directory holding it without removing it,
+// so a link to that directory still resolves and a link into what the
+// lower layer put there does not.
+func TestAnOpaqueMarkerKeepsItsDirectory(t *testing.T) {
+	a := buildLayeredArtifact(t,
+		func(tw *tar.Writer) {
+			writeFile(t, tw, "srv/implied/tool", 0o755, 0, 0)
+			writeLink(t, tw, "usr/local/bin/dir", "/srv/implied")
+			writeLink(t, tw, "usr/local/bin/file", "/srv/implied/tool")
+		},
+		func(tw *tar.Writer) {
+			writeFile(t, tw, "srv/implied/.wh..wh..opq", 0o644, 0, 0)
+		},
+	)
+	w := a.(overlayWalker)
+
+	dangling, err := w.DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{
+		{Path: "/usr/local/bin/file", Target: "/srv/implied/tool"},
+	}, dangling)
+}
+
 // An ancestor symlink with an empty target is dangling, and one targeting
 // the root must join canonically instead of producing a double slash no
 // archive path matches.
