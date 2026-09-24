@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	godigest "github.com/opencontainers/go-digest"
@@ -47,6 +49,10 @@ func Merge(sandbox Input, mixins []Input) (*Merged, error) {
 	}
 
 	config := sandbox.Config
+	config.Config.Env = slices.Clone(config.Config.Env)
+	config.Config.Labels = maps.Clone(config.Config.Labels)
+	config.Config.ExposedPorts = maps.Clone(config.Config.ExposedPorts)
+	config.Config.Volumes = maps.Clone(config.Config.Volumes)
 	config.RootFS.DiffIDs = append([]godigest.Digest{}, sandbox.Config.RootFS.DiffIDs...)
 	config.History = append([]ocispec.History{}, sandbox.Config.History...)
 
