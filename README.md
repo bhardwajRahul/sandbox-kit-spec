@@ -184,28 +184,39 @@ see [docs/kit-intro.md](docs/kit-intro.md).
 
 ## How to get started
 
-A guided tour from nothing to the local edit-and-run loop. Running Kits
-takes the `sbx` CLI (public install via
+A guided tour from a published Kit to the local edit-and-run loop. Running
+Kits takes the `sbx` CLI (public install via
 [Docker Docs](https://docs.docker.com/ai/sandboxes/install/) /
-[sbx-releases](https://github.com/docker/sbx-releases)), plus a
-registry namespace you can push to (Docker Hub works): the sandbox runtime
-resolves Kit *images* from registries, so an image that only exists in
-Docker Desktop's local store cannot run. (Kit *directories* can — that is
-the local loop in step 5, which needs no registry at all.)
+[sbx-releases](https://github.com/docker/sbx-releases)). The current stable
+`sbx` release supports Kits v3 in both local and cloud mode (`sbx run …`
+and `sbx --cloud …`). Cloud sandboxes use the same Kit references; they do
+not mount a host workspace.
+
+Published Kits live as ordinary images on registries. Browse Verified
+Publisher Sandbox Kits on
+[Docker Hub](https://hub.docker.com/search?type=sbx_kit&badges=verified_publisher).
+The `docker` org publishes **v3** Kits (this specification); the `sbx` org
+still carries the older **v2** line — do not mix the two. Or author your
+own from this checkout.
 
 **1. Install `sbx`.**
-
-Kit v3 is not in the current stable line yet. Install a release candidate
-(or nightly) from [sbx-releases](https://github.com/docker/sbx-releases):
 
 ```sh
 # macOS
 brew trust docker/tap
-brew install docker/tap/sbx@rc
+brew install docker/tap/sbx
 
-# Windows / Linux: download the matching RC artifacts from
+# Windows
+winget install -h Docker.sbx
+
+# Ubuntu (sbx only; or use SBX=1 with get.docker.com for Engine + sbx)
+curl -fsSL https://get.docker.com | sudo REPO_ONLY=1 sh
+sudo apt install docker-sbx
+sudo usermod -aG kvm $USER
+# re-login (or: newgrp kvm) so /dev/kvm is usable before sbx run
+
+# Or download platform artifacts from
 # https://github.com/docker/sbx-releases/releases
-# (stable WinGet / apt packages do not include Kit v3 yet)
 sbx login
 ```
 
@@ -213,17 +224,36 @@ There is nothing to install for the frontend itself:
 [`docker/sandbox-kit:3`](https://hub.docker.com/r/docker/sandbox-kit) is
 on Docker Hub, and BuildKit pulls it when it reads the `# syntax=` line.
 
-Set your registry namespace once for the steps below, and log in:
+**2. Run a published Kit.** No build, no push — compose a workload with a
+mixin from the `docker` org:
+
+```sh
+sbx run docker/sbx-kit-shell:1.0.0 --kit docker/sbx-kit-claude-mixin:2.1.281 .
+# same references in cloud (no local workspace path):
+# sbx --cloud run docker/sbx-kit-shell:1.0.0 --kit docker/sbx-kit-claude-mixin:2.1.281
+```
+
+`shell` is a minimal workload; `claude-mixin` overlays Claude Code onto it.
+More v3 Kits from the `docker` org are on
+[Docker Hub](https://hub.docker.com/search?type=sbx_kit&badges=verified_publisher)
+(filter to that org — `sbx/*` there is still v2).
+
+**3. Push the hello Kit and run it.** From here on you will build Kits from
+this checkout. The sandbox runtime resolves Kit *images* from registries, so
+an image that only exists in Docker Desktop's local store cannot run — push
+to a namespace you own (Docker Hub works), or use Kit *directories* (step 6),
+which need no registry at all.
+
+Set your registry namespace once and log in:
 
 ```sh
 export KIT_REGISTRY=docker.io/<your-hub-username>
 docker login
 ```
 
-**2. Push the hello Kit and run it.** `hello` is the smallest workload
-Kit: a full agent environment with a startup hook, guidance, and a network
-policy. `task kit:push` builds `examples/hello` with the Kit frontend and
-pushes it as an ordinary image:
+`hello` is the smallest workload Kit: a full agent environment with a
+startup hook, guidance, and a network policy. `task kit:push` builds
+`examples/hello` with the Kit frontend and pushes it as an ordinary image:
 
 ```sh
 task kit:push KIT=hello TAG=1.0.0 REGISTRY=$KIT_REGISTRY
@@ -238,7 +268,7 @@ Inside the sandbox, the Kit is self-describing: `cat
 on a descriptor until it validates, but the result can't run in `sbx`
 until it is pushed or consumed as a directory.)
 
-**3. Add the tool Kit — composition.** `tool` is a content-bearing mixin
+**4. Add the tool Kit — composition.** `tool` is a content-bearing mixin
 that `requires` hello: the resolver validates the set is coherent, orders
 provider before requirer, and the assembler merges the layers into one
 image (cached by the lock — the second run reuses it).
@@ -251,7 +281,7 @@ sbx run $KIT_REGISTRY/sbx-kit-hello:1.0.0 --kit $KIT_REGISTRY/sbx-kit-tool:1.0.0
 `cat /time.txt` inside the sandbox shows tool's startup hook ran on
 hello's filesystem.
 
-**4. Add the gh Kit — binary content.** `gh` is a mixin whose overlay
+**5. Add the gh Kit — binary content.** `gh` is a mixin whose overlay
 carries the GitHub CLI as a pinned Nix closure, plus a phased network
 policy and a proxy-managed credential. Composing it drops a real binary
 into the workload's filesystem:
@@ -266,7 +296,7 @@ overlay's `/nix/store`), and with a `github` secret bound on the host
 (`sbx secret set -g github`), `gh api user` authenticates through the
 proxy — the container only ever sees a sentinel token.
 
-**5. The local loop — no registry, no push.** Point `sbx run` at the Kit
+**6. The local loop — no registry, no push.** Point `sbx run` at the Kit
 directories and the runtime builds them on demand, keyed by source hash,
 and loads the results straight into the sandbox runtime:
 
@@ -301,7 +331,7 @@ volume defaults to 20 GiB (`--kit-arg volumeSize=…`);
 `--kit-arg buildkitPort=…` moves the port. Raising size does not grow
 an already-formatted volume —
 recreate the builder sandbox once after changing it. When a Kit is ready
-to share, step 2's `task kit:push` is the whole publishing story.
+to share, step 3's `task kit:push` is the whole publishing story.
 
 ## Building a Kit
 
