@@ -1255,9 +1255,9 @@ func TestAnImpliedDirectoryHasNoEntryToJudge(t *testing.T) {
 	require.False(t, present)
 }
 
-// overlayfs ignores an opaque marker at a layer's root, so it hides
-// nothing the layers below it hold.
-func TestARootOpaqueMarkerHidesNothing(t *testing.T) {
+// An opaque marker at a layer's root hides everything the layers below it
+// hold, as one in a subdirectory hides that directory's lower contents.
+func TestARootOpaqueMarkerHidesTheLowerLayers(t *testing.T) {
 	a := buildLayeredArtifact(t,
 		func(tw *tar.Writer) {
 			writeFile(t, tw, "a", 0o644, 0, 0)
@@ -1270,7 +1270,7 @@ func TestARootOpaqueMarkerHidesNothing(t *testing.T) {
 	)
 	dangling, err := a.(overlayWalker).DanglingSymlinks(context.Background())
 	require.NoError(t, err)
-	require.Empty(t, dangling)
+	require.Equal(t, []Symlink{{Path: "/n", Target: "/a"}}, dangling)
 }
 
 // A name longer than an extractor can create is dropped, however deep it

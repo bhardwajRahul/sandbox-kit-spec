@@ -160,8 +160,7 @@ func (a *ociArtifact) DanglingSymlinks(ctx context.Context) ([]Symlink, error) {
 // it: the name is cleaned as written and its parent resolved with
 // rootPath, missing directories are created as mkparent creates them, a
 // whiteout is placed only where nothing is, an opaque marker marks its
-// directory except at the layer's root, where overlayfs ignores it, and
-// any other entry replaces what held its path unless both are
+// directory, and any other entry replaces what held its path unless both are
 // directories. An entry the extractor would refuse — and so fail the
 // whole layer on — is not placed; that failure is not what these checks
 // judge.
@@ -186,9 +185,7 @@ func extract(upper *fsNode, lowers []*fsNode, hdr *tar.Header) {
 	}
 
 	if base == ".wh..wh..opq" {
-		if parent != upper {
-			parent.opaque = true
-		}
+		parent.opaque = true
 		return
 	}
 	if victim, ok := strings.CutPrefix(base, ".wh."); ok {
@@ -472,7 +469,7 @@ func stack(lower, upper *fsNode) {
 // nil: components in order, each symlink expanded before the ones after
 // it — so a ".." climbs from where a link led — nothing reachable through
 // a file or a whiteout, not even "" or ".", and at most maxLookupSymlinks
-// expansions, followed of them already spent.
+// expansions, with followed of them already spent.
 func lookup(root *fsNode, dirs []*fsNode, target string, followed int) *fsNode {
 	stackDirs := append([]*fsNode{}, dirs...)
 	if strings.HasPrefix(target, "/") {
