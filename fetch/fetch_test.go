@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -328,6 +329,65 @@ func TestANonImageConfigIsNotAKit(t *testing.T) {
 	require.ErrorContains(t, err, "image config")
 }
 
+func TestAnUnknownPlatformIndexStillYieldsItsManifest(t *testing.T) {
+	reg := newRegistry(t)
+	amd64 := reg.image(t, kitJSON(t, &spec.Descriptor{
+		SchemaVersion: spec.SchemaVersion,
+		Kind:          spec.KindMixin,
+		DisplayName:   "amd64",
+		Version:       "1.0.0",
+		Provides:      []string{"demo@1.0.0"},
+	}))
+	nested := reg.index(t, []ocispec.Descriptor{
+		reg.platform("kits/demo", amd64, "amd64"),
+	}, nil)
+	// os=unknown is how a nested index is published when it has no
+	// platform of its own. Skipping it for that marker would hide the
+	// amd64 manifest it holds.
+	child := reg.descriptor("kits/demo", nested, ocispec.MediaTypeImageIndex)
+	child.Platform = &ocispec.Platform{OS: "unknown", Architecture: "unknown"}
+	reg.tag("kits/demo", "1.0.0", reg.index(t, []ocispec.Descriptor{child}, nil))
+
+	client, err := New(WithPlatform(ocispec.Platform{OS: "linux", Architecture: "amd64"}))
+	require.NoError(t, err)
+	got, err := client.Fetch(context.Background(), reg.ref("kits/demo", "1.0.0"))
+	require.NoError(t, err)
+	require.Equal(t, "amd64", got.Descriptor.DisplayName)
+}
+
+func TestAnUnknownPlatformImageIsNotAGuess(t *testing.T) {
+	reg := newRegistry(t)
+	raw := reg.image(t, kitJSON(t, &spec.Descriptor{
+		SchemaVersion: spec.SchemaVersion,
+		Kind:          spec.KindMixin,
+		Version:       "1.0.0",
+		Provides:      []string{"demo@1.0.0"},
+	}))
+	unknown := reg.platform("kits/demo", raw, "unknown")
+	unknown.Platform.OS = "unknown"
+	reg.tag("kits/demo", "1.0.0", reg.index(t, []ocispec.Descriptor{unknown}, nil))
+
+	client, err := New(WithPlatform(ocispec.Platform{OS: "linux", Architecture: "amd64"}))
+	require.NoError(t, err)
+	_, err = client.Fetch(context.Background(), reg.ref("kits/demo", "1.0.0"))
+	require.ErrorContains(t, err, "linux/amd64")
+}
+
+func TestAWideIndexStopsAtTheManifestBudget(t *testing.T) {
+	reg := newRegistry(t)
+	manifests := make([]ocispec.Descriptor, 0, maxManifestFetches)
+	for range maxManifestFetches {
+		nested := reg.index(t, nil, nil)
+		manifests = append(manifests, reg.descriptor("kits/demo", nested, ocispec.MediaTypeImageIndex))
+	}
+	reg.tag("kits/demo", "1.0.0", reg.index(t, manifests, nil))
+
+	client, err := New(WithPlatform(ocispec.Platform{OS: "linux", Architecture: "amd64"}))
+	require.NoError(t, err)
+	_, err = client.Fetch(context.Background(), reg.ref("kits/demo", "1.0.0"))
+	require.ErrorContains(t, err, "more than 32 manifests")
+}
+
 func TestAnIndexWithoutThePlatformIsAnError(t *testing.T) {
 	reg := newRegistry(t)
 	arm64 := reg.image(t, kitJSON(t, &spec.Descriptor{
@@ -636,7 +696,11 @@ func (r *registry) serve(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", mediaType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	w.Header().Set("Docker-Content-Digest", digest.FromBytes(body).String())
 	w.WriteHeader(http.StatusOK)
+	if req.Method == http.MethodHead {
+		return
+	}
 	_, _ = w.Write(body)
 }

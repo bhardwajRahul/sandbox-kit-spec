@@ -25,10 +25,29 @@ import (
 // artifacts use one level; anything deeper is malformed or hostile.
 const maxIndexDepth = 4
 
+// maxManifestFetches bounds how many manifests one reference may cause
+// us to read. Depth alone does not: one index can list thousands of
+// children, and each of those can do the same. A published kit is a
+// handful of platform manifests under one index.
+const maxManifestFetches = 32
+
 // maxMetadataBytes bounds a manifest or index read. Metadata meets
 // registry ceilings around 4 MB; a descriptor pointing at an enormous
 // blob must become an error, not an allocation.
 const maxMetadataBytes = 8 << 20
+
+// manifestBudget counts manifests read while resolving one reference.
+// It is shared across the walk, so a wide index and a deep one draw
+// from the same allowance.
+type manifestBudget struct{ n int }
+
+func (b *manifestBudget) consume() error {
+	if b.n >= maxManifestFetches {
+		return fmt.Errorf("resolved through more than %d manifests; a kit index is not that wide", maxManifestFetches)
+	}
+	b.n++
+	return nil
+}
 
 func defaultPlatform() ocispec.Platform {
 	return ocispec.Platform{OS: "linux", Architecture: runtime.GOARCH}
@@ -92,11 +111,12 @@ func (c *Client) repository(repoName string) (*remote.Repository, error) {
 // Either way the digest is the one the reference resolved to, so a lock
 // pins the tag and not one platform's manifest.
 func (c *Client) readDescriptor(ctx context.Context, repo *remote.Repository, referenceName string) ([]byte, string, error) {
-	desc, body, err := fetchManifest(ctx, repo, referenceName)
+	budget := &manifestBudget{}
+	desc, body, err := fetchManifest(ctx, repo, referenceName, budget)
 	if err != nil {
 		return nil, "", err
 	}
-	raw, _, ok, err := c.annotation(ctx, repo, desc, body, 0)
+	raw, _, ok, err := c.annotation(ctx, repo, desc, body, 0, budget)
 	if err != nil {
 		return nil, "", err
 	}
@@ -116,7 +136,7 @@ func (c *Client) readDescriptor(ctx context.Context, repo *remote.Repository, re
 // platform — a caller searching several nested indexes tries the next.
 // An image manifest is ok even when its annotation is empty; that
 // emptiness is "not a kit", not "look somewhere else".
-func (c *Client) annotation(ctx context.Context, repo *remote.Repository, desc ocispec.Descriptor, body []byte, depth int) ([]byte, *ocispec.Platform, bool, error) {
+func (c *Client) annotation(ctx context.Context, repo *remote.Repository, desc ocispec.Descriptor, body []byte, depth int, budget *manifestBudget) ([]byte, *ocispec.Platform, bool, error) {
 	if !isIndex(desc.MediaType) {
 		if !isImageManifest(desc.MediaType) {
 			return nil, nil, false, fmt.Errorf("a kit is a plain image manifest, not %q", desc.MediaType)
@@ -163,11 +183,11 @@ func (c *Client) annotation(ctx context.Context, repo *remote.Repository, desc o
 		}
 	}
 	if child != nil {
-		body, err := fetchDescriptor(ctx, repo, *child)
+		body, err := fetchDescriptor(ctx, repo, *child, budget)
 		if err != nil {
 			return nil, nil, false, err
 		}
-		ann, plat, ok, err := c.annotation(ctx, repo, *child, body, depth+1)
+		ann, plat, ok, err := c.annotation(ctx, repo, *child, body, depth+1, budget)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -182,11 +202,11 @@ func (c *Client) annotation(ctx context.Context, repo *remote.Repository, desc o
 		}
 	}
 	for _, n := range nested {
-		body, err := fetchDescriptor(ctx, repo, n)
+		body, err := fetchDescriptor(ctx, repo, n, budget)
 		if err != nil {
 			return nil, nil, false, err
 		}
-		ann, plat, ok, err := c.annotation(ctx, repo, n, body, depth+1)
+		ann, plat, ok, err := c.annotation(ctx, repo, n, body, depth+1, budget)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -234,11 +254,14 @@ func chooseManifest(index *ocispec.Index, want ocispec.Platform) (matched *ocisp
 	runnable := 0
 	for i := range index.Manifests {
 		m := &index.Manifests[i]
-		if m.Platform != nil && m.Platform.OS == "unknown" {
-			continue
-		}
+		// An index marked os=unknown has no platform of its own. That
+		// marker is a reason to skip an image manifest, not the index:
+		// the platform we want may be inside it.
 		if isIndex(m.MediaType) {
 			nested = append(nested, *m)
+			continue
+		}
+		if m.Platform != nil && m.Platform.OS == "unknown" {
 			continue
 		}
 		if m.MediaType != "" && !isImageManifest(m.MediaType) {
@@ -274,7 +297,10 @@ func chooseManifest(index *ocispec.Index, want ocispec.Platform) (matched *ocisp
 	return nil, nested
 }
 
-func fetchManifest(ctx context.Context, repo *remote.Repository, referenceName string) (ocispec.Descriptor, []byte, error) {
+func fetchManifest(ctx context.Context, repo *remote.Repository, referenceName string, budget *manifestBudget) (ocispec.Descriptor, []byte, error) {
+	if err := budget.consume(); err != nil {
+		return ocispec.Descriptor{}, nil, err
+	}
 	desc, rc, err := repo.FetchReference(ctx, referenceName)
 	if err != nil {
 		return ocispec.Descriptor{}, nil, err
@@ -286,7 +312,10 @@ func fetchManifest(ctx context.Context, repo *remote.Repository, referenceName s
 	return desc, body, nil
 }
 
-func fetchDescriptor(ctx context.Context, repo *remote.Repository, desc ocispec.Descriptor) ([]byte, error) {
+func fetchDescriptor(ctx context.Context, repo *remote.Repository, desc ocispec.Descriptor, budget *manifestBudget) ([]byte, error) {
+	if err := budget.consume(); err != nil {
+		return nil, err
+	}
 	rc, err := repo.Fetch(ctx, desc)
 	if err != nil {
 		return nil, err
