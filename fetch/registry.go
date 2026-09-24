@@ -177,6 +177,9 @@ func (c *Client) annotation(ctx context.Context, repo *remote.Repository, desc o
 
 	child, nested := chooseManifest(&index, c.platform)
 	matcher := platforms.Only(c.platform)
+	exact := func(plat *ocispec.Platform) bool {
+		return plat != nil && !matcher.Less(c.platform, *plat)
+	}
 	var bestRaw []byte
 	var bestPlat *ocispec.Platform
 	found := false
@@ -188,48 +191,79 @@ func (c *Client) annotation(ctx context.Context, repo *remote.Repository, desc o
 			bestRaw, bestPlat = ann, plat
 		}
 	}
-	if child != nil {
-		body, err := fetchDescriptor(ctx, repo, *child, budget)
+	read := func(d ocispec.Descriptor) ([]byte, *ocispec.Platform, bool, error) {
+		body, err := fetchDescriptor(ctx, repo, d, budget)
 		if err != nil {
 			return nil, nil, false, err
 		}
-		ann, plat, ok, err := c.annotation(ctx, repo, *child, body, depth+1, budget)
+		return c.annotation(ctx, repo, d, body, depth+1, budget)
+	}
+	// A direct match that is already the platform asked for, or the
+	// only candidate, is read now. A merely compatible or platform-less
+	// one is a fallback: a nested branch may hold a closer manifest,
+	// and a failure of the fallback must not hide that.
+	var fallback *ocispec.Descriptor
+	if child != nil && (exact(child.Platform) || len(nested) == 0) {
+		ann, plat, ok, err := read(*child)
 		if err != nil {
 			return nil, nil, false, err
 		}
 		if ok {
 			consider(ann, plat)
-			// Already the platform that was asked for. A nested
-			// branch cannot be a closer match, and a manifest at
-			// this level is preferred to one buried in a branch.
-			if plat != nil && !matcher.Less(c.platform, *plat) {
+			if exact(plat) {
+				return ann, plat, true, nil
+			}
+		}
+	} else if child != nil {
+		fallback = child
+	}
+	for _, n := range nested {
+		ann, plat, ok, err := read(n)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if ok {
+			consider(ann, plat)
+			// A later branch cannot be closer, and reading it can
+			// 404 or spend the budget after the manifest we want is
+			// already in hand.
+			if exact(plat) {
 				return ann, plat, true, nil
 			}
 		}
 	}
-	for _, n := range nested {
-		body, err := fetchDescriptor(ctx, repo, n, budget)
+	if fallback != nil {
+		ann, plat, ok, err := read(*fallback)
 		if err != nil {
-			return nil, nil, false, err
-		}
-		ann, plat, ok, err := c.annotation(ctx, repo, n, body, depth+1, budget)
-		if err != nil {
-			return nil, nil, false, err
-		}
-		if ok {
-			consider(ann, plat)
-			// The same stop as a direct child. A later branch cannot
-			// be closer, and reading it can 404 or spend the budget
-			// after the manifest we want is already in hand.
-			if plat != nil && !matcher.Less(c.platform, *plat) {
-				return ann, plat, true, nil
+			// The fallback loses to a nested result that is at least
+			// as good. Its absence must not discard that result.
+			if found && !betterPlatform(matcher, fallback.Platform, bestPlat) {
+				return bestRaw, bestPlat, true, nil
 			}
+			return nil, nil, false, err
+		}
+		// This level is preferred to a buried manifest of the same
+		// rank. A closer nested result still wins.
+		if ok && (!found || !betterPlatform(matcher, bestPlat, plat)) {
+			bestRaw, bestPlat, found = ann, plat, true
 		}
 	}
 	if !found {
 		return nil, nil, false, nil
 	}
 	return bestRaw, bestPlat, true, nil
+}
+
+// betterPlatform reports whether a is a closer match than b. A named
+// platform outranks one that names none.
+func betterPlatform(matcher platforms.MatchComparer, a, b *ocispec.Platform) bool {
+	if a == nil {
+		return false
+	}
+	if b == nil {
+		return true
+	}
+	return matcher.Less(*a, *b)
 }
 
 // requirePlainImageManifest enforces the artifact shape the spec names:
