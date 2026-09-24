@@ -11,6 +11,7 @@ import (
 	"path"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/opencontainers/go-digest"
 	specsgo "github.com/opencontainers/image-spec/specs-go"
@@ -825,6 +826,639 @@ func writeFile(t *testing.T, tw *tar.Writer, name string, mode int64, uid, gid i
 	}))
 	_, err := tw.Write([]byte(body))
 	require.NoError(t, err)
+}
+
+func writeDir(t *testing.T, tw *tar.Writer, name string, uid, gid int) {
+	t.Helper()
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: name, Typeflag: tar.TypeDir, Mode: 0o755, Uid: uid, Gid: gid,
+	}))
+}
+
+func writeLink(t *testing.T, tw *tar.Writer, name, target string) {
+	t.Helper()
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: name, Typeflag: tar.TypeSymlink, Linkname: target, Mode: 0o777,
+	}))
+}
+
+// The owner that counts is the directory entry's own, from the last layer
+// that carries it; a file at the path is not a directory entry at all.
+func TestDirStatReadsTheLastDirectoryEntry(t *testing.T) {
+	a := buildLayeredArtifact(t,
+		func(tw *tar.Writer) {
+			writeDir(t, tw, "home/", 1000, 1000)
+			writeDir(t, tw, "home/agent/", 0, 0)
+			writeFile(t, tw, "etc", 0o644, 0, 0)
+		},
+		func(tw *tar.Writer) {
+			writeDir(t, tw, "home/", 0, 0)
+		},
+	)
+	w, ok := a.(overlayWalker)
+	require.True(t, ok)
+	ctx := context.Background()
+
+	st, present, err := w.DirStat(ctx, "/home")
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Equal(t, 0, st.Uid, "the later layer's entry replaces the earlier one")
+
+	st, present, err = w.DirStat(ctx, "/home/agent")
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Equal(t, 0, st.Uid)
+
+	_, present, err = w.DirStat(ctx, "/etc")
+	require.NoError(t, err)
+	require.False(t, present)
+
+	_, present, err = w.DirStat(ctx, "/opt")
+	require.NoError(t, err)
+	require.False(t, present)
+}
+
+// A link resolves if the overlay carries what it points at — a file, a
+// directory with or without an entry of its own, or another link that
+// does — and dangles if the target is absent, deleted by a later layer,
+// or a cycle.
+func TestDanglingSymlinksAreTheOnesTheOverlayCannotResolve(t *testing.T) {
+	a := buildLayeredArtifact(t,
+		func(tw *tar.Writer) {
+			writeDir(t, tw, "opt/", 0, 0)
+			writeDir(t, tw, "opt/tool/", 0, 0)
+			writeFile(t, tw, "opt/tool/tool", 0o755, 0, 0)
+			writeFile(t, tw, "srv/implied/tool", 0o755, 0, 0)
+			writeFile(t, tw, "opt/removed/tool", 0o755, 0, 0)
+			writeLink(t, tw, "usr/local/bin/file", "../../../opt/tool/tool")
+			writeLink(t, tw, "usr/local/bin/dir", "/opt/tool")
+			writeLink(t, tw, "usr/local/bin/chain", "file")
+			writeLink(t, tw, "usr/local/bin/implied", "/srv/implied")
+			writeLink(t, tw, "usr/local/bin/root", "/")
+			writeLink(t, tw, "usr/local/bin/stage", "/root/.local/share/tool/bin/tool")
+			writeLink(t, tw, "usr/local/bin/removed", "/opt/removed/tool")
+			writeLink(t, tw, "usr/local/bin/loop-a", "loop-b")
+			writeLink(t, tw, "usr/local/bin/loop-b", "loop-a")
+		},
+		func(tw *tar.Writer) {
+			writeFile(t, tw, "opt/.wh.removed", 0o644, 0, 0)
+		},
+	)
+	w := a.(overlayWalker)
+
+	dangling, err := w.DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{
+		{Path: "/usr/local/bin/loop-a", Target: "loop-b"},
+		{Path: "/usr/local/bin/loop-b", Target: "loop-a"},
+		{Path: "/usr/local/bin/removed", Target: "/opt/removed/tool"},
+		{Path: "/usr/local/bin/stage", Target: "/root/.local/share/tool/bin/tool"},
+	}, dangling)
+}
+
+// A ".." after a symlinked component climbs from where the link led, not
+// from where it sits: cleaning the target lexically first would judge a
+// different path.
+func TestDotDotClimbsFromWhereALinkLed(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		writeDir(t, tw, "x/", 0, 0)
+		writeDir(t, tw, "x/y/", 0, 0)
+		writeFile(t, tw, "x/z", 0o755, 0, 0)
+		writeFile(t, tw, "q", 0o755, 0, 0)
+		writeLink(t, tw, "a", "/x/y")
+		writeLink(t, tw, "usr/local/bin/through", "/a/../z")
+		writeLink(t, tw, "usr/local/bin/lexical", "/a/../q")
+		writeLink(t, tw, "usr/local/bin/past-file", "/q/..")
+	})
+	w := a.(overlayWalker)
+
+	dangling, err := w.DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{
+		{Path: "/usr/local/bin/lexical", Target: "/a/../q"},
+		{Path: "/usr/local/bin/past-file", Target: "/q/.."},
+	}, dangling)
+}
+
+// A file ends a lookup wherever it is reached — directly or at the end of
+// a link — so any component after it, even a trailing "/" or ".", fails
+// the way the kernel's ENOTDIR does.
+func TestNothingIsReachableThroughAFile(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		writeFile(t, tw, "q", 0o755, 0, 0)
+		writeLink(t, tw, "a", "/q")
+		writeLink(t, tw, "usr/local/bin/file", "/a")
+		writeLink(t, tw, "usr/local/bin/via-link", "/a/..")
+		writeLink(t, tw, "usr/local/bin/slash", "/q/")
+		writeLink(t, tw, "usr/local/bin/dot", "/q/.")
+	})
+	w := a.(overlayWalker)
+
+	dangling, err := w.DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{
+		{Path: "/usr/local/bin/dot", Target: "/q/."},
+		{Path: "/usr/local/bin/slash", Target: "/q/"},
+		{Path: "/usr/local/bin/via-link", Target: "/a/.."},
+	}, dangling)
+}
+
+// A hard link that aliased a symlink exposes that symlink, so it dangles
+// once the name it was taken from is gone; an ordinary hard link is a
+// file and never does.
+func TestAHardLinkAliasingASymlinkIsJudgedAsOne(t *testing.T) {
+	a := buildLayeredArtifact(t,
+		func(tw *tar.Writer) {
+			writeFile(t, tw, "opt/tool", 0o755, 0, 0)
+			writeLink(t, tw, "usr/bin/orig", "/opt/tool")
+			require.NoError(t, tw.WriteHeader(&tar.Header{
+				Name: "usr/bin/alias", Typeflag: tar.TypeLink, Linkname: "usr/bin/orig",
+			}))
+			require.NoError(t, tw.WriteHeader(&tar.Header{
+				Name: "usr/bin/copy", Typeflag: tar.TypeLink, Linkname: "opt/tool",
+			}))
+		},
+		func(tw *tar.Writer) {
+			writeFile(t, tw, "usr/bin/.wh.orig", 0o644, 0, 0)
+			writeFile(t, tw, "opt/.wh.tool", 0o644, 0, 0)
+		},
+	)
+	w := a.(overlayWalker)
+
+	dangling, err := w.DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{
+		{Path: "/usr/bin/alias", Target: "/opt/tool"},
+	}, dangling)
+}
+
+// A hard link captures its target as it stood when the link applied, so a
+// symlink rewritten later in the same layer is still what the alias
+// holds, and still dangles.
+func TestAHardLinkKeepsASymlinkItsLayerLaterReplaced(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		writeLink(t, tw, "usr/bin/target", "/missing")
+		require.NoError(t, tw.WriteHeader(&tar.Header{
+			Name: "usr/bin/alias", Typeflag: tar.TypeLink, Linkname: "usr/bin/target",
+		}))
+		writeFile(t, tw, "usr/bin/target", 0o755, 0, 0)
+	})
+	w := a.(overlayWalker)
+
+	dangling, err := w.DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{
+		{Path: "/usr/bin/alias", Target: "/missing"},
+	}, dangling)
+}
+
+// A whiteout marker is an instruction to the extractor, not a file: it is
+// gone once the layer applies, so a link naming one names nothing.
+func TestAWhiteoutMarkerIsNotALinkTarget(t *testing.T) {
+	a := buildLayeredArtifact(t,
+		func(tw *tar.Writer) {
+			writeFile(t, tw, "dir/foo", 0o644, 0, 0)
+			writeFile(t, tw, "dir/keep", 0o644, 0, 0)
+		},
+		func(tw *tar.Writer) {
+			writeFile(t, tw, "dir/.wh.foo", 0o644, 0, 0)
+			writeFile(t, tw, "other/.wh..wh..opq", 0o644, 0, 0)
+			writeLink(t, tw, "usr/local/bin/whiteout", "/dir/.wh.foo")
+			writeLink(t, tw, "usr/local/bin/opaque", "/other/.wh..wh..opq")
+			writeLink(t, tw, "usr/local/bin/keep", "/dir/keep")
+		},
+	)
+	w := a.(overlayWalker)
+
+	dangling, err := w.DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{
+		{Path: "/usr/local/bin/opaque", Target: "/other/.wh..wh..opq"},
+		{Path: "/usr/local/bin/whiteout", Target: "/dir/.wh.foo"},
+	}, dangling)
+}
+
+// A hard link's target resolves through the layer's own symlinked
+// parents, so an alias of a symlink reached that way holds the symlink —
+// and dangles once the names it was reached through are gone.
+func TestAHardLinkThroughASymlinkedParentHoldsTheSymlink(t *testing.T) {
+	a := buildLayeredArtifact(t,
+		func(tw *tar.Writer) {
+			writeDir(t, tw, "x/", 0, 0)
+			writeLink(t, tw, "a", "/x")
+			writeLink(t, tw, "x/s", "/missing")
+			require.NoError(t, tw.WriteHeader(&tar.Header{
+				Name: "alias", Typeflag: tar.TypeLink, Linkname: "a/s",
+			}))
+		},
+		func(tw *tar.Writer) {
+			writeFile(t, tw, ".wh.a", 0o644, 0, 0)
+			writeFile(t, tw, "x/.wh.s", 0o644, 0, 0)
+		},
+	)
+	w := a.(overlayWalker)
+
+	dangling, err := w.DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{
+		{Path: "/alias", Target: "/missing"},
+	}, dangling)
+}
+
+// Each layer is extracted into a directory of its own before the layers
+// are stacked, so a later layer writing beneath a lower symlink creates a
+// real directory at that path, which hides the symlink rather than
+// following it.
+func TestALaterLayerWritingBeneathALowerSymlinkReplacesIt(t *testing.T) {
+	a := buildLayeredArtifact(t,
+		func(tw *tar.Writer) {
+			writeDir(t, tw, "opt/tool/", 0, 0)
+			writeFile(t, tw, "opt/tool/bin", 0o755, 0, 0)
+			writeLink(t, tw, "current", "/opt/tool")
+		},
+		func(tw *tar.Writer) {
+			writeLink(t, tw, "current/ok", "bin")
+			writeLink(t, tw, "current/abs", "/opt/tool/bin")
+		},
+	)
+	w := a.(overlayWalker)
+
+	dangling, err := w.DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{
+		{Path: "/current/ok", Target: "bin"},
+	}, dangling)
+}
+
+// Within one layer, an entry's parent resolves through that layer's own
+// symlinks the way containerd resolves it: a relative target joined to the
+// link's directory and cleaned lexically. The kernel resolves the same
+// link physically, so the link itself is what dangles.
+func TestAnEntryUnderASameLayerSymlinkLandsWhereItLeads(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		writeDir(t, tw, "sub/", 0, 0)
+		writeDir(t, tw, "deep/dir/", 0, 0)
+		writeLink(t, tw, "sub/b", "../deep/dir")
+		writeLink(t, tw, "sub/a", "b/../c")
+		writeFile(t, tw, "sub/a/x", 0o644, 0, 0)
+		writeLink(t, tw, "usr/local/bin/lands", "/sub/c/x")
+	})
+	w := a.(overlayWalker)
+
+	dangling, err := w.DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{
+		{Path: "/sub/a", Target: "b/../c"},
+	}, dangling)
+}
+
+// A hard link's target is resolved uncleaned, so a ".." after a symlinked
+// component climbs from where that link led.
+func TestAHardLinkTargetClimbsFromWhereALinkLed(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		writeDir(t, tw, "a/b/", 0, 0)
+		writeFile(t, tw, "a/f2", 0o644, 0, 0)
+		writeLink(t, tw, "f2", "/nope")
+		writeLink(t, tw, "s", "a/b")
+		require.NoError(t, tw.WriteHeader(&tar.Header{
+			Name: "h", Typeflag: tar.TypeLink, Linkname: "s/../f2",
+		}))
+	})
+	w := a.(overlayWalker)
+
+	dangling, err := w.DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{
+		{Path: "/f2", Target: "/nope"},
+	}, dangling)
+}
+
+// A lookup expands at most 40 symlinks, counting the one being judged.
+func TestASymlinkChainPastTheKernelLimitDangles(t *testing.T) {
+	chain := func(n int) Artifact {
+		return buildLayerArtifact(t, func(tw *tar.Writer) {
+			writeFile(t, tw, "target", 0o644, 0, 0)
+			for i := 0; i < n-1; i++ {
+				writeLink(t, tw, fmt.Sprintf("l%02d", i), fmt.Sprintf("l%02d", i+1))
+			}
+			writeLink(t, tw, fmt.Sprintf("l%02d", n-1), "target")
+		})
+	}
+
+	dangling, err := chain(40).(overlayWalker).DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, dangling)
+
+	dangling, err = chain(41).(overlayWalker).DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{{Path: "/l00", Target: "l01"}}, dangling)
+}
+
+// Resolving an entry's parent counts every expansion, so links that name
+// each other twice cannot make one entry cost exponential time.
+func TestParentResolutionIsBoundedByExpansions(t *testing.T) {
+	const k = 40
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		writeDir(t, tw, "d/", 0, 0)
+		for i := 0; i < k; i++ {
+			writeLink(t, tw, fmt.Sprintf("l%d", i), fmt.Sprintf("/l%d/../l%d", i+1, i+1))
+		}
+		writeLink(t, tw, fmt.Sprintf("l%d", k), "/d")
+		writeFile(t, tw, "l0/x", 0o644, 0, 0)
+	})
+	done := make(chan error, 1)
+	go func() {
+		_, err := a.(overlayWalker).DanglingSymlinks(context.Background())
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("parent resolution did not finish")
+	}
+}
+
+// An opaque marker hides the lower layers' contents of its directory, not
+// what its own layer writes there.
+func TestAnOpaqueMarkerKeepsItsOwnLayersEntries(t *testing.T) {
+	a := buildLayeredArtifact(t,
+		func(tw *tar.Writer) {
+			writeDir(t, tw, "p/", 0, 0)
+			writeDir(t, tw, "p/d/", 0, 0)
+			writeFile(t, tw, "p/old", 0o644, 0, 0)
+			writeLink(t, tw, "y", "/p/old")
+		},
+		func(tw *tar.Writer) {
+			writeFile(t, tw, "p/d/f", 0o644, 0, 0)
+			writeLink(t, tw, "p/d/s", "/missing")
+			writeFile(t, tw, "p/.wh..wh..opq", 0o644, 0, 0)
+			writeLink(t, tw, "x", "/p/d/f")
+		},
+	)
+	w := a.(overlayWalker)
+
+	dangling, err := w.DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{
+		{Path: "/p/d/s", Target: "/missing"},
+		{Path: "/y", Target: "/p/old"},
+	}, dangling)
+}
+
+// The owner judged is the one the extractor leaves: names are cleaned, and
+// a layer writing or deleting through its own symlink reaches the path the
+// symlink leads to.
+func TestDirStatSeesWhatTheExtractorLeaves(t *testing.T) {
+	ctx := context.Background()
+
+	for _, name := range []string{"home/./", "usr/../home/", "//home/"} {
+		a := buildLayerArtifact(t, func(tw *tar.Writer) { writeDir(t, tw, name, 1000, 1000) })
+		st, present, err := a.(overlayWalker).DirStat(ctx, "/home")
+		require.NoError(t, err)
+		require.True(t, present, name)
+		require.Equal(t, 1000, st.Uid, name)
+	}
+
+	rewritten := buildLayeredArtifact(t,
+		func(tw *tar.Writer) { writeDir(t, tw, "home/", 1000, 1000) },
+		func(tw *tar.Writer) {
+			writeLink(t, tw, "x", "/")
+			writeDir(t, tw, "x/home/", 0, 0)
+		},
+	)
+	st, present, err := rewritten.(overlayWalker).DirStat(ctx, "/home")
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Equal(t, 0, st.Uid)
+
+	deleted := buildLayeredArtifact(t,
+		func(tw *tar.Writer) { writeDir(t, tw, "home/", 1000, 1000) },
+		func(tw *tar.Writer) {
+			writeLink(t, tw, "x", "/")
+			writeFile(t, tw, "x/.wh.home", 0o644, 0, 0)
+		},
+	)
+	_, present, err = deleted.(overlayWalker).DirStat(ctx, "/home")
+	require.NoError(t, err)
+	require.False(t, present)
+}
+
+// A directory that exists only to hold an entry has no owner of its own
+// to judge: it takes whatever lies beneath.
+func TestAnImpliedDirectoryHasNoEntryToJudge(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		writeFile(t, tw, "home/agent/.profile", 0o644, 1000, 1000)
+	})
+	_, present, err := a.(overlayWalker).DirStat(context.Background(), "/home/agent")
+	require.NoError(t, err)
+	require.False(t, present)
+}
+
+// An opaque marker at a layer's root hides everything the layers below it
+// hold, as one in a subdirectory hides that directory's lower contents.
+func TestARootOpaqueMarkerHidesTheLowerLayers(t *testing.T) {
+	a := buildLayeredArtifact(t,
+		func(tw *tar.Writer) {
+			writeFile(t, tw, "a", 0o644, 0, 0)
+			writeLink(t, tw, "keep", "a")
+		},
+		func(tw *tar.Writer) {
+			writeLink(t, tw, "n", "/a")
+			writeFile(t, tw, ".wh..wh..opq", 0o644, 0, 0)
+		},
+	)
+	dangling, err := a.(overlayWalker).DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{{Path: "/n", Target: "/a"}}, dangling)
+}
+
+// A name longer than an extractor can create is dropped, however deep it
+// nests, rather than modelled.
+func TestANameTooLongToExtractIsDropped(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		writeLink(t, tw, strings.Repeat("a/", 5000)+"l", "/missing")
+	})
+	dangling, err := a.(overlayWalker).DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, dangling)
+}
+
+// containerd walks a symlink at the top of an entry's parent again from
+// the root, uncleaned, so a ".." in its target — relative or absolute —
+// climbs from where the link before it led.
+func TestATopLevelLinkInAParentIsWalkedUncleaned(t *testing.T) {
+	for _, target := range []string{"b/../c", "/b/../c"} {
+		a := buildLayerArtifact(t, func(tw *tar.Writer) {
+			writeDir(t, tw, "deep/dir/", 0, 0)
+			writeLink(t, tw, "b", "deep/dir")
+			writeLink(t, tw, "a", target)
+			writeFile(t, tw, "a/x", 0o644, 0, 0)
+			writeLink(t, tw, "y", "/deep/c/x")
+		})
+		dangling, err := a.(overlayWalker).DanglingSymlinks(context.Background())
+		require.NoError(t, err)
+		require.Empty(t, dangling, target)
+	}
+}
+
+// A hard link's target resolves as containerd resolves it: a missing
+// directory component is a plain name that ".." climbs back out of, and a
+// trailing slash resolves through the symlink it follows.
+func TestAHardLinkTargetResolvesAsTheExtractorResolvesIt(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		writeLink(t, tw, "f", "/missing")
+		require.NoError(t, tw.WriteHeader(&tar.Header{
+			Name: "h", Typeflag: tar.TypeLink, Linkname: "nope/../f",
+		}))
+		writeFile(t, tw, "g", 0o644, 0, 0)
+		writeLink(t, tw, "s", "g")
+		require.NoError(t, tw.WriteHeader(&tar.Header{
+			Name: "h2", Typeflag: tar.TypeLink, Linkname: "s/",
+		}))
+		writeLink(t, tw, "k", "/h2")
+	})
+	dangling, err := a.(overlayWalker).DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{
+		{Path: "/f", Target: "/missing"},
+		{Path: "/h", Target: "/missing"},
+	}, dangling)
+}
+
+// A directory the extractor creates to hold an entry copies its metadata
+// from the directory below — but over a lower file or whiteout there is
+// none, and it is root's.
+func TestAnImpliedDirectoryOverANonDirectoryIsRoots(t *testing.T) {
+	ctx := context.Background()
+	home := func(layers ...func(tw *tar.Writer)) (FileStat, bool) {
+		st, present, err := buildLayeredArtifact(t, layers...).(overlayWalker).DirStat(ctx, "/home")
+		require.NoError(t, err)
+		return st, present
+	}
+
+	st, present := home(
+		func(tw *tar.Writer) { writeDir(t, tw, "home/", 7, 7) },
+		func(tw *tar.Writer) { writeFile(t, tw, "home/x", 0o644, 0, 0) },
+	)
+	require.True(t, present)
+	require.Equal(t, 7, st.Uid, "copied from the directory below")
+
+	st, present = home(
+		func(tw *tar.Writer) { writeFile(t, tw, "home", 0o644, 7, 7) },
+		func(tw *tar.Writer) { writeFile(t, tw, "home/x", 0o644, 0, 0) },
+	)
+	require.True(t, present)
+	require.Equal(t, FileStat{Mode: 0o755}, st)
+
+	st, present = home(
+		func(tw *tar.Writer) { writeDir(t, tw, "home/", 7, 7) },
+		func(tw *tar.Writer) { writeFile(t, tw, ".wh.home", 0o644, 0, 0) },
+		func(tw *tar.Writer) { writeFile(t, tw, "home/x", 0o644, 0, 0) },
+	)
+	require.True(t, present)
+	require.Equal(t, FileStat{Mode: 0o755}, st)
+}
+
+// mkparent takes a created directory's metadata from the first lower
+// layer where the path resolves to anything, through that layer's own
+// symlinks — so a lower symlink to a directory lends its owner, and a
+// layer where the path resolves to nothing is passed over.
+func TestAnImpliedDirectoryTakesTheFirstLowerLayerThatResolvesIt(t *testing.T) {
+	ctx := context.Background()
+
+	st, present, err := buildLayeredArtifact(t,
+		func(tw *tar.Writer) {
+			writeLink(t, tw, "b", "c")
+			writeDir(t, tw, "c/", 3, 3)
+		},
+		func(tw *tar.Writer) { writeFile(t, tw, "b/a", 0o644, 0, 0) },
+	).(overlayWalker).DirStat(ctx, "/b")
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Equal(t, 3, st.Uid)
+
+	st, present, err = buildLayeredArtifact(t,
+		func(tw *tar.Writer) { writeDir(t, tw, "x/", 5, 5) },
+		func(tw *tar.Writer) { writeLink(t, tw, "x", "nope") },
+		func(tw *tar.Writer) { writeFile(t, tw, "x/f", 0o644, 0, 0) },
+	).(overlayWalker).DirStat(ctx, "/x")
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Equal(t, 5, st.Uid)
+}
+
+// The overlay applier writes a whiteout as a device, and a hard link to it
+// is another whiteout, deleting what held the link's name.
+func TestAHardLinkToAWhiteoutIsAWhiteout(t *testing.T) {
+	a := buildLayeredArtifact(t,
+		func(tw *tar.Writer) {
+			writeDir(t, tw, "b/a/", 0, 0)
+			writeLink(t, tw, "b/a/c", "x")
+		},
+		func(tw *tar.Writer) {
+			writeFile(t, tw, "c/.wh.b", 0o644, 0, 0)
+			require.NoError(t, tw.WriteHeader(&tar.Header{
+				Name: "b", Typeflag: tar.TypeLink, Linkname: "c/b",
+			}))
+		},
+	)
+	dangling, err := a.(overlayWalker).DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, dangling)
+}
+
+// Placing entries beneath a deep path costs no more than walking it when
+// no symlink is on the way.
+func TestDeepPathsWithoutSymlinksAreCheap(t *testing.T) {
+	deep := strings.Repeat("d/", 2000)
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		for i := 0; i < 100; i++ {
+			writeFile(t, tw, fmt.Sprintf("%sf%d", deep, i), 0o644, 0, 0)
+		}
+	})
+	start := time.Now()
+	_, err := a.(overlayWalker).DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Less(t, time.Since(start), 5*time.Second)
+}
+
+// A home level behind a link chain too deep to follow exposes no
+// directory entry, so ownership has nothing to judge rather than an error
+// to fail on.
+func TestDirStatBehindAnOverDeepLinkIsAbsent(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		writeLink(t, tw, "home", "home2")
+		writeLink(t, tw, "home2", "home")
+	})
+	w := a.(overlayWalker)
+
+	_, present, err := w.DirStat(context.Background(), "/home/agent")
+	require.NoError(t, err)
+	require.False(t, present)
+}
+
+// An opaque marker empties the directory holding it without removing it,
+// so a link to that directory still resolves and a link into what the
+// lower layer put there does not.
+func TestAnOpaqueMarkerKeepsItsDirectory(t *testing.T) {
+	a := buildLayeredArtifact(t,
+		func(tw *tar.Writer) {
+			writeFile(t, tw, "srv/implied/tool", 0o755, 0, 0)
+			writeLink(t, tw, "usr/local/bin/dir", "/srv/implied")
+			writeLink(t, tw, "usr/local/bin/file", "/srv/implied/tool")
+		},
+		func(tw *tar.Writer) {
+			writeFile(t, tw, "srv/implied/.wh..wh..opq", 0o644, 0, 0)
+		},
+	)
+	w := a.(overlayWalker)
+
+	dangling, err := w.DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{
+		{Path: "/usr/local/bin/file", Target: "/srv/implied/tool"},
+	}, dangling)
 }
 
 // An ancestor symlink with an empty target is dangling, and one targeting

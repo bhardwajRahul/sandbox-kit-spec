@@ -179,8 +179,8 @@ docker buildx build . -f <kit>.yaml -t <kit>-kit:<tag> \
 ```
 
 A workload's recipe must build on a base carrying the platform floor — `bash`,
-the `agent` user (uid 1000), `git`, a CA store — which the published
-`docker/sandbox-templates:*` images carry. A bare distro base builds fine and
+the `agent` user (uid 1000), `git`, a CA store — which the hardened
+`dhi.io/sbx-templates:*` images carry. A bare distro base builds fine and
 fails at agent launch.
 
 ### 6. Run it with sbx
@@ -306,27 +306,24 @@ cheaper checks above it did not. They are ordered by what they cost.
    they take seconds and they found a kit whose instructions would silently
    never have reached the agent.
 2. **Building** catches recipes. It does not prove the content works.
-3. **Reading the exported layer** catches ownership, and it takes **two**
-   passes. Export with `--output type=oci,dest=<dir>,tar=false`, then count
-   owners:
+3. **Reading the exported layer** catches ownership, in **two** parts. Export
+   with `--output type=oci,dest=<dir>,tar=false` and run
+   `kit-tck validate --layout <dir> <tag>`: `overlay-home-ownership` fails an
+   overlay whose `/home` is not root's or whose `/home/agent` is not uid
+   1000's, which is what six of the migrated overlays got wrong. Then count
+   every other owner:
    `for b in <dir>/blobs/sha256/*; do tar --numeric-owner -tvf "$b"; done | awk '{print ($2 ~ /\//) ? $2 : $3"/"$4}' | sort | uniq -c`.
    Every count must be `0/0` or `1000/1000`; that is what found four overlays
-   shipping files owned by package publishers' uids. It cannot find the other
-   six, because collapsing to owners throws the paths away and an overlay with
-   `/home` and `/home/agent` **swapped** still reports only those two
-   permitted ids. Assert that invariant with the pathnames kept:
-   `… | awk '$1 ~ /^d/ { o = ($2 ~ /\//) ? $2 : $3"/"$4; if ($NF == "home/" || $NF == "home/agent/") print o, $NF }' | sort -u`,
-   which must print `0/0 home/` and `1000/1000 home/agent/` and nothing else.
-   The `sort -u` matters: the loop reads every blob, so a multi-platform kit
-   whose layers differ reports each directory once per platform, and
-   deduplicating pairs collapses agreement while leaving any disagreement as
-   its own line. Both pipelines read GNU tar's joined `0/0` field or bsdtar's
-   split pair, because one written for either silently reports the other's
-   size and date.
-4. **Composing the overlay and running the tool** catches the rest, and nothing
-   else does. Three mixins shipped dangling symlinks whose build-time `test -x`
-   passed because the real tree was still present *in the build stage*: the
-   installer had relocated a launcher but not its payload. Compose it through
+   shipping files owned by package publishers' uids. The awk reads GNU tar's
+   joined `0/0` field or bsdtar's split pair, because a pipeline written for
+   either silently reports the other's size and date.
+4. **Composing the overlay and running the tool** catches the rest. Three
+   mixins shipped dangling symlinks whose build-time `test -x` passed because
+   the real tree was still present *in the build stage*: the installer had
+   relocated a launcher but not its payload. `kit-tck`'s
+   `overlay-links-resolve` now warns about those, but only the composition
+   shows whether a link the overlay cannot resolve by itself finds its target
+   on the base. Compose it through
    the assembler, which is what merges the overlay's `ENV` and `PATH` and puts
    it on a base carrying the platform floor:
    `sbx run ./<workload> --kit ./<kit> --detached --name t .`, then

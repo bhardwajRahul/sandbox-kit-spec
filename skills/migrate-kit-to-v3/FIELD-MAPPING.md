@@ -175,7 +175,7 @@ What makes this expressible is **derived provides** (§9.6): publishing a
 `kind: workload` kit reads `/var/lib/dpkg/status` (or apk's database) out of the
 built content and states one provide per installed package under `deb/` or
 `apk/`, at the upstream version with epochs and Debian revisions stripped. So a
-workload on `docker/sandbox-templates:*` offers `deb/apt`, `deb/jq`,
+workload on `dhi.io/sbx-templates:*` offers `deb/apt`, `deb/jq`,
 `deb/docker-ce`, `deb/git` and hundreds more with nobody authoring them, and a
 mixin may require those names.
 

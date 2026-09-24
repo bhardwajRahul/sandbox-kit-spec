@@ -181,6 +181,9 @@ see [docs/kit-intro.md](docs/kit-intro.md).
   author publishes the equivalent under their own namespace.
 - `cmd/frontend/` — the BuildKit gateway frontend dispatched by the
   descriptor's first line, `# syntax=docker/sandbox-kit:3`.
+- `skills/` — tool-agnostic agent skills for authoring a v3 Kit and
+  migrating a v2 one; [skills/README.md](skills/README.md) says how to
+  wire them into an agent.
 
 ## How to get started
 
@@ -293,7 +296,7 @@ sbx run $KIT_REGISTRY/sbx-kit-hello:1.0.0 --kit $KIT_REGISTRY/sbx-kit-gh:2.72.0 
 
 Inside: `gh --version` works (`/usr/local/bin/gh` resolves into the
 overlay's `/nix/store`), and with a `github` secret bound on the host
-(`sbx secret set -g github`), `gh api user` authenticates through the
+(`sbx secret set github`), `gh api user` authenticates through the
 proxy — the container only ever sees a sentinel token.
 
 **6. The local loop — no registry, no push.** Point `sbx run` at the Kit
@@ -341,8 +344,10 @@ docker buildx build . -f claude.yaml -t docker.io/me/claude-kit:2.1.0
 
 A workload Kit's companion must build on a base that provides the runtime's
 platform floor — bash, the `agent` user (uid 1000), git, a CA store — which
-the published `docker/sandbox-templates:*` images carry. A Kit built on a
-bare distro image builds fine but fails at agent launch.
+the hardened `dhi.io/sbx-templates:*` images carry; the workloads under
+`examples/` build on them, except `devin` and `wordpress`, whose recipes
+say why. A Kit built on a bare distro image builds fine
+but fails at agent launch.
 
 A Kit's content recipe lives in one of three places: a companion
 `<stem>.dockerfile` next to the descriptor, an inline `build:` block in

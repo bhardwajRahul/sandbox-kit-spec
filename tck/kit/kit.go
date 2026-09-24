@@ -565,6 +565,50 @@ var checks = []check{
 		},
 	},
 	{
+		// Judged on the entries alone, because that is what replaces the
+		// base's: an overlay staying out of the home ships neither and
+		// has nothing to answer for.
+		name:        "overlay-home-ownership",
+		requirement: "SPEC-v3 §10",
+		run: func(ctx context.Context, s *state) []report.Finding {
+			w, findings := overlayWalkerFor(ctx, s)
+			if w == nil {
+				return findings
+			}
+			for _, level := range homeLevels {
+				st, present, err := w.DirStat(ctx, level.path)
+				if err != nil {
+					return append(findings, fail("read %s: %v", level.path, err)...)
+				}
+				if present && st.Uid != level.uid {
+					findings = append(findings, fail("the overlay ships %s owned by uid %d; its entry replaces the base's, and %s must own it", level.path, st.Uid, level.owner)...)
+				}
+			}
+			return findings
+		},
+	},
+	{
+		// SHOULD, so a warning: from the artifact alone a link into the
+		// base it will land on looks the same as one into a build stage
+		// that no longer exists, and only the second is always broken.
+		name:        "overlay-links-resolve",
+		requirement: "SPEC-v3 §10",
+		run: func(ctx context.Context, s *state) []report.Finding {
+			w, findings := overlayWalkerFor(ctx, s)
+			if w == nil {
+				return findings
+			}
+			dangling, err := w.DanglingSymlinks(ctx)
+			if err != nil {
+				return fail("read symlinks: %v", err)
+			}
+			for _, l := range dangling {
+				findings = append(findings, warn("%s links to %s, which does not resolve within the overlay's own layers", l.Path, l.Target)...)
+			}
+			return findings
+		},
+	},
+	{
 		// The floor a workload promises by declaring sbx@1: the shells the
 		// host runs things through, and an identity it can resolve without
 		// assuming one. Judged from the artifact, so a kit that cannot be
@@ -1218,6 +1262,54 @@ type FileStat struct {
 // cannot leaves permission judgments unmade rather than guessed.
 type statChecker interface {
 	FileStat(ctx context.Context, name string) (FileStat, bool, error)
+}
+
+// Symlink is a link the composed filesystem exposes, at its path and with
+// its target as written.
+type Symlink struct {
+	Path, Target string
+}
+
+// overlayWalker is a source that can read a layer's own entries rather
+// than the files they resolve to: the directory metadata an overlay
+// replaces the base's with, and the links that resolve nowhere within it.
+// A source that cannot leaves both unjudged.
+type overlayWalker interface {
+	DirStat(ctx context.Context, name string) (FileStat, bool, error)
+	DanglingSymlinks(ctx context.Context) ([]Symlink, error)
+}
+
+// homeLevels are the directories §12 lays out, with the owner each must
+// keep when an overlay ships an entry for it.
+var homeLevels = []struct {
+	path  string
+	uid   int
+	owner string
+}{
+	{"/home", 0, "root"},
+	{"/home/agent", 1000, "the agent user (uid 1000)"},
+}
+
+// overlayWalkerFor is the source's overlayWalker when the check applies:
+// a mixin, whose layers are the overlay, from a source that has
+// assembled them. A skip is returned where the layers are not there yet,
+// or the source cannot read them entry by entry.
+func overlayWalkerFor(ctx context.Context, s *state) (overlayWalker, []report.Finding) {
+	if s.descriptor.Kind != spec.KindMixin {
+		return nil, nil
+	}
+	_, ok, err := s.artifact.Layers(ctx)
+	if err != nil {
+		return nil, fail("read layers: %v", err)
+	}
+	if !ok {
+		return nil, skip("layers are not assembled yet")
+	}
+	w, ok := s.artifact.(overlayWalker)
+	if !ok {
+		return nil, skip("this source cannot read the overlay's own entries")
+	}
+	return w, nil
 }
 
 // executableBy reports whether the identity the image declares can

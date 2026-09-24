@@ -20,10 +20,14 @@ RUN case "$TARGETARCH" in \
     done \
  && /out/usr/local/bin/codex --version
 
-# The v2 kit's environment.variables block has no v3 field (v3 carries no
-# static env grammar; the image config owns runtime env, and a mixin's
-# config does not merge). The exports ride the overlay instead, sourced by
-# the base workload's login shell. GIT_TERMINAL_PROMPT=0 keeps git from
+# The v2 kit's environment.variables block has no v3 field; the image
+# config owns runtime env. An ENV on the final stage would reach the
+# composed image — assembly merges a mixin's env (SPEC-v3 §10) — but a
+# merged key is first-writer-owned, so a base setting BROWSER to anything
+# else would refuse the composition. These exports ride the overlay
+# instead, sourced by the base workload's login shell, where they apply
+# over the base's values; the cost is that a process started outside a
+# login shell does not see them. GIT_TERMINAL_PROMPT=0 keeps git from
 # hanging on an interactive credential prompt in a headless sandbox.
 RUN mkdir -p /out/etc/profile.d && cat > /out/etc/profile.d/codex-env.sh <<'EOF'
 export BROWSER=xdg-open

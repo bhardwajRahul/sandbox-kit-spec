@@ -586,6 +586,9 @@ type ociArtifact struct {
 	// perLayer caches one layer's paths, which whiteout resolution needs
 	// layer by layer rather than flattened.
 	perLayer map[string][]string
+	// overlay is the layers applied as an extractor stacks them, built
+	// once for the checks that judge an overlay's own entries.
+	overlay *overlayFS
 }
 
 func (a *ociArtifact) Annotations() map[string]string { return a.manifest.Annotations }

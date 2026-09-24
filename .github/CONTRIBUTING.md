@@ -54,6 +54,9 @@ and tests enforce it:
 - `examples/` — every descriptor under `examples/` must decode and
   validate against the current grammar.
 
+The agent skills under `skills/` teach the grammar too, and nothing tests
+them, so a grammar change updates them by hand in the same pull request.
+
 Bear in mind that decoding is strict: any unrecognized field is an error.
 Renaming or removing a field therefore breaks kits already published under
 the old spelling, which have to be rebuilt rather than degrading. Say so

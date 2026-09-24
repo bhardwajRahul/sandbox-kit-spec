@@ -6,8 +6,10 @@
 
 # Local editor and agent settings. The skills in skills/ are tool-agnostic, so
 # whatever an agent wants them under is a local choice rather than the
-# repository's — see skills/README.md.
+# repository's — see skills/README.md. Only the links that wiring recipe makes
+# are ignored, so a shared agent config added later is not silently skipped.
 .vscode/
-.cursor/
-.claude/
+.cursor/skills
+.claude/skills
+.claude/settings.local.json
 .DS_Store

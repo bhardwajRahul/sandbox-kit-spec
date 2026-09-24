@@ -234,6 +234,28 @@ func StatFileEntry(r io.Reader, path string) (FileEntry, error) {
 	return readEntry(tr, path, false, -1)
 }
 
+// WalkLayer calls fn with every header of one layer blob, in archive
+// order, for a caller that applies the layer the way an extractor does.
+func WalkLayer(r io.Reader, fn func(*tar.Header) error) error {
+	tr, closeLayer, err := openLayer(r)
+	if err != nil {
+		return err
+	}
+	defer closeLayer()
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read layer: %w", err)
+		}
+		if err := fn(hdr); err != nil {
+			return err
+		}
+	}
+}
+
 // regular reports whether a tar type is an ordinary file. The reader
 // rewrites the historical spelling to TypeReg before this sees it.
 func regular(typeflag byte) bool {

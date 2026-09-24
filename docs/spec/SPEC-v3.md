@@ -838,6 +838,16 @@ manifest  oci.image.manifest.v1+json
   ignored — they exist so a standalone `docker run` of the mixin behaves
   as authored. `requires` states what the mixin can sit on, because
   nothing else can check.
+- A mixin's **directory entries replace the base's** at the paths they
+  name, owner included, so the home levels §12 lays out are the overlay's
+  to keep. A mixin **MUST NOT** ship `/home` owned by anyone but root, or `/home/agent` by anyone but uid `1000`. <!-- tck: SPEC-v3 §10/overlay-home-ownership -->
+  Either inversion takes the home from the user who needs it — `/home`
+  handed to the agent, or `$HOME` taken from it — whatever the base had.
+  A mixin that ships neither leaves the base's in place.
+- A mixin **SHOULD NOT** ship a symlink its own layers do not resolve. <!-- tck: SPEC-v3 §10/overlay-links-resolve -->
+  The base it lands on is unknown, so a link into it resolves only where
+  a base happens to supply the target — and a link whose target existed
+  only in the stage that built the overlay resolves nowhere.
 - A **merged set** is an ordinary workload or mixin: its layers are its
   listed Kits' layers, and the `kits:` record in its descriptor names
   those Kits with their digests, one manifest GET away.

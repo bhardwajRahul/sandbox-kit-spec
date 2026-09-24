@@ -224,11 +224,12 @@ is the published descriptor, `kit.dockerfile` the recipe, and
 `/var/log/sbx-kit-startup.log` the startup hook output.
 
 **A build is not proof the kit works.** For a mixin especially, compose the
-built overlay onto a bare base and run the tool — that is the only check that
-catches an overlay shipping a dangling symlink, which happens whenever an
-installer relocates a launcher but not its payload and the build-stage
-`test -x` passes because the payload is still there. Details and the ownership
-audit are in [RECIPES.md](RECIPES.md#verifying-an-overlay).
+built overlay onto a bare base and run the tool. An overlay shipping a dangling
+symlink — which happens whenever an installer relocates a launcher but not its
+payload and the build-stage `test -x` passes because the payload is still
+there — draws a `kit-tck` warning in step 3, but only the composition proves
+whether the base supplies the target. Details and the ownership audit are in
+[RECIPES.md](RECIPES.md#verifying-an-overlay).
 
 ## Publish
 
