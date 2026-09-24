@@ -394,6 +394,70 @@ func TestAnExactNestedMatchStopsTheSearch(t *testing.T) {
 	require.Equal(t, "amd64", got.Descriptor.DisplayName)
 }
 
+func TestANestedExactPlatformBeatsAPlatformLessDirectImage(t *testing.T) {
+	reg := newRegistry(t)
+	plain := reg.image(t, kitJSON(t, &spec.Descriptor{
+		SchemaVersion: spec.SchemaVersion,
+		Kind:          spec.KindMixin,
+		DisplayName:   "plain",
+		Version:       "1.0.0",
+		Provides:      []string{"demo@1.0.0"},
+	}))
+	amd64 := reg.image(t, kitJSON(t, &spec.Descriptor{
+		SchemaVersion: spec.SchemaVersion,
+		Kind:          spec.KindMixin,
+		DisplayName:   "amd64",
+		Version:       "1.0.0",
+		Provides:      []string{"demo@1.0.0"},
+	}))
+	nested := reg.index(t, []ocispec.Descriptor{
+		reg.platform("kits/demo", amd64, "amd64"),
+	}, nil)
+	// The direct manifest names no platform. Taking it without opening
+	// the nested index would miss the amd64 manifest that index holds.
+	reg.tag("kits/demo", "1.0.0", reg.index(t, []ocispec.Descriptor{
+		reg.descriptor("kits/demo", plain, ocispec.MediaTypeImageManifest),
+		reg.descriptor("kits/demo", nested, ocispec.MediaTypeImageIndex),
+	}, nil))
+
+	client, err := New(WithPlatform(ocispec.Platform{OS: "linux", Architecture: "amd64"}))
+	require.NoError(t, err)
+	got, err := client.Fetch(context.Background(), reg.ref("kits/demo", "1.0.0"))
+	require.NoError(t, err)
+	require.Equal(t, "amd64", got.Descriptor.DisplayName)
+}
+
+func TestAPlatformLessImageRemainsWhenNestedIndexesMiss(t *testing.T) {
+	reg := newRegistry(t)
+	plain := reg.image(t, kitJSON(t, &spec.Descriptor{
+		SchemaVersion: spec.SchemaVersion,
+		Kind:          spec.KindMixin,
+		DisplayName:   "plain",
+		Version:       "1.0.0",
+		Provides:      []string{"demo@1.0.0"},
+	}))
+	arm64 := reg.image(t, kitJSON(t, &spec.Descriptor{
+		SchemaVersion: spec.SchemaVersion,
+		Kind:          spec.KindMixin,
+		DisplayName:   "arm64",
+		Version:       "1.0.0",
+		Provides:      []string{"demo@1.0.0"},
+	}))
+	nested := reg.index(t, []ocispec.Descriptor{
+		reg.platform("kits/demo", arm64, "arm64"),
+	}, nil)
+	reg.tag("kits/demo", "1.0.0", reg.index(t, []ocispec.Descriptor{
+		reg.descriptor("kits/demo", plain, ocispec.MediaTypeImageManifest),
+		reg.descriptor("kits/demo", nested, ocispec.MediaTypeImageIndex),
+	}, nil))
+
+	client, err := New(WithPlatform(ocispec.Platform{OS: "linux", Architecture: "amd64"}))
+	require.NoError(t, err)
+	got, err := client.Fetch(context.Background(), reg.ref("kits/demo", "1.0.0"))
+	require.NoError(t, err)
+	require.Equal(t, "plain", got.Descriptor.DisplayName)
+}
+
 func TestAnUnknownPlatformIndexStillYieldsItsManifest(t *testing.T) {
 	reg := newRegistry(t)
 	amd64 := reg.image(t, kitJSON(t, &spec.Descriptor{

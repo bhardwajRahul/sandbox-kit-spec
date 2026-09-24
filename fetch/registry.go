@@ -297,10 +297,15 @@ func chooseManifest(index *ocispec.Index, want ocispec.Platform) (matched *ocisp
 		}
 		return matched, nested
 	}
-	// A platform-less sole manifest has nothing to match against. One
-	// that names a different platform is not a guess we get to make.
+	// A sole manifest that names no platform is a fallback: there is
+	// nothing to match and nothing to reject. One that names a
+	// different platform is not a guess. Nested indexes are still
+	// searched, because a known platform outranks that fallback.
 	if runnable == 1 && only.Platform == nil {
-		return only, nil
+		if len(nested) == 0 {
+			return only, nil
+		}
+		return only, nested
 	}
 	return nil, nested
 }
