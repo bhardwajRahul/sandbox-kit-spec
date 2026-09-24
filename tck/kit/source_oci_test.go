@@ -1488,6 +1488,46 @@ func TestEntriesBeneathASelfExtendingLinkAreCheap(t *testing.T) {
 	require.Less(t, time.Since(start), 5*time.Second)
 }
 
+// The extractor abandons a layer at its first refused entry, so nothing
+// after it in that layer is placed, while what came before stays.
+func TestARefusedEntryAbandonsTheRestOfItsLayer(t *testing.T) {
+	a := buildLayeredArtifact(t,
+		func(tw *tar.Writer) {
+			writeFile(t, tw, "f", 0o644, 0, 0)
+			writeFile(t, tw, "f/x", 0o644, 0, 0)
+			writeFile(t, tw, "later", 0o644, 0, 0)
+		},
+		func(tw *tar.Writer) {
+			writeLink(t, tw, "early", "/f")
+			writeLink(t, tw, "chk", "/later")
+		},
+	)
+	dangling, err := a.(overlayWalker).DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{{Path: "/chk", Target: "/later"}}, dangling)
+}
+
+// Where containerd's lstat would continue on the host — through an
+// absolute link, or a relative one climbing above the layer's directory —
+// the path is taken not to exist there, so the walk carries on from the
+// link's own target and the entry lands where containerd puts it.
+func TestAHostContinuationIsTakenAsAbsent(t *testing.T) {
+	for _, target := range []string{"/c/d", "../../c/d"} {
+		a := buildLayerArtifact(t, func(tw *tar.Writer) {
+			writeLink(t, tw, "a", "/b")
+			writeLink(t, tw, "b", target)
+			writeDir(t, tw, "c/d/", 0, 0)
+			writeLink(t, tw, "c/d/x", "../q")
+			writeFile(t, tw, "a/x/y", 0o644, 0, 0)
+			writeLink(t, tw, "lands", "/c/q/y")
+			writeLink(t, tw, "lexical", "/q/y")
+		})
+		dangling, err := a.(overlayWalker).DanglingSymlinks(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, []Symlink{{Path: "/lexical", Target: "/q/y"}}, dangling, target)
+	}
+}
+
 // A home level behind a link chain too deep to follow exposes no
 // directory entry, so ownership has nothing to judge rather than an error
 // to fail on.
