@@ -212,6 +212,12 @@ func (c *Client) annotation(ctx context.Context, repo *remote.Repository, desc o
 		}
 		if ok {
 			consider(ann, plat)
+			// The same stop as a direct child. A later branch cannot
+			// be closer, and reading it can 404 or spend the budget
+			// after the manifest we want is already in hand.
+			if plat != nil && !matcher.Less(c.platform, *plat) {
+				return ann, plat, true, nil
+			}
 		}
 	}
 	if !found {
@@ -244,10 +250,12 @@ func requirePlainImageManifest(desc ocispec.Descriptor, m ocispec.Manifest) erro
 	return nil
 }
 
-// chooseManifest prefers an image manifest for want. A single runnable
-// manifest is accepted without a platform match, because a one-platform
-// index has nothing else to be. Several that miss the platform are not
-// guessed between.
+// chooseManifest prefers an image manifest for want.
+//
+// A sole manifest that names no platform is accepted: a one-platform
+// index has nothing else to be, and nothing to match against. A sole
+// manifest that names a different platform is not a guess, and neither
+// are several that miss the platform.
 func chooseManifest(index *ocispec.Index, want ocispec.Platform) (matched *ocispec.Descriptor, nested []ocispec.Descriptor) {
 	matcher := platforms.Only(want)
 	var only *ocispec.Descriptor

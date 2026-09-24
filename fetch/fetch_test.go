@@ -329,6 +329,37 @@ func TestANonImageConfigIsNotAKit(t *testing.T) {
 	require.ErrorContains(t, err, "image config")
 }
 
+func TestAnExactNestedMatchStopsTheSearch(t *testing.T) {
+	reg := newRegistry(t)
+	amd64 := reg.image(t, kitJSON(t, &spec.Descriptor{
+		SchemaVersion: spec.SchemaVersion,
+		Kind:          spec.KindMixin,
+		DisplayName:   "amd64",
+		Version:       "1.0.0",
+		Provides:      []string{"demo@1.0.0"},
+	}))
+	nested := reg.index(t, []ocispec.Descriptor{
+		reg.platform("kits/demo", amd64, "amd64"),
+	}, nil)
+	// The second branch is not stored. Reading it 404s, so success
+	// means the exact match in the first branch ended the walk.
+	missing := ocispec.Descriptor{
+		MediaType: ocispec.MediaTypeImageIndex,
+		Digest:    digest.FromString("absent-index"),
+		Size:      1,
+	}
+	reg.tag("kits/demo", "1.0.0", reg.index(t, []ocispec.Descriptor{
+		reg.descriptor("kits/demo", nested, ocispec.MediaTypeImageIndex),
+		missing,
+	}, nil))
+
+	client, err := New(WithPlatform(ocispec.Platform{OS: "linux", Architecture: "amd64"}))
+	require.NoError(t, err)
+	got, err := client.Fetch(context.Background(), reg.ref("kits/demo", "1.0.0"))
+	require.NoError(t, err)
+	require.Equal(t, "amd64", got.Descriptor.DisplayName)
+}
+
 func TestAnUnknownPlatformIndexStillYieldsItsManifest(t *testing.T) {
 	reg := newRegistry(t)
 	amd64 := reg.image(t, kitJSON(t, &spec.Descriptor{
