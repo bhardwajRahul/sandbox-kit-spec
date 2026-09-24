@@ -19,7 +19,17 @@ RUN npm install -g --omit=optional --prefix /opt/claude-agent-acp \
 FROM dhi.io/debian-base:trixie-dev
 COPY --from=build /usr/bin/node /usr/local/bin/node
 COPY --from=build /opt/claude-agent-acp /opt/claude-agent-acp
-RUN ln -s /opt/claude-agent-acp/bin/claude-agent-acp /usr/local/bin/claude-agent-acp
+# The adapter briefly reports "Not logged in" while its asynchronous
+# account probe is still resolving. Some ACP clients treat that interim
+# notification as terminal and close an otherwise healthy connection.
+# The wrapper drops only those false negatives for which a synchronous
+# `claude auth status` confirms a login; genuine logged-out states pass.
+# It also maps legacy `session/set_model` requests to the current
+# `session/set_config_option` form for clients that still send the old
+# method.
+COPY scripts/claude-agent-acp-wrapper.mjs /usr/local/libexec/claude-agent-acp-wrapper.mjs
+RUN chmod 0755 /usr/local/libexec/claude-agent-acp-wrapper.mjs \
+ && ln -s /usr/local/libexec/claude-agent-acp-wrapper.mjs /usr/local/bin/claude-agent-acp
 
 # The adapter resolves the CLI it drives from CLAUDE_CODE_EXECUTABLE
 # first, and only then from the SDK's vendored native binary. Pinning it

@@ -14,7 +14,7 @@ kind: workload
 # as the installer pin, expanded into the provide.
 args:
   version:
-    default: "2.1.278"
+    default: "2.1.281"
     pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
     description: Claude Code release to install
     buildArg: CLAUDE_VERSION
@@ -164,6 +164,14 @@ capabilities:
           env: [WORKSPACE_DIR]
           description: Seed Claude bypass/trust flags (root; overwrites image-shipped file)
 
+        # Volumes and agent-skills mount under ~/.claude/ before install
+        # runs, so the runtime creates that parent root-owned when the
+        # image does not ship it. Re-own here so the agent-uid settings
+        # seed below can write into it (same pattern as cursor/gemini).
+        - command: mkdir -p /home/agent/.claude && chown agent:agent /home/agent/.claude
+          user: "0"
+          description: Ensure ~/.claude is agent-owned before settings seed
+
         # Seed ~/.claude/settings.json from the auth mode the engine surfaces.
         # apiKeyHelper is included only when a credential resolved; without it
         # Claude Code prompts for /login. Rewritten unconditionally on every
@@ -172,7 +180,6 @@ capabilities:
         # Claude Code silently ignores the key elsewhere.
         - command: |
             set -e
-            mkdir -p /home/agent/.claude
             HELPER=''
             if [ "${SBX_CRED_ANTHROPIC_MODE:-none}" != none ]; then
               HELPER='  "apiKeyHelper": "echo proxy-managed",
