@@ -45,9 +45,31 @@ type LayerLink struct {
 // redirects the paths beneath it — and the LAST entry per path decides,
 // the same rule content resolution applies.
 func ReadLayerEntries(r io.Reader) (files, dirs []string, links map[string]LayerLink, err error) {
+	l, err := ReadLayerListing(r)
+	return l.Files, l.Dirs, l.Links, err
+}
+
+// LayerListing is ReadLayerEntries' result, plus Linked: every path some
+// link entry named at any point in the layer, including ones a later
+// entry replaced. A hard link captures its target as it stood when the
+// link applied, so a symlink rewritten afterwards is still what the
+// alias holds.
+type LayerListing struct {
+	Files, Dirs []string
+	Links       map[string]LayerLink
+	Linked      map[string]bool
+}
+
+// ReadLayerListing is ReadLayerEntries with the layer's link history.
+func ReadLayerListing(r io.Reader) (LayerListing, error) {
+	files, dirs, links, linked, err := readLayerEntries(r)
+	return LayerListing{Files: files, Dirs: dirs, Links: links, Linked: linked}, err
+}
+
+func readLayerEntries(r io.Reader) (files, dirs []string, links map[string]LayerLink, linked map[string]bool, err error) {
 	tr, closeLayer, err := openLayer(r)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	defer closeLayer()
 	const kindFile, kindDir, kindLink = 0, 1, 2
@@ -60,7 +82,7 @@ func ReadLayerEntries(r io.Reader) (files, dirs []string, links map[string]Layer
 			break
 		}
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("read layer: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("read layer: %w", err)
 		}
 		name := strings.TrimSuffix(normalizePath(hdr.Name), "/")
 		if _, seen := kind[name]; !seen {
@@ -77,6 +99,10 @@ func ReadLayerEntries(r io.Reader) (files, dirs []string, links map[string]Layer
 		}
 	}
 	links = map[string]LayerLink{}
+	linked = map[string]bool{}
+	for name := range linkOf {
+		linked[name] = true
+	}
 	for _, name := range order {
 		switch kind[name] {
 		case kindDir:
@@ -88,7 +114,7 @@ func ReadLayerEntries(r io.Reader) (files, dirs []string, links map[string]Layer
 			files = append(files, name)
 		}
 	}
-	return files, dirs, links, nil
+	return files, dirs, links, linked, nil
 }
 
 func ReadInventory(r io.Reader) ([]string, error) {

@@ -586,6 +586,9 @@ type ociArtifact struct {
 	// perLayer caches one layer's paths, which whiteout resolution needs
 	// layer by layer rather than flattened.
 	perLayer map[string][]string
+	// perLayerLinked caches every path a layer's entries ever made a
+	// link, since a hard link captures what its target was at the time.
+	perLayerLinked map[string]map[string]bool
 }
 
 func (a *ociArtifact) Annotations() map[string]string { return a.manifest.Annotations }
@@ -1212,7 +1215,10 @@ func (a *ociArtifact) linkKind(ctx context.Context, name string, upto, depth int
 		return kindFile, "", nil
 	}
 	target := path.Clean("/" + strings.TrimPrefix(l.Target, "/"))
-	_, sameLayer := links[strings.TrimPrefix(target, "/")]
+	sameLayer, err := a.everLinked(ctx, a.manifest.Layers[winner], target)
+	if err != nil {
+		return kindAbsent, "", err
+	}
 	lower, _, err := a.composedKind(ctx, target, winner-1)
 	if err != nil {
 		return kindAbsent, "", err
@@ -1303,6 +1309,7 @@ func (a *ociArtifact) layerEntries(ctx context.Context, layer ocispec.Descriptor
 		a.perLayer = map[string][]string{}
 		a.perLayerDirs = map[string][]string{}
 		a.perLayerLinks = map[string]map[string]assemble.LayerLink{}
+		a.perLayerLinked = map[string]map[string]bool{}
 	}
 	key := layer.Digest.String()
 	if paths, ok := a.perLayer[key]; ok {
@@ -1312,15 +1319,25 @@ func (a *ociArtifact) layerEntries(ctx context.Context, layer ocispec.Descriptor
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("fetch layer %s: %w", layer.Digest, err)
 	}
-	files, dirs, links, err = assemble.ReadLayerEntries(rc)
+	listing, err := assemble.ReadLayerListing(rc)
 	_ = rc.Close()
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	a.perLayer[key] = files
-	a.perLayerDirs[key] = dirs
-	a.perLayerLinks[key] = links
-	return files, dirs, links, nil
+	a.perLayer[key] = listing.Files
+	a.perLayerDirs[key] = listing.Dirs
+	a.perLayerLinks[key] = listing.Links
+	a.perLayerLinked[key] = listing.Linked
+	return listing.Files, listing.Dirs, listing.Links, nil
+}
+
+// everLinked reports whether any entry in a layer made name a link, even
+// one a later entry in the same layer replaced.
+func (a *ociArtifact) everLinked(ctx context.Context, layer ocispec.Descriptor, name string) (bool, error) {
+	if _, _, _, err := a.layerEntries(ctx, layer); err != nil {
+		return false, err
+	}
+	return a.perLayerLinked[layer.Digest.String()][strings.TrimPrefix(name, "/")], nil
 }
 
 // whitesOut reports whether a layer deletes name: directly, by deleting

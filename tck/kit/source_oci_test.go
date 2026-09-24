@@ -991,6 +991,26 @@ func TestAHardLinkAliasingASymlinkIsJudgedAsOne(t *testing.T) {
 	}, dangling)
 }
 
+// A hard link captures its target as it stood when the link applied, so a
+// symlink rewritten later in the same layer is still what the alias
+// holds, and still dangles.
+func TestAHardLinkKeepsASymlinkItsLayerLaterReplaced(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		writeLink(t, tw, "usr/bin/target", "/missing")
+		require.NoError(t, tw.WriteHeader(&tar.Header{
+			Name: "usr/bin/alias", Typeflag: tar.TypeLink, Linkname: "usr/bin/target",
+		}))
+		writeFile(t, tw, "usr/bin/target", 0o755, 0, 0)
+	})
+	w := a.(overlayWalker)
+
+	dangling, err := w.DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{
+		{Path: "/usr/bin/alias", Target: "/missing"},
+	}, dangling)
+}
+
 // A home level behind a link chain too deep to follow exposes no
 // directory entry, so ownership has nothing to judge rather than an error
 // to fail on.
