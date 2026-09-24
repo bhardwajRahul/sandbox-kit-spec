@@ -85,11 +85,15 @@ func (a *ociArtifact) overlayModel(ctx context.Context) (*overlayFS, error) {
 			return nil, fmt.Errorf("fetch layer %s: %w", layer.Digest, err)
 		}
 		upper := newDir()
+		failed := false
 		err = assemble.WalkLayer(rc, func(hdr *tar.Header) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			extract(upper, layers, hdr)
+			// The extractor gives up on a layer at its first bad entry.
+			if !failed && !extract(upper, layers, hdr) {
+				failed = true
+			}
 			return nil
 		})
 		_ = rc.Close()
@@ -163,53 +167,68 @@ func (a *ociArtifact) DanglingSymlinks(ctx context.Context) ([]Symlink, error) {
 // it: the name is cleaned as written and its parent resolved with
 // rootPath, missing directories are created as mkparent creates them, a
 // whiteout is placed only where nothing is, an opaque marker marks its
-// directory, and any other entry replaces what held its path unless both are
-// directories. An entry the extractor would refuse — and so fail the
-// whole layer on — is not placed; that failure is not what these checks
-// judge.
-func extract(upper *fsNode, lowers []*fsNode, hdr *tar.Header) {
-	if hdr.Typeflag == tar.TypeXGlobalHeader {
-		return
-	}
+// directory except at the layer's root, where overlayfs ignores it, and
+// any other entry replaces what held its path unless both are
+// directories. It reports false for an entry the extractor would refuse:
+// that entry is not placed, and the extractor abandons the rest of its
+// layer, which is failure these checks do not judge.
+func extract(upper *fsNode, lowers []*fsNode, hdr *tar.Header) bool {
 	// Cleaned as written, not rooted first: rootPath treats a symlink at
-	// the top of a relative name differently from one under "/".
+	// the top of a relative name differently from one under "/". A name
+	// made only of ".." resolves to the root, which the extractor skips.
 	name := path.Clean(hdr.Name)
-	if name == "." || name == "/" || len(name) > maxPathLen {
-		return
+	if name == "." || name == "/" || path.Base(name) == ".." {
+		return true
+	}
+	if len(name) > maxPathLen {
+		return false
 	}
 	dir, base := path.Split(name)
 	resolved, ok := rootPath(upper, dir)
 	if !ok {
-		return
+		return false
 	}
 	parent, ok := mkparent(upper, lowers, resolved)
 	if !ok {
-		return
+		return false
 	}
 
 	if base == ".wh..wh..opq" {
-		parent.opaque = true
-		return
+		if parent != upper {
+			parent.opaque = true
+		}
+		return true
 	}
 	if victim, ok := strings.CutPrefix(base, ".wh."); ok {
 		if victim != "" && parent.children[victim] == nil {
 			parent.children[victim] = &fsNode{kind: nodeWhiteout}
 		}
-		return
+		return true
 	}
 
 	var n *fsNode
 	switch hdr.Typeflag {
+	case tar.TypeXGlobalHeader:
+		// Nothing is written for it, but its parents are made and
+		// whatever held its path is removed first, as for any entry.
+		delete(parent.children, base)
+		return true
+	case tar.TypeChar:
+		// overlayfs reads a 0/0 character device as a whiteout.
+		n = &fsNode{kind: nodeFile}
+		if hdr.Devmajor == 0 && hdr.Devminor == 0 {
+			n.kind = nodeWhiteout
+		}
 	case tar.TypeDir:
 		if existing := parent.children[base]; existing != nil && existing.kind == nodeDir {
 			existing.explicit, existing.uid, existing.gid, existing.mode = true, hdr.Uid, hdr.Gid, hdr.Mode
-			return
+			return true
 		}
 		n = newDir()
 		n.explicit, n.uid, n.gid, n.mode = true, hdr.Uid, hdr.Gid, hdr.Mode
 	case tar.TypeSymlink:
 		if hdr.Linkname == "" || len(hdr.Linkname) > maxPathLen {
-			return
+			return false
 		}
 		n = &fsNode{kind: nodeSymlink, link: hdr.Linkname}
 	case tar.TypeLink:
@@ -220,16 +239,17 @@ func extract(upper *fsNode, lowers []*fsNode, hdr *tar.Header) {
 		tdir, tbase := path.Split(hdr.Linkname)
 		tresolved, ok := rootPath(upper, tdir)
 		if !ok {
-			return
+			return false
 		}
-		n = newResolver(upper).lstat(path.Join(tresolved, tbase))
+		n, _ = newResolver(upper).lstat(path.Join(tresolved, tbase))
 		if n == nil || n.kind == nodeDir {
-			return
+			return false
 		}
 	default:
 		n = &fsNode{kind: nodeFile}
 	}
 	parent.children[base] = n
+	return true
 }
 
 // mkparent creates the directories along a path rootPath resolved that do
@@ -243,6 +263,7 @@ func extract(upper *fsNode, lowers []*fsNode, hdr *tar.Header) {
 // base.
 func mkparent(upper *fsNode, lowers []*fsNode, p string) (*fsNode, bool) {
 	cur, at := upper, ""
+	resolvers := make([]*resolver, len(lowers))
 	for _, seg := range strings.Split(p, "/") {
 		if seg == "" {
 			continue
@@ -251,7 +272,7 @@ func mkparent(upper *fsNode, lowers []*fsNode, p string) (*fsNode, bool) {
 		n := cur.children[seg]
 		if n == nil {
 			n = newDir()
-			if !inheritDirInfo(n, lowers, at) {
+			if !inheritDirInfo(n, lowers, resolvers, at) {
 				return nil, false
 			}
 			cur.children[seg] = n
@@ -267,13 +288,19 @@ func mkparent(upper *fsNode, lowers []*fsNode, p string) (*fsNode, bool) {
 // inheritDirInfo gives a directory mkparent creates at p the metadata the
 // lower layers dictate, reporting false where resolving p in one of them
 // fails, which fails the entry.
-func inheritDirInfo(n *fsNode, lowers []*fsNode, p string) bool {
+func inheritDirInfo(n *fsNode, lowers []*fsNode, resolvers []*resolver, p string) bool {
 	for i := len(lowers) - 1; i >= 0; i-- {
 		resolved, ok := rootPath(lowers[i], p)
 		if !ok {
 			return false
 		}
-		found := newResolver(lowers[i]).lstat(resolved)
+		if resolvers[i] == nil {
+			resolvers[i] = newResolver(lowers[i])
+		}
+		found, failed := resolvers[i].lstat(resolved)
+		if failed {
+			return false
+		}
 		switch {
 		case found == nil:
 			continue
@@ -333,7 +360,7 @@ func crossesSymlink(t *fsNode, p string) bool {
 		if top := dirs[len(dirs)-1]; top != nil {
 			n = top.children[seg]
 		}
-		if n != nil && n.kind == nodeSymlink {
+		if n != nil && n.kind != nodeDir {
 			return true
 		}
 		dirs = append(dirs, n)
@@ -345,11 +372,18 @@ func crossesSymlink(t *fsNode, p string) bool {
 // resolved: a walk asks for every prefix of a path in turn.
 type resolver struct {
 	t    *fsNode
-	dirs map[string]*fsNode
+	dirs map[string]dirResult
+}
+
+// dirResult is a directory lookup: the directory, or none, failed when
+// the kernel would report ENOTDIR or ELOOP rather than ENOENT.
+type dirResult struct {
+	n      *fsNode
+	failed bool
 }
 
 func newResolver(t *fsNode) *resolver {
-	return &resolver{t: t, dirs: map[string]*fsNode{}}
+	return &resolver{t: t, dirs: map[string]dirResult{}}
 }
 
 // walkLinks resolves the directory part of p before its last component
@@ -390,7 +424,13 @@ func (r *resolver) walkLink(p string, walked *int) (string, bool, bool) {
 	if p == "/" {
 		return p, false, true
 	}
-	n := r.lstat(p)
+	if len(p) > maxPathLen {
+		return "", false, false
+	}
+	n, failed := r.lstat(p)
+	if failed {
+		return "", false, false
+	}
 	if n == nil || n.kind != nodeSymlink {
 		return p, false, true
 	}
@@ -400,45 +440,89 @@ func (r *resolver) walkLink(p string, walked *int) (string, bool, bool) {
 
 // lstat is what lstat(2) reports for p within the tree: its directory
 // looked up as the kernel does, its last component as it is, a whiteout
-// device included. The lookup stays inside the tree, where the extractor
-// would resolve an absolute symlink against the host; rootPath has
-// already bounded the paths it hands over, so the two agree.
-func (r *resolver) lstat(p string) *fsNode {
+// device included, and whether the lookup failed as ENOTDIR or ELOOP
+// rather than finding nothing. Where the extractor's lstat would carry on
+// against the host — an absolute link, or a ".." above the layer's
+// directory — hostLookup takes the path not to exist there.
+func (r *resolver) lstat(p string) (*fsNode, bool) {
 	dir, base := path.Split(path.Clean("/" + p))
 	if base == "" {
-		return r.t
+		return r.t, false
 	}
 	d := r.dir(path.Clean(dir))
-	if d == nil {
-		return nil
+	if d.n == nil {
+		return nil, d.failed
 	}
-	return d.children[base]
+	return d.n.children[base], false
 }
 
 // dir resolves a clean absolute directory path as the kernel does,
 // through each prefix it has already resolved.
-func (r *resolver) dir(d string) *fsNode {
+func (r *resolver) dir(d string) dirResult {
 	if d == "/" {
-		return r.t
+		return dirResult{n: r.t}
 	}
-	if n, ok := r.dirs[d]; ok {
-		return n
+	if res, ok := r.dirs[d]; ok {
+		return res
 	}
 	parent, base := path.Split(d)
-	var n *fsNode
-	if pn := r.dir(path.Clean(parent)); pn != nil {
-		switch c := pn.children[base]; {
+	res := r.dir(path.Clean(parent))
+	if res.n != nil {
+		switch c := res.n.children[base]; {
 		case c == nil:
+			res = dirResult{}
 		case c.kind == nodeDir:
-			n = c
+			res = dirResult{n: c}
 		case c.kind == nodeSymlink:
-			if found := lookup(r.t, []*fsNode{r.t}, d, 0); found != nil && found.kind == nodeDir {
-				n = found
-			}
+			res = hostLookup(r.t, d)
+		default:
+			res = dirResult{failed: true}
 		}
 	}
-	r.dirs[d] = n
-	return n
+	r.dirs[d] = res
+	return res
+}
+
+// hostLookup resolves a directory path as lstat(2) does when the
+// extractor hands it the layer's directory joined with the path: an
+// absolute link, or a ".." above the layer's directory, continues on the
+// host, where the path is taken not to exist.
+func hostLookup(root *fsNode, d string) dirResult {
+	dirs := []*fsNode{root}
+	pending := pushPath(nil, d)
+	followed := 0
+	for len(pending) > 0 {
+		seg := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		switch seg {
+		case "", ".":
+			continue
+		case "..":
+			if len(dirs) == 1 {
+				return dirResult{}
+			}
+			dirs = dirs[:len(dirs)-1]
+			continue
+		}
+		n := dirs[len(dirs)-1].children[seg]
+		switch {
+		case n == nil:
+			return dirResult{}
+		case n.kind == nodeDir:
+			dirs = append(dirs, n)
+		case n.kind == nodeSymlink:
+			if followed++; followed > maxLookupSymlinks {
+				return dirResult{failed: true}
+			}
+			if strings.HasPrefix(n.link, "/") {
+				return dirResult{}
+			}
+			pending = pushPath(pending, n.link)
+		default:
+			return dirResult{failed: true}
+		}
+	}
+	return dirResult{n: dirs[len(dirs)-1]}
 }
 
 // stack merges an extracted layer onto the layers below it, as overlayfs
