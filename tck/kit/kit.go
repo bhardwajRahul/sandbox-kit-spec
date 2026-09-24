@@ -1300,7 +1300,8 @@ var homeLevels = []struct {
 
 // overlayWalkerFor is the source's overlayWalker when the check applies:
 // a mixin, whose layers are the overlay, from a source that has
-// assembled them. A skip is returned where the layers are not there yet.
+// assembled them. A skip is returned where the layers are not there yet,
+// or the source cannot read them entry by entry.
 func overlayWalkerFor(ctx context.Context, s *state) (overlayWalker, []report.Finding) {
 	if s.descriptor.Kind != spec.KindMixin {
 		return nil, nil
@@ -1312,7 +1313,10 @@ func overlayWalkerFor(ctx context.Context, s *state) (overlayWalker, []report.Fi
 	if !ok {
 		return nil, skip("layers are not assembled yet")
 	}
-	w, _ := s.artifact.(overlayWalker)
+	w, ok := s.artifact.(overlayWalker)
+	if !ok {
+		return nil, skip("this source cannot read the overlay's own entries")
+	}
 	return w, nil
 }
 
