@@ -216,6 +216,118 @@ func TestACloserPlatformBeatsACompatibleOneLaterInTheIndex(t *testing.T) {
 	require.Equal(t, "amd64", got.Descriptor.DisplayName)
 }
 
+func TestANestedExactPlatformBeatsACompatibleDirectMatch(t *testing.T) {
+	reg := newRegistry(t)
+	amd64 := reg.image(t, kitJSON(t, &spec.Descriptor{
+		SchemaVersion: spec.SchemaVersion,
+		Kind:          spec.KindMixin,
+		DisplayName:   "amd64",
+		Version:       "1.0.0",
+		Provides:      []string{"demo@1.0.0"},
+	}))
+	i386 := reg.image(t, kitJSON(t, &spec.Descriptor{
+		SchemaVersion: spec.SchemaVersion,
+		Kind:          spec.KindMixin,
+		DisplayName:   "386",
+		Version:       "1.0.0",
+		Provides:      []string{"demo@1.0.0"},
+	}))
+	// 386 matches an amd64 request. Returning it without opening the
+	// nested index would miss the amd64 manifest that index holds.
+	nested := reg.index(t, []ocispec.Descriptor{
+		reg.platform("kits/demo", amd64, "amd64"),
+	}, nil)
+	reg.tag("kits/demo", "1.0.0", reg.index(t, []ocispec.Descriptor{
+		reg.platform("kits/demo", i386, "386"),
+		reg.descriptor("kits/demo", nested, ocispec.MediaTypeImageIndex),
+	}, nil))
+
+	client, err := New(WithPlatform(ocispec.Platform{OS: "linux", Architecture: "amd64"}))
+	require.NoError(t, err)
+	got, err := client.Fetch(context.Background(), reg.ref("kits/demo", "1.0.0"))
+	require.NoError(t, err)
+	require.Equal(t, "amd64", got.Descriptor.DisplayName)
+}
+
+func TestACompatibleDirectMatchStandsWhenNoNestedManifestIsCloser(t *testing.T) {
+	reg := newRegistry(t)
+	arm64 := reg.image(t, kitJSON(t, &spec.Descriptor{
+		SchemaVersion: spec.SchemaVersion,
+		Kind:          spec.KindMixin,
+		DisplayName:   "arm64",
+		Version:       "1.0.0",
+		Provides:      []string{"demo@1.0.0"},
+	}))
+	i386 := reg.image(t, kitJSON(t, &spec.Descriptor{
+		SchemaVersion: spec.SchemaVersion,
+		Kind:          spec.KindMixin,
+		DisplayName:   "386",
+		Version:       "1.0.0",
+		Provides:      []string{"demo@1.0.0"},
+	}))
+	nested := reg.index(t, []ocispec.Descriptor{
+		reg.platform("kits/demo", arm64, "arm64"),
+	}, nil)
+	reg.tag("kits/demo", "1.0.0", reg.index(t, []ocispec.Descriptor{
+		reg.platform("kits/demo", i386, "386"),
+		reg.descriptor("kits/demo", nested, ocispec.MediaTypeImageIndex),
+	}, nil))
+
+	client, err := New(WithPlatform(ocispec.Platform{OS: "linux", Architecture: "amd64"}))
+	require.NoError(t, err)
+	got, err := client.Fetch(context.Background(), reg.ref("kits/demo", "1.0.0"))
+	require.NoError(t, err)
+	require.Equal(t, "386", got.Descriptor.DisplayName)
+}
+
+func TestFetchRejectsADescriptorThatIsNotInPublishedForm(t *testing.T) {
+	reg := newRegistry(t)
+	raw := kitJSON(t, &spec.Descriptor{
+		SchemaVersion: spec.SchemaVersion,
+		Kind:          spec.KindSet,
+		Version:       "1.0.0",
+		Kits:          []spec.Kit{{Ref: "docker.io/org/tool:1.0.0"}},
+	})
+	reg.tag("kits/set", "1.0.0", reg.image(t, raw))
+
+	client, err := New()
+	require.NoError(t, err)
+	_, err = client.Fetch(context.Background(), reg.ref("kits/set", "1.0.0"))
+	require.ErrorContains(t, err, "kind: set")
+}
+
+func TestAnArtifactIsNotAKit(t *testing.T) {
+	reg := newRegistry(t)
+	desc := kitJSON(t, &spec.Descriptor{
+		SchemaVersion: spec.SchemaVersion,
+		Kind:          spec.KindMixin,
+		Version:       "1.0.0",
+		Provides:      []string{"demo@1.0.0"},
+	})
+	reg.tag("kits/demo", "1.0.0", manifestWith(t, desc, "application/vnd.example.artifact", ocispec.MediaTypeImageConfig))
+
+	client, err := New()
+	require.NoError(t, err)
+	_, err = client.Fetch(context.Background(), reg.ref("kits/demo", "1.0.0"))
+	require.ErrorContains(t, err, "artifactType")
+}
+
+func TestANonImageConfigIsNotAKit(t *testing.T) {
+	reg := newRegistry(t)
+	desc := kitJSON(t, &spec.Descriptor{
+		SchemaVersion: spec.SchemaVersion,
+		Kind:          spec.KindMixin,
+		Version:       "1.0.0",
+		Provides:      []string{"demo@1.0.0"},
+	})
+	reg.tag("kits/demo", "1.0.0", manifestWith(t, desc, "", "application/vnd.example.config"))
+
+	client, err := New()
+	require.NoError(t, err)
+	_, err = client.Fetch(context.Background(), reg.ref("kits/demo", "1.0.0"))
+	require.ErrorContains(t, err, "image config")
+}
+
 func TestAnIndexWithoutThePlatformIsAnError(t *testing.T) {
 	reg := newRegistry(t)
 	arm64 := reg.image(t, kitJSON(t, &spec.Descriptor{
@@ -430,20 +542,41 @@ func (r *registry) index(t *testing.T, manifests []ocispec.Descriptor, annotatio
 	return raw
 }
 
-func (r *registry) platform(repo string, manifest []byte, arch string) ocispec.Descriptor {
+func (r *registry) descriptor(repo string, manifest []byte, mediaType string) ocispec.Descriptor {
 	dgst := digest.FromBytes(manifest)
 	key := repo + "/manifests/" + dgst.String()
 	r.mu.Lock()
 	r.manifests[key] = manifest
-	r.mediaType[key] = ocispec.MediaTypeImageManifest
+	r.mediaType[key] = mediaType
 	r.mu.Unlock()
-	plat := ocispec.Platform{OS: "linux", Architecture: arch}
 	return ocispec.Descriptor{
-		MediaType: ocispec.MediaTypeImageManifest,
+		MediaType: mediaType,
 		Digest:    dgst,
 		Size:      int64(len(manifest)),
-		Platform:  &plat,
 	}
+}
+
+func (r *registry) platform(repo string, manifest []byte, arch string) ocispec.Descriptor {
+	d := r.descriptor(repo, manifest, ocispec.MediaTypeImageManifest)
+	d.Platform = &ocispec.Platform{OS: "linux", Architecture: arch}
+	return d
+}
+
+func manifestWith(t *testing.T, descriptor []byte, artifactType, configType string) []byte {
+	t.Helper()
+	raw, err := json.Marshal(ocispec.Manifest{
+		Versioned:    specs.Versioned{SchemaVersion: 2},
+		MediaType:    ocispec.MediaTypeImageManifest,
+		ArtifactType: artifactType,
+		Config: ocispec.Descriptor{
+			MediaType: configType,
+			Digest:    digest.FromString("config"),
+			Size:      2,
+		},
+		Annotations: map[string]string{spec.AnnotationDescriptor: string(descriptor)},
+	})
+	require.NoError(t, err)
+	return raw
 }
 
 func (r *registry) tag(repo, tag string, manifest []byte) {

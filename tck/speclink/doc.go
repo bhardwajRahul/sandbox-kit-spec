@@ -1,4 +1,4 @@
-// Package speclink turns the requirement id a finding names into a place
+// Package speclink turns the requirement id that a finding names into a place
 // in the specification where that requirement is written down.
 //
 // The suites already answer in the vocabulary of the pages: a kit check

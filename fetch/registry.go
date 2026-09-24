@@ -54,6 +54,13 @@ func (c *Client) fetch(ctx context.Context, ref string) (*Kit, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A fetched kit is published data. Decode only parses; the
+	// published-form rules are what keep a hand-written annotation
+	// from reaching resolve with kind: set, an unpinned kit, or a
+	// build arg still in the document.
+	if _, err := spec.ValidatePublished(raw, d); err != nil {
+		return nil, err
+	}
 	return &Kit{
 		Reference:  ref,
 		Digest:     dgst,
@@ -89,7 +96,7 @@ func (c *Client) readDescriptor(ctx context.Context, repo *remote.Repository, re
 	if err != nil {
 		return nil, "", err
 	}
-	raw, ok, err := c.annotation(ctx, repo, desc, body, 0)
+	raw, _, ok, err := c.annotation(ctx, repo, desc, body, 0)
 	if err != nil {
 		return nil, "", err
 	}
@@ -101,65 +108,120 @@ func (c *Client) readDescriptor(ctx context.Context, repo *remote.Repository, re
 
 // annotation reads the descriptor annotation from desc.
 //
+// platform is the image manifest the annotation was read from, so a
+// caller ranking several branches can keep the closer one. It is nil
+// when the annotation came from the tagged index itself.
+//
 // ok is false when desc is an index that does not hold the wanted
 // platform — a caller searching several nested indexes tries the next.
 // An image manifest is ok even when its annotation is empty; that
 // emptiness is "not a kit", not "look somewhere else".
-func (c *Client) annotation(ctx context.Context, repo *remote.Repository, desc ocispec.Descriptor, body []byte, depth int) ([]byte, bool, error) {
+func (c *Client) annotation(ctx context.Context, repo *remote.Repository, desc ocispec.Descriptor, body []byte, depth int) ([]byte, *ocispec.Platform, bool, error) {
 	if !isIndex(desc.MediaType) {
 		if !isImageManifest(desc.MediaType) {
-			return nil, false, fmt.Errorf("a kit is a plain image manifest, not %q", desc.MediaType)
+			return nil, nil, false, fmt.Errorf("a kit is a plain image manifest, not %q", desc.MediaType)
 		}
 		var manifest ocispec.Manifest
 		if err := json.Unmarshal(body, &manifest); err != nil {
-			return nil, false, fmt.Errorf("parse manifest: %w", err)
+			return nil, nil, false, fmt.Errorf("parse manifest: %w", err)
 		}
-		if manifest.SchemaVersion != 2 {
-			return nil, false, fmt.Errorf("a manifest declares schemaVersion 2, got %d", manifest.SchemaVersion)
+		if err := requirePlainImageManifest(desc, manifest); err != nil {
+			return nil, nil, false, err
 		}
-		return []byte(manifest.Annotations[spec.AnnotationDescriptor]), true, nil
+		return []byte(manifest.Annotations[spec.AnnotationDescriptor]), desc.Platform, true, nil
 	}
 	if depth > maxIndexDepth {
-		return nil, false, fmt.Errorf("indexes nest deeper than any kit should")
+		return nil, nil, false, fmt.Errorf("indexes nest deeper than any kit should")
 	}
 	var index ocispec.Index
 	if err := json.Unmarshal(body, &index); err != nil {
-		return nil, false, fmt.Errorf("parse index: %w", err)
+		return nil, nil, false, fmt.Errorf("parse index: %w", err)
 	}
 	if index.SchemaVersion != 2 {
-		return nil, false, fmt.Errorf("an index declares schemaVersion 2, got %d", index.SchemaVersion)
+		return nil, nil, false, fmt.Errorf("an index declares schemaVersion 2, got %d", index.SchemaVersion)
 	}
 	// Only the tagged index's annotation counts. A nested index is not
 	// what the reference resolved to, and adopting its annotation would
 	// hide an absent one on the index a consumer actually reads.
 	if depth == 0 {
 		if raw := index.Annotations[spec.AnnotationDescriptor]; raw != "" {
-			return []byte(raw), true, nil
+			return []byte(raw), nil, true, nil
 		}
 	}
 
 	child, nested := chooseManifest(&index, c.platform)
+	matcher := platforms.Only(c.platform)
+	var bestRaw []byte
+	var bestPlat *ocispec.Platform
+	found := false
+	consider := func(ann []byte, plat *ocispec.Platform) {
+		switch {
+		case !found:
+			bestRaw, bestPlat, found = ann, plat, true
+		case plat != nil && (bestPlat == nil || matcher.Less(*plat, *bestPlat)):
+			bestRaw, bestPlat = ann, plat
+		}
+	}
 	if child != nil {
 		body, err := fetchDescriptor(ctx, repo, *child)
 		if err != nil {
-			return nil, false, err
+			return nil, nil, false, err
 		}
-		return c.annotation(ctx, repo, *child, body, depth+1)
+		ann, plat, ok, err := c.annotation(ctx, repo, *child, body, depth+1)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if ok {
+			consider(ann, plat)
+			// Already the platform that was asked for. A nested
+			// branch cannot be a closer match, and a manifest at
+			// this level is preferred to one buried in a branch.
+			if plat != nil && !matcher.Less(c.platform, *plat) {
+				return ann, plat, true, nil
+			}
+		}
 	}
 	for _, n := range nested {
 		body, err := fetchDescriptor(ctx, repo, n)
 		if err != nil {
-			return nil, false, err
+			return nil, nil, false, err
 		}
-		raw, ok, err := c.annotation(ctx, repo, n, body, depth+1)
+		ann, plat, ok, err := c.annotation(ctx, repo, n, body, depth+1)
 		if err != nil {
-			return nil, false, err
+			return nil, nil, false, err
 		}
 		if ok {
-			return raw, true, nil
+			consider(ann, plat)
 		}
 	}
-	return nil, false, nil
+	if !found {
+		return nil, nil, false, nil
+	}
+	return bestRaw, bestPlat, true, nil
+}
+
+// requirePlainImageManifest enforces the artifact shape the spec names:
+// a plain image manifest — no artifactType — with an image-config blob.
+// An OCI artifact unmarshals into the same struct.
+func requirePlainImageManifest(desc ocispec.Descriptor, m ocispec.Manifest) error {
+	if m.SchemaVersion != 2 {
+		return fmt.Errorf("a manifest declares schemaVersion 2, got %d", m.SchemaVersion)
+	}
+	mediaType := desc.MediaType
+	if mediaType == "" {
+		mediaType = m.MediaType
+	}
+	if !isImageManifest(mediaType) {
+		return fmt.Errorf("a kit is a plain image manifest, not %q", mediaType)
+	}
+	if m.ArtifactType != "" {
+		return fmt.Errorf("a kit sets no artifactType, got %q", m.ArtifactType)
+	}
+	if m.Config.MediaType != ocispec.MediaTypeImageConfig &&
+		m.Config.MediaType != "application/vnd.docker.container.image.v1+json" {
+		return fmt.Errorf("a kit's config is an image config, not %q", m.Config.MediaType)
+	}
+	return nil
 }
 
 // chooseManifest prefers an image manifest for want. A single runnable
@@ -196,7 +258,13 @@ func chooseManifest(index *ocispec.Index, want ocispec.Platform) (matched *ocisp
 		}
 	}
 	if matched != nil {
-		return matched, nil
+		// 386 satisfies an amd64 request, and returning it here would
+		// hide an amd64 manifest inside a nested index. A match that
+		// is already the platform asked for does not need that search.
+		if len(nested) == 0 || !matcher.Less(want, *matched.Platform) {
+			return matched, nil
+		}
+		return matched, nested
 	}
 	// A platform-less sole manifest has nothing to match against. One
 	// that names a different platform is not a guess we get to make.
