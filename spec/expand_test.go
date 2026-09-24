@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestExpandBuildArgsPreservesValuesVerbatim(t *testing.T) {
@@ -177,12 +178,43 @@ capabilities:
 	}
 }
 
+func TestExpandBuildArgsPreservesMergeWithLiteralKey(t *testing.T) {
+	for _, key := range []string{"<<", "${{ kit.args.key }}"} {
+		for _, entries := range []string{
+			`  <<: {inherited: "${{ kit.args.text }}", overridden: default}
+  *key: literal
+`,
+			`  *key: literal
+  <<: {inherited: "${{ kit.args.text }}", overridden: default}
+`,
+		} {
+			t.Run(key+entries, func(t *testing.T) {
+				// yaml.v3 accepts a literal << beside a merge only through an alias.
+				raw := []byte(fmt.Sprintf("key: &key %q\nconfig:\n%s  overridden: explicit\n", key, entries))
+				var before map[string]any
+				require.NoError(t, yaml.Unmarshal(raw, &before))
+
+				decls := map[string]Arg{"key": {BuildArg: "KEY"}, "text": {BuildArg: "TEXT"}}
+				out, err := ExpandBuildArgs(raw, decls, map[string]string{"key": "<<", "text": "built"})
+				require.NoError(t, err)
+				require.Contains(t, string(out), "*key")
+
+				var published map[string]any
+				require.NoError(t, yaml.Unmarshal(out, &published))
+				require.Equal(t, map[string]any{"<<": "literal", "inherited": "built", "overridden": "explicit"}, published["config"])
+			})
+		}
+	}
+}
+
 func TestExpandBuildArgsRejectsCollapsedKeys(t *testing.T) {
-	raw := []byte(`"${{ kit.args.name }}": from-arg
-profile: literal
-`)
-	_, err := ExpandBuildArgs(raw, map[string]Arg{"name": {BuildArg: "NAME"}}, map[string]string{"name": "profile"})
-	require.ErrorContains(t, err, `collapses two keys onto "profile"`)
+	for _, name := range []string{"profile", "<<"} {
+		t.Run(name, func(t *testing.T) {
+			raw := []byte(fmt.Sprintf("\"${{ kit.args.name }}\": from-arg\n%q: literal\n", name))
+			_, err := ExpandBuildArgs(raw, map[string]Arg{"name": {BuildArg: "NAME"}}, map[string]string{"name": name})
+			require.ErrorContains(t, err, fmt.Sprintf("collapses two keys onto %q", name))
+		})
+	}
 }
 
 func TestExpandBuildArgsRejectsMissingValues(t *testing.T) {
@@ -288,13 +320,18 @@ capabilities:
 }
 
 func TestExpandBuildArgsRejectsAliasedKeyCollisions(t *testing.T) {
-	raw := []byte(`name: &key profile
+	for _, name := range []string{"profile", "<<"} {
+		t.Run(name, func(t *testing.T) {
+			raw := []byte(fmt.Sprintf(`name: &key %q
 structure:
+  <<: {inherited: yes}
   *key: literal
   "${{ kit.args.name }}": expanded
-`)
-	_, err := ExpandBuildArgs(raw, map[string]Arg{"name": {BuildArg: "NAME"}}, map[string]string{"name": "profile"})
-	require.ErrorContains(t, err, `collapses two keys onto "profile"`)
+`, name))
+			_, err := ExpandBuildArgs(raw, map[string]Arg{"name": {BuildArg: "NAME"}}, map[string]string{"name": name})
+			require.ErrorContains(t, err, fmt.Sprintf("collapses two keys onto %q", name))
+		})
+	}
 }
 
 func TestExpandBuildArgsExpandsTaggedStrings(t *testing.T) {

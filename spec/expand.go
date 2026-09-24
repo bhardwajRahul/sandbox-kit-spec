@@ -237,7 +237,8 @@ func ExpandBuildArgs(raw []byte, decls map[string]Arg, values map[string]string)
 			if expandErr != nil {
 				return
 			}
-			if isKey {
+			// Merge directives contribute entries, not a literal << key.
+			if isKey && child.Tag != "!!merge" {
 				var name string
 				if err := child.Decode(&name); err != nil {
 					expandErr = err
