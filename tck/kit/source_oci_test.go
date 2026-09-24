@@ -1938,6 +1938,8 @@ func TestPlainHTTPIsImpliedForLoopbackOnly(t *testing.T) {
 // The option carries a caller's decision to a repository that would
 // otherwise have been held to HTTPS.
 func TestWithPlainHTTPReachesANonLoopbackRegistry(t *testing.T) {
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
+
 	r, err := remoteRepository("registry.example.com/kit", registryOptions{})
 	require.NoError(t, err)
 	require.False(t, r.PlainHTTP, "a remote registry is HTTPS unless the caller says otherwise")
