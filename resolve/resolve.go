@@ -1,10 +1,3 @@
-// Package resolve validates and orders a closed set of kits.
-//
-// Capability names resolve to nothing and validate against something: the
-// user names the kits (the closed set), and this package checks that the
-// set is coherent — every requirement satisfied, no conflicts, exactly one
-// workload kit — and derives the one deterministic order the kits compose in.
-// No registry IO happens here; callers hand in already-fetched descriptors.
 package resolve
 
 import (

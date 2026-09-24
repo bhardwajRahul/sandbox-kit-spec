@@ -10,7 +10,7 @@ to change. Schema-3 frontend releases and the Go module major share the
 
 | Axis | Where it lives | Moves when |
 |---|---|---|
-| Module / schema-3 release | git tags `v3.X.Y` (+ Hub `docker/sandbox-kit:3.X.Y`) | A publish of the Go packages (`spec`, `resolve`, `assemble`, `tck`), the schema-3 BuildKit frontend, and `kit-tck` binaries |
+| Module / schema-3 release | git tags `v3.X.Y` (+ Hub `docker/sandbox-kit:3.X.Y`) | A publish of the Go packages (`spec`, `resolve`, `assemble`, `fetch`, `tck`), the schema-3 BuildKit frontend, and `kit-tck` binaries |
 | Schema version | `spec.SchemaVersion`, the descriptor's `schemaVersion: "3"` | The descriptor grammar changes shape incompatibly |
 | Capability version | the `@N` in `com.docker.sandbox/<name>@N` | That capability's config schema changes after it has shipped |
 | Frontend floating tag | `docker/sandbox-kit:3` | Tracks the highest stable schema-3 frontend release |

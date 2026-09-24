@@ -1,0 +1,448 @@
+package fetch
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"runtime"
+	"strings"
+
+	"github.com/containerd/platforms"
+	"github.com/distribution/reference"
+	"github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"oras.land/oras-go/v2/registry/remote"
+	"oras.land/oras-go/v2/registry/remote/auth"
+	"oras.land/oras-go/v2/registry/remote/retry"
+
+	"github.com/docker/sandbox-kit-spec/v3/spec"
+)
+
+// maxIndexDepth bounds how far a reference may nest indexes. Real
+// artifacts use one level; anything deeper is malformed or hostile.
+const maxIndexDepth = 4
+
+// maxManifestFetches bounds how many manifests one reference may cause
+// us to read. Depth alone does not: one index can list thousands of
+// children, and each of those can do the same. A published kit is a
+// handful of platform manifests under one index.
+const maxManifestFetches = 32
+
+// maxMetadataBytes bounds a manifest or index read. Metadata meets
+// registry ceilings around 4 MB; a descriptor pointing at an enormous
+// blob must become an error, not an allocation.
+const maxMetadataBytes = 8 << 20
+
+// manifestBudget counts manifests read while resolving one reference.
+// It is shared across the walk, so a wide index and a deep one draw
+// from the same allowance.
+type manifestBudget struct{ n int }
+
+func (b *manifestBudget) consume() error {
+	if b.n >= maxManifestFetches {
+		return fmt.Errorf("resolved through more than %d manifests; a kit index is not that wide", maxManifestFetches)
+	}
+	b.n++
+	return nil
+}
+
+func defaultPlatform() ocispec.Platform {
+	return ocispec.Platform{OS: "linux", Architecture: runtime.GOARCH}
+}
+
+func (c *Client) fetch(ctx context.Context, ref string) (*Kit, error) {
+	repoName, referenceName, err := splitRef(ref)
+	if err != nil {
+		return nil, err
+	}
+	repo, err := c.repository(repoName)
+	if err != nil {
+		return nil, err
+	}
+	raw, dgst, err := c.readDescriptor(ctx, repo, referenceName)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 {
+		return nil, ErrNotAKit
+	}
+	d, err := spec.Decode(raw)
+	if err != nil {
+		return nil, err
+	}
+	// A fetched kit is published data. Decode only parses; the
+	// published-form rules are what keep a hand-written annotation
+	// from reaching resolve with kind: set, an unpinned kit, or a
+	// build arg still in the document.
+	if _, err := spec.ValidatePublished(raw, d); err != nil {
+		return nil, err
+	}
+	return &Kit{
+		Reference:  ref,
+		Digest:     dgst,
+		Descriptor: d,
+		Raw:        append([]byte(nil), raw...),
+	}, nil
+}
+
+func (c *Client) repository(repoName string) (*remote.Repository, error) {
+	repo, err := remote.NewRepository(repoName)
+	if err != nil {
+		return nil, err
+	}
+	repo.PlainHTTP = c.plainHTTP || isLoopbackRegistry(repo.Reference.Registry)
+	repo.Client = &auth.Client{
+		Client:     &http.Client{Transport: retry.NewTransport(c.transport)},
+		Cache:      c.cache,
+		Credential: c.credential,
+		Header:     http.Header{"User-Agent": []string{"sandbox-kit-fetch"}},
+	}
+	return repo, nil
+}
+
+// readDescriptor returns the descriptor annotation and the digest the
+// reference itself resolved to.
+//
+// An index annotation is what a consumer reads first, and it is only an
+// optimization: when it is absent the platform manifest is the contract.
+// Either way the digest is the one the reference resolved to, so a lock
+// pins the tag and not one platform's manifest.
+func (c *Client) readDescriptor(ctx context.Context, repo *remote.Repository, referenceName string) ([]byte, string, error) {
+	budget := &manifestBudget{}
+	desc, body, err := fetchManifest(ctx, repo, referenceName, budget)
+	if err != nil {
+		return nil, "", err
+	}
+	raw, _, ok, err := c.annotation(ctx, repo, desc, body, 0, budget)
+	if err != nil {
+		return nil, "", err
+	}
+	if !ok {
+		return nil, "", fmt.Errorf("index holds no manifest for %s", platforms.Format(c.platform))
+	}
+	return raw, desc.Digest.String(), nil
+}
+
+// annotation reads the descriptor annotation from desc.
+//
+// platform is the image manifest the annotation was read from, so a
+// caller ranking several branches can keep the closer one. It is nil
+// when the annotation came from the tagged index itself.
+//
+// ok is false when desc is an index that does not hold the wanted
+// platform — a caller searching several nested indexes tries the next.
+// An image manifest is ok even when its annotation is empty; that
+// emptiness is "not a kit", not "look somewhere else".
+func (c *Client) annotation(ctx context.Context, repo *remote.Repository, desc ocispec.Descriptor, body []byte, depth int, budget *manifestBudget) ([]byte, *ocispec.Platform, bool, error) {
+	if !isIndex(desc.MediaType) {
+		if !isImageManifest(desc.MediaType) {
+			return nil, nil, false, fmt.Errorf("a kit is a plain image manifest, not %q", desc.MediaType)
+		}
+		var manifest ocispec.Manifest
+		if err := json.Unmarshal(body, &manifest); err != nil {
+			return nil, nil, false, fmt.Errorf("parse manifest: %w", err)
+		}
+		if err := requirePlainImageManifest(desc, manifest); err != nil {
+			return nil, nil, false, err
+		}
+		return []byte(manifest.Annotations[spec.AnnotationDescriptor]), desc.Platform, true, nil
+	}
+	if depth > maxIndexDepth {
+		return nil, nil, false, fmt.Errorf("indexes nest deeper than any kit should")
+	}
+	var index ocispec.Index
+	if err := json.Unmarshal(body, &index); err != nil {
+		return nil, nil, false, fmt.Errorf("parse index: %w", err)
+	}
+	if index.SchemaVersion != 2 {
+		return nil, nil, false, fmt.Errorf("an index declares schemaVersion 2, got %d", index.SchemaVersion)
+	}
+	// An index annotation is trusted without opening a child. An
+	// artifactType would make that trust accept an OCI artifact, which
+	// a kit is not — the same rule an image manifest is held to.
+	if index.ArtifactType != "" {
+		return nil, nil, false, fmt.Errorf("a kit sets no artifactType, got %q", index.ArtifactType)
+	}
+	// Only the tagged index's annotation counts. A nested index is not
+	// what the reference resolved to, and adopting its annotation would
+	// hide an absent one on the index a consumer actually reads.
+	if depth == 0 {
+		if raw := index.Annotations[spec.AnnotationDescriptor]; raw != "" {
+			return []byte(raw), nil, true, nil
+		}
+	}
+
+	child, nested := chooseManifest(&index, c.platform)
+	matcher := platforms.Only(c.platform)
+	exact := func(plat *ocispec.Platform) bool {
+		return plat != nil && !matcher.Less(c.platform, *plat)
+	}
+	var bestRaw []byte
+	var bestPlat *ocispec.Platform
+	found := false
+	consider := func(ann []byte, plat *ocispec.Platform) {
+		switch {
+		case !found:
+			bestRaw, bestPlat, found = ann, plat, true
+		case plat != nil && (bestPlat == nil || matcher.Less(*plat, *bestPlat)):
+			bestRaw, bestPlat = ann, plat
+		}
+	}
+	read := func(d ocispec.Descriptor) ([]byte, *ocispec.Platform, bool, error) {
+		body, err := fetchDescriptor(ctx, repo, d, budget)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		return c.annotation(ctx, repo, d, body, depth+1, budget)
+	}
+	// A direct match that is already the platform asked for, or the
+	// only candidate, is read now. A merely compatible or platform-less
+	// one is a fallback: a nested branch may hold a closer manifest,
+	// and a failure of the fallback must not hide that.
+	var fallback *ocispec.Descriptor
+	if child != nil && (exact(child.Platform) || len(nested) == 0) {
+		ann, plat, ok, err := read(*child)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if ok {
+			consider(ann, plat)
+			if exact(plat) {
+				return ann, plat, true, nil
+			}
+		}
+	} else if child != nil {
+		fallback = child
+	}
+	for _, n := range nested {
+		ann, plat, ok, err := read(n)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if ok {
+			consider(ann, plat)
+			// A later branch cannot be closer, and reading it can
+			// 404 or spend the budget after the manifest we want is
+			// already in hand.
+			if exact(plat) {
+				return ann, plat, true, nil
+			}
+		}
+	}
+	if fallback != nil {
+		ann, plat, ok, err := read(*fallback)
+		if err != nil {
+			// The fallback loses to a nested result that is at least
+			// as good. Its absence must not discard that result.
+			if found && !betterPlatform(matcher, fallback.Platform, bestPlat) {
+				return bestRaw, bestPlat, true, nil
+			}
+			return nil, nil, false, err
+		}
+		// This level is preferred to a buried manifest of the same
+		// rank. A closer nested result still wins.
+		if ok && (!found || !betterPlatform(matcher, bestPlat, plat)) {
+			bestRaw, bestPlat, found = ann, plat, true
+		}
+	}
+	if !found {
+		return nil, nil, false, nil
+	}
+	return bestRaw, bestPlat, true, nil
+}
+
+// betterPlatform reports whether a is a closer match than b. A named
+// platform outranks one that names none.
+func betterPlatform(matcher platforms.MatchComparer, a, b *ocispec.Platform) bool {
+	if a == nil {
+		return false
+	}
+	if b == nil {
+		return true
+	}
+	return matcher.Less(*a, *b)
+}
+
+// requirePlainImageManifest enforces the artifact shape the spec names:
+// a plain image manifest — no artifactType — with an image-config blob.
+// An OCI artifact unmarshals into the same struct.
+func requirePlainImageManifest(desc ocispec.Descriptor, m ocispec.Manifest) error {
+	if m.SchemaVersion != 2 {
+		return fmt.Errorf("a manifest declares schemaVersion 2, got %d", m.SchemaVersion)
+	}
+	mediaType := desc.MediaType
+	if mediaType == "" {
+		mediaType = m.MediaType
+	}
+	if !isImageManifest(mediaType) {
+		return fmt.Errorf("a kit is a plain image manifest, not %q", mediaType)
+	}
+	if m.ArtifactType != "" {
+		return fmt.Errorf("a kit sets no artifactType, got %q", m.ArtifactType)
+	}
+	if m.Config.MediaType != ocispec.MediaTypeImageConfig &&
+		m.Config.MediaType != "application/vnd.docker.container.image.v1+json" {
+		return fmt.Errorf("a kit's config is an image config, not %q", m.Config.MediaType)
+	}
+	return nil
+}
+
+// chooseManifest prefers an image manifest for want.
+//
+// A sole manifest that names no platform is accepted: a one-platform
+// index has nothing else to be, and nothing to match against. A sole
+// manifest that names a different platform is not a guess, and neither
+// are several that miss the platform.
+func chooseManifest(index *ocispec.Index, want ocispec.Platform) (matched *ocispec.Descriptor, nested []ocispec.Descriptor) {
+	matcher := platforms.Only(want)
+	var only *ocispec.Descriptor
+	runnable := 0
+	for i := range index.Manifests {
+		m := &index.Manifests[i]
+		// An index marked os=unknown has no platform of its own. That
+		// marker is a reason to skip an image manifest, not the index:
+		// the platform we want may be inside it.
+		if isIndex(m.MediaType) {
+			nested = append(nested, *m)
+			continue
+		}
+		if m.Platform != nil && m.Platform.OS == "unknown" {
+			continue
+		}
+		if m.MediaType != "" && !isImageManifest(m.MediaType) {
+			continue
+		}
+		runnable++
+		if only == nil {
+			only = m
+		}
+		if m.Platform != nil && matcher.Match(*m.Platform) {
+			// Only matches compatible platforms too — amd64 matches
+			// 386 — and Less ranks the closer one ahead. Keeping the
+			// last match would let index order pick the worse one.
+			if matched == nil || matcher.Less(*m.Platform, *matched.Platform) {
+				matched = m
+			}
+		}
+	}
+	if matched != nil {
+		// 386 satisfies an amd64 request, and returning it here would
+		// hide an amd64 manifest inside a nested index. A match that
+		// is already the platform asked for does not need that search.
+		if len(nested) == 0 || !matcher.Less(want, *matched.Platform) {
+			return matched, nil
+		}
+		return matched, nested
+	}
+	// A sole manifest that names no platform is a fallback: there is
+	// nothing to match and nothing to reject. One that names a
+	// different platform is not a guess. Nested indexes are still
+	// searched, because a known platform outranks that fallback.
+	if runnable == 1 && only.Platform == nil {
+		if len(nested) == 0 {
+			return only, nil
+		}
+		return only, nested
+	}
+	return nil, nested
+}
+
+func fetchManifest(ctx context.Context, repo *remote.Repository, referenceName string, budget *manifestBudget) (ocispec.Descriptor, []byte, error) {
+	if err := budget.consume(); err != nil {
+		return ocispec.Descriptor{}, nil, err
+	}
+	desc, rc, err := repo.FetchReference(ctx, referenceName)
+	if err != nil {
+		return ocispec.Descriptor{}, nil, err
+	}
+	body, err := readLimited(rc, desc.Digest.String())
+	if err != nil {
+		return ocispec.Descriptor{}, nil, err
+	}
+	return desc, body, nil
+}
+
+func fetchDescriptor(ctx context.Context, repo *remote.Repository, desc ocispec.Descriptor, budget *manifestBudget) ([]byte, error) {
+	if err := budget.consume(); err != nil {
+		return nil, err
+	}
+	rc, err := repo.Fetch(ctx, desc)
+	if err != nil {
+		return nil, err
+	}
+	return readLimited(rc, desc.Digest.String())
+}
+
+func readLimited(rc io.ReadCloser, name string) ([]byte, error) {
+	defer func() { _ = rc.Close() }()
+	body, err := io.ReadAll(io.LimitReader(rc, maxMetadataBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", name, err)
+	}
+	if len(body) > maxMetadataBytes {
+		return nil, fmt.Errorf("%s exceeds %d bytes; no kit metadata blob is that large", name, maxMetadataBytes)
+	}
+	return body, nil
+}
+
+func isIndex(mediaType string) bool {
+	return mediaType == ocispec.MediaTypeImageIndex ||
+		mediaType == "application/vnd.docker.distribution.manifest.list.v2+json"
+}
+
+func isImageManifest(mediaType string) bool {
+	return mediaType == ocispec.MediaTypeImageManifest ||
+		mediaType == "application/vnd.docker.distribution.manifest.v2+json"
+}
+
+// splitRef normalizes a reference, then separates the repository from
+// the tag or digest. A bare name means latest, which is what it means
+// to docker pull.
+func splitRef(ref string) (repo, referenceName string, err error) {
+	named, err := parseNamed(ref)
+	if err != nil {
+		return "", "", err
+	}
+	switch t := named.(type) {
+	case reference.Canonical:
+		// A digest answers for a reference carrying both: resolving the
+		// tag instead would read whatever it points at now.
+		return reference.TrimNamed(named).String(), t.Digest().String(), nil
+	case reference.Tagged:
+		return reference.TrimNamed(named).String(), t.Tag(), nil
+	default:
+		return "", "", fmt.Errorf("reference %q names no tag or digest", ref)
+	}
+}
+
+func parseNamed(ref string) (reference.Named, error) {
+	named, err := reference.ParseNormalizedNamed(ref)
+	if err != nil {
+		return nil, fmt.Errorf("reference %q: %w", ref, err)
+	}
+	return reference.TagNameOnly(named), nil
+}
+
+func withDigest(named reference.Named, dgst digest.Digest) (string, error) {
+	canonical, err := reference.WithDigest(reference.TrimNamed(named), dgst)
+	if err != nil {
+		return "", err
+	}
+	return canonical.String(), nil
+}
+
+func isLoopbackRegistry(host string) bool {
+	name := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		name = h
+	}
+	if name == "localhost" {
+		return true
+	}
+	name = strings.TrimSuffix(strings.TrimPrefix(name, "["), "]")
+	ip := net.ParseIP(name)
+	return ip != nil && ip.IsLoopback()
+}

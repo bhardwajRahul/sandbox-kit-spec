@@ -168,9 +168,9 @@ RUN true
 	})
 
 	t.Run("$TARGETARCH in the base name expands from the builtin args", func(t *testing.T) {
-		got, err := finalStage([]byte("FROM ghcr.io/org/tool:latest-$TARGETARCH\nRUN true\n"), nil, target, build)
+		got, err := finalStage([]byte("FROM docker.io/org/tool:latest-$TARGETARCH\nRUN true\n"), nil, target, build)
 		require.NoError(t, err)
-		require.Equal(t, "ghcr.io/org/tool:latest-arm64", got.base)
+		require.Equal(t, "docker.io/org/tool:latest-arm64", got.base)
 	})
 
 	t.Run("an unresolvable --platform is an error", func(t *testing.T) {
@@ -257,16 +257,16 @@ RUN make
 	})
 
 	t.Run("TARGETSTAGE expands to the requested target, default otherwise", func(t *testing.T) {
-		got, err := finalStage([]byte("FROM ghcr.io/org/tool:$TARGETSTAGE\n"), map[string]string{"target": ""}, target, build)
+		got, err := finalStage([]byte("FROM docker.io/org/tool:$TARGETSTAGE\n"), map[string]string{"target": ""}, target, build)
 		require.NoError(t, err)
-		require.Equal(t, "ghcr.io/org/tool:default", got.base)
+		require.Equal(t, "docker.io/org/tool:default", got.base)
 	})
 
 	t.Run("a caller build-arg overrides an automatic platform arg", func(t *testing.T) {
-		got, err := finalStage([]byte("FROM ghcr.io/org/tool:latest-$TARGETARCH\nRUN true\n"),
+		got, err := finalStage([]byte("FROM docker.io/org/tool:latest-$TARGETARCH\nRUN true\n"),
 			map[string]string{"build-arg:TARGETARCH": "custom"}, target, build)
 		require.NoError(t, err)
-		require.Equal(t, "ghcr.io/org/tool:latest-custom", got.base)
+		require.Equal(t, "docker.io/org/tool:latest-custom", got.base)
 	})
 }
 

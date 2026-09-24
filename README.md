@@ -306,7 +306,7 @@ to share, step 2's `task kit:push` is the whole publishing story.
 ## Building a Kit
 
 ```sh
-docker buildx build . -f claude.yaml -t registry.example.com/claude-kit:2.1.0
+docker buildx build . -f claude.yaml -t docker.io/me/claude-kit:2.1.0
 ```
 
 A workload Kit's companion must build on a base that provides the runtime's
@@ -378,7 +378,7 @@ on every platform manifest:
 
 ```sh
 docker buildx build . -f claude.yaml --platform linux/amd64,linux/arm64 --push \
-  -t registry.example.com/claude-kit:2.1.0
+  -t docker.io/me/claude-kit:2.1.0
 ```
 
 ## The frontend image
