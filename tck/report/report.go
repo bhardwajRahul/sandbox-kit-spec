@@ -1,6 +1,3 @@
-// Package report is the vocabulary both conformance suites answer in: a
-// finding names the requirement it judged, so a failure is traceable to
-// the sentence of the specification it violates.
 package report
 
 import (

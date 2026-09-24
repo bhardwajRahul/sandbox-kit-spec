@@ -1,10 +1,3 @@
-// kit-tck judges conformance to the kit specification.
-//
-// `kit-tck validate` checks one artifact: that its annotations, layers, staged
-// sources, and image config are what the spec requires. The same checks
-// run inside the BuildKit frontend during a build; running them here is
-// how an artifact built by anything else, or changed by an exporter or a
-// registry on its way out, gets judged.
 package main
 
 import (
