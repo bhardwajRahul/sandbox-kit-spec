@@ -11,8 +11,11 @@ const child = spawn(process.execPath, [adapter, ...process.argv.slice(2)], {
   stdio: ["pipe", "pipe", "inherit"],
 });
 
-const exited = new Promise((resolve, reject) => {
-  child.once("error", reject);
+const exited = new Promise((resolve) => {
+  child.once("error", (error) => {
+    console.error(`claude-agent-acp: ${error.message}`);
+    resolve({ code: 1, signal: null });
+  });
   child.once("exit", (code, signal) => resolve({ code, signal }));
 });
 
@@ -67,14 +70,23 @@ function translateClientMessage(line) {
   }
 }
 
+const inputLines = createInterface({
+  input: process.stdin,
+  crlfDelay: Infinity,
+});
+
 async function forwardInput() {
-  const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
-  for await (const line of lines) {
-    const translated = translateClientMessage(line);
-    if (!child.stdin.write(`${translated}\n`))
-      await once(child.stdin, "drain");
+  try {
+    for await (const line of inputLines) {
+      const translated = translateClientMessage(line);
+      if (!child.stdin.write(`${translated}\n`))
+        await once(child.stdin, "drain");
+    }
+  } catch (error) {
+    if (child.exitCode === null && child.signalCode === null) throw error;
+  } finally {
+    if (!child.stdin.destroyed) child.stdin.end();
   }
-  child.stdin.end();
 }
 
 async function forwardOutput() {
@@ -86,8 +98,10 @@ async function forwardOutput() {
   }
 }
 
-void forwardInput();
+const input = forwardInput();
 const output = forwardOutput();
 const { code, signal } = await exited;
-await output;
+inputLines.close();
+process.stdin.pause();
+await Promise.all([input, output]);
 process.exitCode = code ?? (signal ? 1 : 0);
