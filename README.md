@@ -212,6 +212,8 @@ winget install -h Docker.sbx
 # Ubuntu (sbx only; or use SBX=1 with get.docker.com for Engine + sbx)
 curl -fsSL https://get.docker.com | sudo REPO_ONLY=1 sh
 sudo apt install docker-sbx
+sudo usermod -aG kvm $USER
+# re-login (or: newgrp kvm) so /dev/kvm is usable before sbx run
 
 # Or download platform artifacts from
 # https://github.com/docker/sbx-releases/releases

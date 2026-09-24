@@ -23,9 +23,10 @@ Three published tools, nothing repo-local:
 
 - **`docker buildx`** builds kits. Nothing to install for the kit frontend —
   BuildKit pulls `docker/sandbox-kit:3` from the descriptor's `# syntax=` line.
-- **`sbx`** runs them. Kit v3 is not in the stable line yet, so install a
-  release candidate or nightly from
-  [sbx-releases](https://github.com/docker/sbx-releases).
+- **`sbx`** runs them. Install the stable CLI from
+  [Docker Docs](https://docs.docker.com/ai/sandboxes/install/) /
+  [sbx-releases](https://github.com/docker/sbx-releases); current releases
+  support Kits v3 in local and cloud mode.
 - **`kit-tck`** judges conformance:
   `go install github.com/docker/sandbox-kit-spec/v3/cmd/kit-tck@latest`, or take
   an archive from the

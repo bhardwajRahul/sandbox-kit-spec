@@ -320,10 +320,11 @@ varies, keep the rest exact and vary only that part:
 
 - **`docker buildx`** — nothing to install for the frontend; BuildKit pulls
   `docker/sandbox-kit:3` from the `# syntax=` line.
-- **`sbx`** — kit v3 needs a release candidate or nightly from
-  [sbx-releases](https://github.com/docker/sbx-releases), not the stable line.
-  Note `sbx kit validate` does **not** accept a v3 source kit; `sbx kit inspect`
-  does.
+- **`sbx`** — install the stable CLI from
+  [Docker Docs](https://docs.docker.com/ai/sandboxes/install/) /
+  [sbx-releases](https://github.com/docker/sbx-releases); current releases
+  support Kits v3 in local and cloud mode. Note `sbx kit validate` does
+  **not** accept a v3 source kit; `sbx kit inspect` does.
 - **`kit-tck`** — `go install github.com/docker/sandbox-kit-spec/v3/cmd/kit-tck@latest`.
 
   *While the repository is private* this also needs access to it plus
