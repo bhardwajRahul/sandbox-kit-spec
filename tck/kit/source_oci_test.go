@@ -939,6 +939,73 @@ func TestDotDotClimbsFromWhereALinkLed(t *testing.T) {
 	}, dangling)
 }
 
+// A file ends a lookup wherever it is reached — directly or at the end of
+// a link — so any component after it, even a trailing "/" or ".", fails
+// the way the kernel's ENOTDIR does.
+func TestNothingIsReachableThroughAFile(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		writeFile(t, tw, "q", 0o755, 0, 0)
+		writeLink(t, tw, "a", "/q")
+		writeLink(t, tw, "usr/local/bin/file", "/a")
+		writeLink(t, tw, "usr/local/bin/via-link", "/a/..")
+		writeLink(t, tw, "usr/local/bin/slash", "/q/")
+		writeLink(t, tw, "usr/local/bin/dot", "/q/.")
+	})
+	w := a.(overlayWalker)
+
+	dangling, err := w.DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{
+		{Path: "/usr/local/bin/dot", Target: "/q/."},
+		{Path: "/usr/local/bin/slash", Target: "/q/"},
+		{Path: "/usr/local/bin/via-link", Target: "/a/.."},
+	}, dangling)
+}
+
+// A hard link that aliased a symlink exposes that symlink, so it dangles
+// once the name it was taken from is gone; an ordinary hard link is a
+// file and never does.
+func TestAHardLinkAliasingASymlinkIsJudgedAsOne(t *testing.T) {
+	a := buildLayeredArtifact(t,
+		func(tw *tar.Writer) {
+			writeFile(t, tw, "opt/tool", 0o755, 0, 0)
+			writeLink(t, tw, "usr/bin/orig", "/opt/tool")
+			require.NoError(t, tw.WriteHeader(&tar.Header{
+				Name: "usr/bin/alias", Typeflag: tar.TypeLink, Linkname: "usr/bin/orig",
+			}))
+			require.NoError(t, tw.WriteHeader(&tar.Header{
+				Name: "usr/bin/copy", Typeflag: tar.TypeLink, Linkname: "opt/tool",
+			}))
+		},
+		func(tw *tar.Writer) {
+			writeFile(t, tw, "usr/bin/.wh.orig", 0o644, 0, 0)
+			writeFile(t, tw, "opt/.wh.tool", 0o644, 0, 0)
+		},
+	)
+	w := a.(overlayWalker)
+
+	dangling, err := w.DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{
+		{Path: "/usr/bin/alias", Target: "/opt/tool"},
+	}, dangling)
+}
+
+// A home level behind a link chain too deep to follow exposes no
+// directory entry, so ownership has nothing to judge rather than an error
+// to fail on.
+func TestDirStatBehindAnOverDeepLinkIsAbsent(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		writeLink(t, tw, "home", "home2")
+		writeLink(t, tw, "home2", "home")
+	})
+	w := a.(overlayWalker)
+
+	_, present, err := w.DirStat(context.Background(), "/home/agent")
+	require.NoError(t, err)
+	require.False(t, present)
+}
+
 // An opaque marker empties the directory holding it without removing it,
 // so a link to that directory still resolves and a link into what the
 // lower layer put there does not.

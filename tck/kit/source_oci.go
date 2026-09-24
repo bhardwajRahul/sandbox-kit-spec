@@ -1027,7 +1027,12 @@ func (a *ociArtifact) hasHardLink(ctx context.Context, winner, upto int, alias, 
 func (a *ociArtifact) DirStat(ctx context.Context, name string) (FileStat, bool, error) {
 	upto := len(a.manifest.Layers) - 1
 	target := strings.TrimPrefix(name, "/")
+	// An ancestor link chain too deep to follow exposes nothing at the
+	// literal path; the link itself is overlay-links-resolve's to report.
 	at, hidden, err := a.resolveAncestors(ctx, name, 0, upto)
+	if errors.Is(err, errLinkDepth) {
+		return FileStat{}, false, nil
+	}
 	if err != nil || hidden || at != "/"+target {
 		return FileStat{}, false, err
 	}
@@ -1077,8 +1082,10 @@ func (a *ociArtifact) DanglingSymlinks(ctx context.Context) ([]Symlink, error) {
 		if err != nil {
 			return nil, err
 		}
-		for name, l := range links {
-			if !l.Hard && !seen[name] {
+		// Hard links too: one that aliased a symlink exposes that
+		// symlink, and outlives the name it was taken from.
+		for name := range links {
+			if !seen[name] {
 				seen[name] = true
 				names = append(names, name)
 			}
@@ -1088,7 +1095,7 @@ func (a *ociArtifact) DanglingSymlinks(ctx context.Context) ([]Symlink, error) {
 
 	var dangling []Symlink
 	for _, name := range names {
-		kind, target, err := a.composedKind(ctx, name, upto)
+		kind, target, err := a.linkKind(ctx, "/"+name, upto, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -1114,7 +1121,7 @@ func (a *ociArtifact) DanglingSymlinks(ctx context.Context) ([]Symlink, error) {
 		if target != "" && !strings.HasPrefix(target, "/") {
 			from = path.Dir("/"+name) + "/" + target
 		}
-		_, ok, err := a.walk(ctx, from, 0)
+		ok, err := a.walk(ctx, from, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -1131,14 +1138,15 @@ func (a *ociArtifact) DanglingSymlinks(ctx context.Context) ([]Symlink, error) {
 // reports the real path reached, and false where the composed filesystem
 // carries nothing there. A chain longer than a checker follows reaches
 // nothing it can vouch for.
-func (a *ociArtifact) walk(ctx context.Context, name string, depth int) (string, bool, error) {
+func (a *ociArtifact) walk(ctx context.Context, name string, depth int) (bool, error) {
 	if depth > maxLinkDepth || name == "" {
-		return "", false, nil
+		return false, nil
 	}
 	upto := len(a.manifest.Layers) - 1
 	segments := strings.Split(name, "/")
 	cur := "/"
 	for i, seg := range segments {
+		rest := segments[i+1:]
 		switch seg {
 		case "", ".":
 			continue
@@ -1147,50 +1155,113 @@ func (a *ociArtifact) walk(ctx context.Context, name string, depth int) (string,
 			continue
 		}
 		next := path.Join(cur, seg)
-		kind, link, err := a.composedKind(ctx, next, upto)
+		kind, link, err := a.linkKind(ctx, next, upto, depth)
 		if err != nil {
-			return "", false, err
+			return false, err
 		}
 		switch kind {
 		case kindSymlink:
 			if link == "" {
-				return "", false, nil
+				return false, nil
 			}
+			// The rest of the path continues from the target, so it is
+			// walked with it: a file the link ends at still ends it.
 			if !strings.HasPrefix(link, "/") {
 				link = cur + "/" + link
 			}
-			real, ok, err := a.walk(ctx, link, depth+1)
-			if err != nil || !ok {
-				return "", false, err
+			if len(rest) > 0 {
+				link += "/" + strings.Join(rest, "/")
 			}
-			cur = real
+			return a.walk(ctx, link, depth+1)
 		case kindDir:
 			cur = next
 		case kindFile:
-			// Nothing is reachable through a file.
-			if walksOn(segments[i+1:]) {
-				return "", false, nil
-			}
-			cur = next
+			// Any component after a file, even "" or ".", asks for it
+			// to be a directory.
+			return len(rest) == 0, nil
 		default:
 			ok, err := a.impliedDir(ctx, strings.TrimPrefix(next, "/"), upto)
 			if err != nil || !ok {
-				return "", false, err
+				return false, err
 			}
 			cur = next
 		}
 	}
-	return cur, true, nil
+	return true, nil
 }
 
-// walksOn reports whether the remaining components go anywhere.
-func walksOn(segments []string) bool {
-	for _, s := range segments {
-		if s != "" && s != "." {
-			return true
-		}
+// linkKind is composedKind seeing through a hard link to the inode it
+// captured, which is a symlink when the link aliased one. Only a hard
+// link whose target could have been a symlink is looked at in the layer
+// itself, so a tree of ordinary hard links costs no fetches.
+func (a *ociArtifact) linkKind(ctx context.Context, name string, upto, depth int) (pathKind, string, error) {
+	kind, link, err := a.composedKind(ctx, name, upto)
+	if err != nil || kind != kindFile {
+		return kind, link, err
 	}
-	return false
+	winner, err := a.winningLayer(ctx, name, upto)
+	if err != nil || winner < 0 {
+		return kind, "", err
+	}
+	_, _, links, err := a.layerEntries(ctx, a.manifest.Layers[winner])
+	if err != nil {
+		return kindAbsent, "", err
+	}
+	l, ok := links[strings.TrimPrefix(name, "/")]
+	if !ok || !l.Hard {
+		return kindFile, "", nil
+	}
+	target := path.Clean("/" + strings.TrimPrefix(l.Target, "/"))
+	_, sameLayer := links[strings.TrimPrefix(target, "/")]
+	lower, _, err := a.composedKind(ctx, target, winner-1)
+	if err != nil {
+		return kindAbsent, "", err
+	}
+	if !sameLayer && lower != kindSymlink && lower != kindFile {
+		return kindFile, "", nil
+	}
+	layer := a.manifest.Layers[winner]
+	rc, err := a.fetcher.Fetch(ctx, layer)
+	if err != nil {
+		return kindAbsent, "", fmt.Errorf("fetch layer %s: %w", layer.Digest, err)
+	}
+	entry, err := assemble.StatFileEntry(rc, name)
+	_ = rc.Close()
+	if err != nil {
+		return kindAbsent, "", err
+	}
+	return a.capturedKind(ctx, winner, target, entry.Index, depth+1)
+}
+
+// capturedKind is what a hard link at position before in layer winner
+// captured for target: the target's last entry before it in that layer,
+// or else the composed state of the layers below.
+func (a *ociArtifact) capturedKind(ctx context.Context, winner int, target string, before, depth int) (pathKind, string, error) {
+	if depth > maxLinkDepth {
+		return kindAbsent, "", nil
+	}
+	layer := a.manifest.Layers[winner]
+	rc, err := a.fetcher.Fetch(ctx, layer)
+	if err != nil {
+		return kindAbsent, "", fmt.Errorf("fetch layer %s: %w", layer.Digest, err)
+	}
+	prior, err := assemble.StatFileEntryBefore(rc, target, before)
+	_ = rc.Close()
+	if err != nil {
+		return kindAbsent, "", err
+	}
+	switch {
+	case prior.OK && !prior.Linked:
+		return kindFile, "", nil
+	case prior.OK && prior.Hard:
+		return a.capturedKind(ctx, winner, path.Clean("/"+strings.TrimPrefix(prior.Link, "/")), prior.Index, depth+1)
+	case prior.OK:
+		return kindSymlink, prior.Link, nil
+	case winner == 0:
+		return kindAbsent, "", nil
+	default:
+		return a.linkKind(ctx, target, winner-1, depth+1)
+	}
 }
 
 // impliedDir reports a directory the layers carry entries beneath without
