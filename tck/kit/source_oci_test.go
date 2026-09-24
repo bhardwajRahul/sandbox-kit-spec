@@ -1255,9 +1255,9 @@ func TestAnImpliedDirectoryHasNoEntryToJudge(t *testing.T) {
 	require.False(t, present)
 }
 
-// An opaque marker at a layer's root hides everything the layers below it
-// hold, as one in a subdirectory hides that directory's lower contents.
-func TestARootOpaqueMarkerHidesTheLowerLayers(t *testing.T) {
+// overlayfs ignores an opaque marker at a layer's root, so it hides
+// nothing the layers below it hold.
+func TestARootOpaqueMarkerHidesNothing(t *testing.T) {
 	a := buildLayeredArtifact(t,
 		func(tw *tar.Writer) {
 			writeFile(t, tw, "a", 0o644, 0, 0)
@@ -1270,7 +1270,7 @@ func TestARootOpaqueMarkerHidesTheLowerLayers(t *testing.T) {
 	)
 	dangling, err := a.(overlayWalker).DanglingSymlinks(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, []Symlink{{Path: "/n", Target: "/a"}}, dangling)
+	require.Empty(t, dangling)
 }
 
 // A name longer than an extractor can create is dropped, however deep it
@@ -1415,6 +1415,71 @@ func TestDeepPathsWithoutSymlinksAreCheap(t *testing.T) {
 	a := buildLayerArtifact(t, func(tw *tar.Writer) {
 		for i := 0; i < 100; i++ {
 			writeFile(t, tw, fmt.Sprintf("%sf%d", deep, i), 0o644, 0, 0)
+		}
+	})
+	start := time.Now()
+	_, err := a.(overlayWalker).DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Less(t, time.Since(start), 5*time.Second)
+}
+
+// containerd writes nothing for a PAX global header, but it makes the
+// header's parents and removes whatever held its path, as for any entry.
+func TestAPaxGlobalHeaderIsPlacedLikeAnyEntry(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		writeFile(t, tw, "g", 0o644, 0, 0)
+		require.NoError(t, tw.WriteHeader(&tar.Header{
+			Name: "g", Typeflag: tar.TypeXGlobalHeader, PAXRecords: map[string]string{"comment": "x"},
+		}))
+		require.NoError(t, tw.WriteHeader(&tar.Header{
+			Name: "opt/tool/pax_global_header", Typeflag: tar.TypeXGlobalHeader, PAXRecords: map[string]string{"comment": "x"},
+		}))
+		writeLink(t, tw, "to-g", "/g")
+		writeLink(t, tw, "to-tool", "/opt/tool")
+	})
+	dangling, err := a.(overlayWalker).DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{{Path: "/to-g", Target: "/g"}}, dangling)
+}
+
+// overlayfs reads a 0/0 character device as a whiteout, so it hides what
+// the layers below hold at its path.
+func TestAZeroZeroCharacterDeviceIsAWhiteout(t *testing.T) {
+	a := buildLayeredArtifact(t,
+		func(tw *tar.Writer) {
+			writeFile(t, tw, "etc/x", 0o644, 0, 0)
+			writeLink(t, tw, "l", "/etc/x")
+		},
+		func(tw *tar.Writer) {
+			require.NoError(t, tw.WriteHeader(&tar.Header{Name: "etc/x", Typeflag: tar.TypeChar, Mode: 0o600}))
+		},
+	)
+	dangling, err := a.(overlayWalker).DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{{Path: "/l", Target: "/etc/x"}}, dangling)
+}
+
+// A name made only of ".." resolves to the root, which the extractor
+// skips rather than placing an entry named "..".
+func TestANameOfOnlyDotDotIsNotPlaced(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		writeLink(t, tw, "..", "nowhere")
+		writeLink(t, tw, "../..", "nowhere")
+	})
+	dangling, err := a.(overlayWalker).DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, dangling)
+}
+
+// A symlink whose target grows through itself fails where the extractor
+// fails, for every entry beneath it, rather than being walked on at ever
+// greater cost.
+func TestEntriesBeneathASelfExtendingLinkAreCheap(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		writeLink(t, tw, "a", "b")
+		writeLink(t, tw, "b", "/b/c/c")
+		for i := 0; i < 100; i++ {
+			writeFile(t, tw, fmt.Sprintf("a/f%d", i), 0o644, 0, 0)
 		}
 	})
 	start := time.Now()
