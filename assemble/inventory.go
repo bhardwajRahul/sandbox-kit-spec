@@ -45,31 +45,9 @@ type LayerLink struct {
 // redirects the paths beneath it — and the LAST entry per path decides,
 // the same rule content resolution applies.
 func ReadLayerEntries(r io.Reader) (files, dirs []string, links map[string]LayerLink, err error) {
-	l, err := ReadLayerListing(r)
-	return l.Files, l.Dirs, l.Links, err
-}
-
-// LayerListing is ReadLayerEntries' result, plus Linked: every path some
-// link entry named at any point in the layer, including ones a later
-// entry replaced. A hard link captures its target as it stood when the
-// link applied, so a symlink rewritten afterwards is still what the
-// alias holds.
-type LayerListing struct {
-	Files, Dirs []string
-	Links       map[string]LayerLink
-	Linked      map[string]bool
-}
-
-// ReadLayerListing is ReadLayerEntries with the layer's link history.
-func ReadLayerListing(r io.Reader) (LayerListing, error) {
-	files, dirs, links, linked, err := readLayerEntries(r)
-	return LayerListing{Files: files, Dirs: dirs, Links: links, Linked: linked}, err
-}
-
-func readLayerEntries(r io.Reader) (files, dirs []string, links map[string]LayerLink, linked map[string]bool, err error) {
 	tr, closeLayer, err := openLayer(r)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer closeLayer()
 	const kindFile, kindDir, kindLink = 0, 1, 2
@@ -82,7 +60,7 @@ func readLayerEntries(r io.Reader) (files, dirs []string, links map[string]Layer
 			break
 		}
 		if err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("read layer: %w", err)
+			return nil, nil, nil, fmt.Errorf("read layer: %w", err)
 		}
 		name := strings.TrimSuffix(normalizePath(hdr.Name), "/")
 		if _, seen := kind[name]; !seen {
@@ -99,10 +77,6 @@ func readLayerEntries(r io.Reader) (files, dirs []string, links map[string]Layer
 		}
 	}
 	links = map[string]LayerLink{}
-	linked = map[string]bool{}
-	for name := range linkOf {
-		linked[name] = true
-	}
 	for _, name := range order {
 		switch kind[name] {
 		case kindDir:
@@ -114,7 +88,7 @@ func readLayerEntries(r io.Reader) (files, dirs []string, links map[string]Layer
 			files = append(files, name)
 		}
 	}
-	return files, dirs, links, linked, nil
+	return files, dirs, links, nil
 }
 
 func ReadInventory(r io.Reader) ([]string, error) {
@@ -260,35 +234,25 @@ func StatFileEntry(r io.Reader, path string) (FileEntry, error) {
 	return readEntry(tr, path, false, -1)
 }
 
-// StatDirEntry returns one path's final entry from a layer blob when that
-// entry is a directory, reporting OK false otherwise. The other readers
-// treat a directory as the absence of a file; this one exists because a
-// directory entry's own metadata is what replaces the base's when the
-// layer applies.
-func StatDirEntry(r io.Reader, path string) (FileEntry, error) {
+// WalkLayer calls fn with every header of one layer blob, in archive
+// order, for a caller that applies the layer the way an extractor does.
+func WalkLayer(r io.Reader, fn func(*tar.Header) error) error {
 	tr, closeLayer, err := openLayer(r)
 	if err != nil {
-		return FileEntry{}, err
+		return err
 	}
 	defer closeLayer()
-	want := strings.TrimSuffix(normalizePath(path), "/")
-	var entry FileEntry
-	for idx := 0; ; idx++ {
+	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			return entry, nil
+			return nil
 		}
 		if err != nil {
-			return FileEntry{}, fmt.Errorf("read layer: %w", err)
+			return fmt.Errorf("read layer: %w", err)
 		}
-		if strings.TrimSuffix(normalizePath(hdr.Name), "/") != want {
-			continue
+		if err := fn(hdr); err != nil {
+			return err
 		}
-		if hdr.Typeflag != tar.TypeDir {
-			entry = FileEntry{}
-			continue
-		}
-		entry = FileEntry{Index: idx, Mode: hdr.Mode, Uid: hdr.Uid, Gid: hdr.Gid, OK: true}
 	}
 }
 
