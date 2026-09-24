@@ -360,22 +360,6 @@ func TestEveryNormativeLineCarriesAnAnchor(t *testing.T) {
 				missing = append(missing, doc+" (two statements on one line; split them): "+strings.TrimSpace(line))
 				continue
 			}
-			// One statement per line is the premise the anchors rest on:
-			// a second clause appended to an anchored line would ride the
-			// first clause's accounting, so it has to become its own line
-			// before it can enter the spec.
-			if len(normative.FindAllString(line, -1)) > 1 {
-				missing = append(missing, doc+" (two statements on one line; split them): "+strings.TrimSpace(line))
-				continue
-			}
-			// One statement per line is the premise the anchors rest on:
-			// a second clause appended to an anchored line would ride the
-			// first clause's accounting, so it has to become its own line
-			// before it can enter the spec.
-			if len(normative.FindAllString(line, -1)) > 1 {
-				missing = append(missing, doc+" (two statements on one line; split them): "+strings.TrimSpace(line))
-				continue
-			}
 			// Continuation lines of an anchored statement: the anchor
 			// sits on the line that opens the statement, and a wrapped
 			// bullet may repeat a keyword mid-sentence. Only lines that
