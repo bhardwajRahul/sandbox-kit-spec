@@ -9,9 +9,9 @@
 //		"docker.io",
 //		auth.Credential{Username: "user", Password: token},
 //	)))
-//	merged, err := client.Assemble(ctx, []string{
-//		"docker.io/me/sbx-kit-hello:1.0.0",
-//		"docker.io/me/sbx-kit-tool:1.0.0",
+//	merged, err := client.Assemble(ctx, []fetch.Request{
+//		{Reference: "docker.io/me/sbx-kit-hello:1.0.0"},
+//		{Reference: "docker.io/me/sbx-kit-tool:1.0.0", Args: map[string]string{"team": "alpha"}},
 //	}, spec.MergeOptions{})
 //
 // Docker Hub redirects docker.io to registry-1.docker.io. auth.StaticCredential

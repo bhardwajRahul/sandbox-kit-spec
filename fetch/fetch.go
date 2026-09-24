@@ -152,38 +152,53 @@ func (c *Client) Fetch(ctx context.Context, ref string) (*Kit, error) {
 	return k, nil
 }
 
-// Assemble fetches refs, resolves them as a runnable set — exactly one
-// workload — and merges their descriptors.
+// Request is one kit to assemble. Args are that kit's create-phase
+// values, keyed by its own arg names, so two kits that declare the
+// same name still receive their own values.
+type Request struct {
+	Reference string
+	Args      map[string]string
+}
+
+// Assemble fetches the requests, resolves them as a runnable set —
+// exactly one workload — and merges their descriptors.
+//
+// Each kit's create-phase args are resolved and expanded before the
+// merge, which is what spec.Merge requires of a contribution. A
+// required arg with no value is an error, and a value that is still a
+// ${{ kit.args.* }} reference is refused: an assembled spec has no
+// set declaration left to bound a re-export. Build-phase args are
+// already baked into the annotation.
 //
 // Contributions are ordered by the dependency graph, providers before
 // the kits that require them, which is the order declaration merge
-// means by "first". A ${{ kit.args.* }} placeholder still in an
-// annotation is still in the result; expand it with spec.ExpandCreateArgs
-// when the caller has values. Build-phase args are already baked in.
-func (c *Client) Assemble(ctx context.Context, refs []string, opts spec.MergeOptions) (*spec.MergeResult, error) {
-	return c.assemble(ctx, refs, opts, false)
+// means by "first".
+func (c *Client) Assemble(ctx context.Context, reqs []Request, opts spec.MergeOptions) (*spec.MergeResult, error) {
+	return c.assemble(ctx, reqs, opts, false)
 }
 
 // AssemblePartial is Assemble for a set that does not have to be
 // runnable. A set of mixins merges to a mixin and composes onto a
 // workload later. More than one workload is still an error.
-func (c *Client) AssemblePartial(ctx context.Context, refs []string, opts spec.MergeOptions) (*spec.MergeResult, error) {
-	return c.assemble(ctx, refs, opts, true)
+func (c *Client) AssemblePartial(ctx context.Context, reqs []Request, opts spec.MergeOptions) (*spec.MergeResult, error) {
+	return c.assemble(ctx, reqs, opts, true)
 }
 
-func (c *Client) assemble(ctx context.Context, refs []string, opts spec.MergeOptions, partial bool) (*spec.MergeResult, error) {
-	if len(refs) == 0 {
+func (c *Client) assemble(ctx context.Context, reqs []Request, opts spec.MergeOptions, partial bool) (*spec.MergeResult, error) {
+	if len(reqs) == 0 {
 		return nil, fmt.Errorf("fetch: empty kit set")
 	}
-	kits := make([]*Kit, 0, len(refs))
-	for _, ref := range refs {
-		k, err := c.Fetch(ctx, ref)
+	kits := make([]*Kit, 0, len(reqs))
+	args := make([]map[string]string, 0, len(reqs))
+	for _, req := range reqs {
+		k, err := c.Fetch(ctx, req.Reference)
 		if err != nil {
 			return nil, err
 		}
 		kits = append(kits, k)
+		args = append(args, req.Args)
 	}
-	return mergeKits(kits, opts, partial)
+	return mergeKits(kits, args, opts, partial)
 }
 
 // Units builds the resolver's input from fetched kits.
@@ -213,13 +228,19 @@ func Units(kits []*Kit) ([]*resolve.Unit, error) {
 	return units, nil
 }
 
-func mergeKits(kits []*Kit, opts spec.MergeOptions, partial bool) (*spec.MergeResult, error) {
-	for _, k := range kits {
-		if _, err := spec.ValidatePublished(k.Raw, k.Descriptor); err != nil {
-			return nil, fmt.Errorf("%s: %w", k.Reference, err)
+func mergeKits(kits []*Kit, args []map[string]string, opts spec.MergeOptions, partial bool) (*spec.MergeResult, error) {
+	prepared := make([]*Kit, len(kits))
+	for i, k := range kits {
+		d, raw, err := expandKit(k, args[i])
+		if err != nil {
+			return nil, err
 		}
+		cp := *k
+		cp.Descriptor = d
+		cp.Raw = raw
+		prepared[i] = &cp
 	}
-	units, err := Units(kits)
+	units, err := Units(prepared)
 	if err != nil {
 		return nil, err
 	}
@@ -241,6 +262,39 @@ func mergeKits(kits []*Kit, opts spec.MergeOptions, partial bool) (*spec.MergeRe
 		})
 	}
 	return spec.Merge(contributions, opts)
+}
+
+// expandKit resolves one kit's create-phase args into its published
+// descriptor. The fetched Kit is left as the registry served it.
+func expandKit(k *Kit, args map[string]string) (*spec.Descriptor, []byte, error) {
+	if k == nil || k.Descriptor == nil {
+		return nil, nil, fmt.Errorf("fetch: kit %s has no descriptor", refOf(k))
+	}
+	if _, err := spec.ValidatePublished(k.Raw, k.Descriptor); err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", k.Reference, err)
+	}
+	values, err := spec.KitArgValues(k.Descriptor.Args, args)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", k.Reference, err)
+	}
+	for name, value := range values {
+		if spec.ContainsArgRef(value) {
+			return nil, nil, fmt.Errorf("%s: arg %q must be a literal value, got %q", k.Reference, name, value)
+		}
+	}
+	expanded, err := spec.ExpandCreateArgs(k.Raw, k.Descriptor.Args, values)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", k.Reference, err)
+	}
+	d, err := spec.Decode(expanded)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", k.Reference, err)
+	}
+	if _, err := spec.ValidateEffective(expanded, d); err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", k.Reference, err)
+	}
+	d.Args = nil
+	return d, expanded, nil
 }
 
 func refOf(k *Kit) string {

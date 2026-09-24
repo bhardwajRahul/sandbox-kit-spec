@@ -187,7 +187,12 @@ func chooseManifest(index *ocispec.Index, want ocispec.Platform) (matched *ocisp
 			only = m
 		}
 		if m.Platform != nil && matcher.Match(*m.Platform) {
-			matched = m
+			// Only matches compatible platforms too — amd64 matches
+			// 386 — and Less ranks the closer one ahead. Keeping the
+			// last match would let index order pick the worse one.
+			if matched == nil || matcher.Less(*m.Platform, *matched.Platform) {
+				matched = m
+			}
 		}
 	}
 	if matched != nil {

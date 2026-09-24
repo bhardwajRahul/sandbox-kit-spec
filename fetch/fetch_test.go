@@ -38,10 +38,10 @@ func TestAssembleReadsDescriptorsAndMergesInGraphOrder(t *testing.T) {
 
 	client, err := New()
 	require.NoError(t, err)
-	merged, err := client.Assemble(context.Background(), []string{
+	merged, err := client.Assemble(context.Background(), reqs(
 		reg.ref("kits/hello", "1.0.0"),
 		reg.ref("kits/tool", "1.0.0"),
-	}, spec.MergeOptions{})
+	), spec.MergeOptions{})
 	require.NoError(t, err)
 	require.Equal(t, spec.KindWorkload, merged.Descriptor.Kind)
 	require.Equal(t, []string{"tool@1.0.0", "hello@1.0.0"}, merged.Descriptor.Provides)
@@ -49,7 +49,7 @@ func TestAssembleReadsDescriptorsAndMergesInGraphOrder(t *testing.T) {
 	require.Zero(t, reg.blobReads, "assembling a spec fetches manifests, not layers")
 }
 
-func TestATagSuppliesTheVersionTheDescriptorOmitted(t *testing.T) {
+func TestAVersionShapedTagOverridesAStaleDescriptor(t *testing.T) {
 	reg := newRegistry(t)
 	hello := reg.image(t, kitJSON(t, &spec.Descriptor{
 		SchemaVersion: spec.SchemaVersion,
@@ -61,7 +61,7 @@ func TestATagSuppliesTheVersionTheDescriptorOmitted(t *testing.T) {
 
 	client, err := New()
 	require.NoError(t, err)
-	merged, err := client.Assemble(context.Background(), []string{reg.ref("kits/hello", "2.0.0")}, spec.MergeOptions{})
+	merged, err := client.Assemble(context.Background(), reqs(reg.ref("kits/hello", "2.0.0")), spec.MergeOptions{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"hello@2.0.0"}, merged.Descriptor.Provides)
 }
@@ -75,7 +75,7 @@ func TestAssemblePartialAllowsASetOfMixins(t *testing.T) {
 		Provides:      []string{"tool@1.0.0"},
 	}))
 	reg.tag("kits/tool", "1.0.0", tool)
-	refs := []string{reg.ref("kits/tool", "1.0.0")}
+	refs := reqs(reg.ref("kits/tool", "1.0.0"))
 
 	client, err := New()
 	require.NoError(t, err)
@@ -85,6 +85,47 @@ func TestAssemblePartialAllowsASetOfMixins(t *testing.T) {
 	merged, err := client.AssemblePartial(context.Background(), refs, spec.MergeOptions{})
 	require.NoError(t, err)
 	require.Equal(t, spec.KindMixin, merged.Descriptor.Kind)
+}
+
+func TestCreatePhaseArgsAreResolvedPerKitBeforeMerge(t *testing.T) {
+	reg := newRegistry(t)
+	parameterized := func(name string) []byte {
+		return kitJSON(t, &spec.Descriptor{
+			SchemaVersion: spec.SchemaVersion,
+			Kind:          spec.KindMixin,
+			Version:       "1.0.0",
+			Provides:      []string{name + "@1.0.0"},
+			Args: map[string]spec.Arg{
+				"host": {Required: true},
+			},
+			Capabilities: []spec.Capability{{
+				Type: spec.CapabilityNetworkPolicy,
+				Config: map[string]any{
+					"runtime": map[string]any{
+						"allow": []any{"${{ kit.args.host }}"},
+					},
+				},
+			}},
+		})
+	}
+	reg.tag("kits/a", "1.0.0", reg.image(t, parameterized("a")))
+	reg.tag("kits/b", "1.0.0", reg.image(t, parameterized("b")))
+
+	client, err := New()
+	require.NoError(t, err)
+	refA, refB := reg.ref("kits/a", "1.0.0"), reg.ref("kits/b", "1.0.0")
+	_, err = client.AssemblePartial(context.Background(), []Request{{Reference: refA}}, spec.MergeOptions{})
+	require.ErrorContains(t, err, "required")
+
+	merged, err := client.AssemblePartial(context.Background(), []Request{
+		{Reference: refA, Args: map[string]string{"host": "a.example"}},
+		{Reference: refB, Args: map[string]string{"host": "b.example"}},
+	}, spec.MergeOptions{})
+	require.NoError(t, err)
+	policy, err := spec.NetworkPolicyOf(merged.Descriptor.Capabilities)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"a.example", "b.example"}, policy.Runtime.Allow)
+	require.Empty(t, merged.Descriptor.Args)
 }
 
 func TestIndexAnnotationIsEnough(t *testing.T) {
@@ -143,6 +184,36 @@ func TestAMissingIndexAnnotationFallsBackToThePlatformManifest(t *testing.T) {
 	require.Equal(t, "arm64", got.Descriptor.DisplayName)
 	require.Equal(t, digest.FromBytes(reg.tagged["kits/demo:1.0.0"]).String(), got.Digest,
 		"the pin is the index the tag resolved to, not the platform manifest")
+}
+
+func TestACloserPlatformBeatsACompatibleOneLaterInTheIndex(t *testing.T) {
+	reg := newRegistry(t)
+	amd64 := reg.image(t, kitJSON(t, &spec.Descriptor{
+		SchemaVersion: spec.SchemaVersion,
+		Kind:          spec.KindMixin,
+		DisplayName:   "amd64",
+		Version:       "1.0.0",
+		Provides:      []string{"demo@1.0.0"},
+	}))
+	i386 := reg.image(t, kitJSON(t, &spec.Descriptor{
+		SchemaVersion: spec.SchemaVersion,
+		Kind:          spec.KindMixin,
+		DisplayName:   "386",
+		Version:       "1.0.0",
+		Provides:      []string{"demo@1.0.0"},
+	}))
+	// amd64 is listed first and 386 second. platforms.Only treats 386 as
+	// compatible with amd64, so keeping the last match would return 386.
+	reg.tag("kits/demo", "1.0.0", reg.index(t, []ocispec.Descriptor{
+		reg.platform("kits/demo", amd64, "amd64"),
+		reg.platform("kits/demo", i386, "386"),
+	}, nil))
+
+	client, err := New(WithPlatform(ocispec.Platform{OS: "linux", Architecture: "amd64"}))
+	require.NoError(t, err)
+	got, err := client.Fetch(context.Background(), reg.ref("kits/demo", "1.0.0"))
+	require.NoError(t, err)
+	require.Equal(t, "amd64", got.Descriptor.DisplayName)
 }
 
 func TestAnIndexWithoutThePlatformIsAnError(t *testing.T) {
@@ -272,6 +343,14 @@ func (m *markingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	m.hits++
 	m.mu.Unlock()
 	return m.base.RoundTrip(req)
+}
+
+func reqs(refs ...string) []Request {
+	out := make([]Request, len(refs))
+	for i, ref := range refs {
+		out[i] = Request{Reference: ref}
+	}
+	return out
 }
 
 func kitJSON(t *testing.T, d *spec.Descriptor) []byte {
