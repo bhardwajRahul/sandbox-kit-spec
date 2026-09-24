@@ -779,10 +779,8 @@ func isHostPattern(h string) bool { return strings.Contains(h, "*") }
 // how many things they hold — the part of a policy a placeholder
 // cannot hide, and the part that decides how wide the entry is.
 //
-// Held to even while the text is still parameterized, because the
-// merge decodes and re-encodes what it is given: an entry stating
-// methods: [] is invalid, and deferring the rule would let omitempty
-// drop the field and publish the unbounded allow that omission means.
+// Checked before expansion so merge normalization cannot discard an
+// invalid entry before it is rejected.
 func validateNetworkEntryShape(path string, i int, phase string, r NetworkEntry) error {
 	if len(r.Hosts) == 0 {
 		return fieldErrorf(path+".hosts", "capabilities[%d]: %s entry declares no hosts", i, phase)
@@ -851,7 +849,7 @@ func validateNetworkEntry(path string, i int, phase string, r NetworkEntry) erro
 // it states it as, which is the part of a config a placeholder does
 // not hide.
 func validatePresenceRules(path string, i int, n Capability) error {
-	if n.Type == CapabilityNetworkPolicy {
+	if n.Type == CapabilityNetworkPolicyV2 {
 		var p PhasedNetworkV2
 		if err := DecodeCapabilityConfig(n, &p); err != nil {
 			// Undecodable is the merge's to report, in the words it
