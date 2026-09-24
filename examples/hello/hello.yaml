@@ -5,9 +5,6 @@ author: "Christian Dupuis <cd@docker.com>"
 description: Smallest possible sandbox kit, for smoke-testing the frontend
 
 kind: workload
-# Unversioned provides take their version from `version:` below — or from a
-# version-shaped image tag at consumption, which always overrides it. A kit
-# publishing an unversioned provide with neither fails the build.
 provides: ["hello@1.0.0"]
 
 args:
