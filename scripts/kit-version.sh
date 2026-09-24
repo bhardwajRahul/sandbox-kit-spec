@@ -19,11 +19,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 TRACKED=(claude claude-mixin codex codex-mixin gemini-mixin opencode opencode-mixin claude-acp codex-acp)
 
 # Tracked, but never rewritten unattended: the pin does not travel alone.
-# codex-acp's version and the `requires: ["codex >= …"]` floor beside it
-# state one fact — the adapter deleted its bundled codex, so the composed
-# one has to satisfy the range the adapter declares. Moving the pin
-# without the floor publishes an adapter whose metadata lies about what
-# it can drive, so the report names it and a person raises both.
+# codex-acp's version and its codex requirement range must move together:
+# the adapter deletes its bundled codex, so the composed binary must meet
+# the adapter's declared dependency. Update both bounds when moving the pin.
 COUPLED=(codex-acp)
 
 usage() {
@@ -136,7 +134,7 @@ update() {
 	fi
 	if coupled "$kit"; then
 		[ "$have" = "$latest" ] ||
-			printf '%s: %s is out, but its pin moves with the requires floor beside it — raise both by hand\n' \
+			printf '%s: %s is out, but its pin moves with the requires range beside it — update both by hand\n' \
 				"$kit" "$latest" >&2
 		printf '%s\n' "$have"
 		return
@@ -166,7 +164,7 @@ check() {
 		elif [ "$have" = "$latest" ]; then
 			status=ok
 		elif coupled "$kit"; then
-			status="OUTDATED (latest $latest, raise with its requires floor)"
+			status="OUTDATED (latest $latest, update with its requires range)"
 		else
 			status="OUTDATED (latest $latest)"
 		fi

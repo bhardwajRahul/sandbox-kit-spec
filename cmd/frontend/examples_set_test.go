@@ -80,6 +80,36 @@ func TestExampleSetsResolveAndMerge(t *testing.T) {
 	require.NotZero(t, sets, "no set examples found; the guard would pass vacuously")
 }
 
+func TestCodexACPExampleRequiresCompatibleCodex(t *testing.T) {
+	for _, tc := range []struct {
+		version    string
+		compatible bool
+	}{
+		{version: "0.156.0"},
+		{version: "0.156.1", compatible: true},
+		{version: "0.156.2", compatible: true},
+		{version: "0.157.0"},
+		{version: "0.157.1"},
+		{version: "1.0.0"},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			adapter := publishedForm(t, filepath.Join("..", "..", "examples", "codex-acp", "codex-acp.yaml"))
+			codex := publishedForm(t, filepath.Join("..", "..", "examples", "codex-mixin", "codex-mixin.yaml"))
+			codex.Provides = []string{"codex@" + tc.version}
+
+			_, err := resolve.ResolvePartial([]*resolve.Unit{
+				{Reference: "codex-acp", Descriptor: adapter},
+				{Reference: "codex-mixin", Descriptor: codex},
+			})
+			if tc.compatible {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "the set only offers codex@"+tc.version)
+			}
+		})
+	}
+}
+
 // publishedForm reads an example descriptor and resolves its
 // build-phase args from their defaults, which is the form a consumer
 // sees: provides are literal, and a set's kit references name a
