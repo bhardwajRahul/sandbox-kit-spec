@@ -1,0 +1,41 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+displayName: Alpine
+author: "Docker, Inc."
+description: >-
+  A plain shell sandbox on dhi.io/alpine-base:3.24-dev — apk, bash, curl,
+  git, and a CA store, running as root. No agent user is created; the image
+  identity stays root. The base workload Alpine mixins layer onto.
+sourceUrl: https://dhi.io/catalog/alpine-base
+licenses: [MIT]
+
+kind: workload
+version: "3.24.0"
+
+# No authored provides. Package inventory is read from the apk database at
+# publish and stated as apk/<package>@<version> (§9.6).
+
+capabilities:
+  # This workload is an agent sandbox: the host launches the agent rather
+  # than running the image's entrypoint as PID 1, and honors the identity
+  # the image config declares (root) instead of assuming one.
+  - type: com.docker.sandbox/sbx@1
+
+  # Apk sources on alpine-base (Alpine 3.24 / DHI):
+  #   dhi.io/apk/alpine/v3.24/main
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          - dhi.io
+
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      filename: AGENTS.md
+      content: |
+        This is a plain shell sandbox on dhi.io/alpine-base:3.24-dev.
+        It runs as root (no `agent` user). Install more with apk; composed
+        kits list their own capabilities below.
+
+        Note: mixins that assume uid 1000 /home/agent will not land cleanly
+        on this workload — prefer ones that stay under /usr/local or /opt.

@@ -29,7 +29,7 @@ kind: mixin
 
 args:
   version:
-    default: "1.12.0"
+    default: "1.13.1"
     pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
     description: codex-acp release to install
     buildArg: ACP_VERSION
@@ -43,19 +43,19 @@ provides: ["codex-acp@${{ kit.args.version }}"]
 # codex-mixin kit installs /usr/local/bin/codex.
 #
 # The minimum is the adapter's own declared dependency range: codex-acp
-# 1.12.0 asks for @openai/codex ^0.154.0, and deleting the bundled copy
+# 1.13.1 asks for @openai/codex ^0.156.1, and deleting the bundled copy
 # means the composed binary is the only one that has to satisfy it, so
 # the floor belongs here where resolution can refuse an older codex.
 #
 # Only the lower bound is expressible: v3 constraints are minimums by
 # design, so resolution never needs a backtracking solver (SPEC-v3 §5).
 # The gap is real rather than theoretical — on a 0.x dependency the caret
-# means >= 0.154.0 AND < 0.155.0, so the day codex ships 0.155.0 this
+# means >= 0.156.1 AND < 0.157.0, so the day codex ships 0.157.0 this
 # floor would admit a version the adapter does not claim to support.
 # Nothing in the grammar can refuse it, so the two pins move together:
 # `task versions:check` reports when codex outruns this adapter, and the
 # adapter is re-pinned and this floor raised in the same change.
-requires: ["codex >= 0.154.0"]
+requires: ["codex >= 0.156.1"]
 
 # No network policy and no credential: the adapter opens no sockets of
 # its own. Its egress and auth are whatever the codex it execs already

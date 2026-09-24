@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Bridges Zed's ACP client to a sandboxed Codex session.
+#
+# Zed spawns this on the host with the project root as cwd and speaks ACP
+# over the process's stdio. The script ensures one sandbox per project,
+# created from the published Codex ACP kit set, and then hands that stdio
+# to the adapter inside it. Diagnostics go to stderr because stdout is
+# the ACP wire.
+set -euo pipefail
+
+# Set this in the environment Zed passes to this script, using a kit set
+# image you have built and pushed to your registry:
+#   SBX_ACP_BASE=docker.io/example/sbx-kit-codex-acp-set:1.0.0
+: "${SBX_ACP_BASE:?Set SBX_ACP_BASE to your Codex ACP kit set image reference}"
+
+project="${1:-$PWD}"
+cd "$project"
+project="$PWD"
+name="codex-acp-$(basename "$project")-$(printf '%s' "$project" | shasum -a 256 | cut -c1-8)"
+
+if ! sbx ls -q 2>/dev/null | grep -qx "$name"; then
+	echo "sbx: creating $name for $project" >&2
+	sbx run "$SBX_ACP_BASE" \
+		--name "$name" \
+		--detached \
+		"$project" >&2
+fi
+
+# The workspace binds at its host path inside the sandbox, so the paths
+# Zed sends over ACP are valid on both sides with no translation.
+#
+# -i without -t: an ACP server needs a pipe, and a PTY would corrupt the
+# JSON-RPC framing with echo and line editing.
+exec sbx exec -i \
+	-w "$project" \
+	"$name" codex-acp
