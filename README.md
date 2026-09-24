@@ -315,7 +315,8 @@ docker buildx build . -f claude.yaml -t registry.example.com/claude-kit:2.1.0
 A workload Kit's companion must build on a base that provides the runtime's
 platform floor — bash, the `agent` user (uid 1000), git, a CA store — which
 the hardened `dhi.io/sbx-templates:*` images carry; the workloads under
-`examples/` build on them. A Kit built on a bare distro image builds fine
+`examples/` build on them, except `devin` and `wordpress`, whose recipes
+say why. A Kit built on a bare distro image builds fine
 but fails at agent launch.
 
 A Kit's content recipe lives in one of three places: a companion

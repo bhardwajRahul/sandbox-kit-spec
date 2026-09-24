@@ -1108,7 +1108,13 @@ func (a *ociArtifact) DanglingSymlinks(ctx context.Context) ([]Symlink, error) {
 		if hidden || at != "/"+name {
 			continue
 		}
-		ok, err := a.resolves(ctx, "/"+name, 0)
+		// Not cleaned: a ".." after a symlinked component climbs from
+		// wherever that link leads, which lexical cleaning would lose.
+		from := target
+		if target != "" && !strings.HasPrefix(target, "/") {
+			from = path.Dir("/"+name) + "/" + target
+		}
+		_, ok, err := a.walk(ctx, from, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -1119,40 +1125,72 @@ func (a *ociArtifact) DanglingSymlinks(ctx context.Context) ([]Symlink, error) {
 	return dangling, nil
 }
 
-// resolves reports whether name reaches something the composed
-// filesystem carries: a file, a directory, or a chain of links ending in
-// one. A chain longer than a checker follows reaches nothing it can vouch
-// for.
-func (a *ociArtifact) resolves(ctx context.Context, name string, depth int) (bool, error) {
-	if depth > maxLinkDepth {
-		return false, nil
+// walk resolves name one component at a time, the way the kernel does:
+// each symlink is expanded before the components after it apply, so a
+// ".." climbs from where the link led rather than from where it sits. It
+// reports the real path reached, and false where the composed filesystem
+// carries nothing there. A chain longer than a checker follows reaches
+// nothing it can vouch for.
+func (a *ociArtifact) walk(ctx context.Context, name string, depth int) (string, bool, error) {
+	if depth > maxLinkDepth || name == "" {
+		return "", false, nil
 	}
 	upto := len(a.manifest.Layers) - 1
-	name, hidden, err := a.resolveAncestors(ctx, name, depth, upto)
-	if errors.Is(err, errLinkDepth) {
-		return false, nil
-	}
-	if err != nil || hidden {
-		return false, err
-	}
-	target := strings.TrimPrefix(name, "/")
-	if target == "" {
-		return true, nil
-	}
-	kind, link, err := a.composedKind(ctx, name, upto)
-	if err != nil {
-		return false, err
-	}
-	switch kind {
-	case kindDir, kindFile:
-		return true, nil
-	case kindSymlink:
-		if link == "" {
-			return false, nil
+	segments := strings.Split(name, "/")
+	cur := "/"
+	for i, seg := range segments {
+		switch seg {
+		case "", ".":
+			continue
+		case "..":
+			cur = path.Dir(cur)
+			continue
 		}
-		return a.resolves(ctx, resolveLinkTarget(name, assemble.FileEntry{Link: link}), depth+1)
+		next := path.Join(cur, seg)
+		kind, link, err := a.composedKind(ctx, next, upto)
+		if err != nil {
+			return "", false, err
+		}
+		switch kind {
+		case kindSymlink:
+			if link == "" {
+				return "", false, nil
+			}
+			if !strings.HasPrefix(link, "/") {
+				link = cur + "/" + link
+			}
+			real, ok, err := a.walk(ctx, link, depth+1)
+			if err != nil || !ok {
+				return "", false, err
+			}
+			cur = real
+		case kindDir:
+			cur = next
+		case kindFile:
+			// Nothing is reachable through a file.
+			if walksOn(segments[i+1:]) {
+				return "", false, nil
+			}
+			cur = next
+		default:
+			ok, err := a.impliedDir(ctx, strings.TrimPrefix(next, "/"), upto)
+			if err != nil || !ok {
+				return "", false, err
+			}
+			cur = next
+		}
 	}
-	return a.impliedDir(ctx, target, upto)
+	return cur, true, nil
+}
+
+// walksOn reports whether the remaining components go anywhere.
+func walksOn(segments []string) bool {
+	for _, s := range segments {
+		if s != "" && s != "." {
+			return true
+		}
+	}
+	return false
 }
 
 // impliedDir reports a directory the layers carry entries beneath without

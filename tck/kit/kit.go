@@ -611,7 +611,7 @@ var checks = []check{
 				return fail("read symlinks: %v", err)
 			}
 			for _, l := range dangling {
-				findings = append(findings, warn("%s links to %s, which the overlay does not carry; it resolves only on a base that happens to", l.Path, l.Target)...)
+				findings = append(findings, warn("%s links to %s, which the overlay does not carry; it resolves only on a base that happens to ship that target", l.Path, l.Target)...)
 			}
 			return findings
 		},

@@ -915,6 +915,30 @@ func TestDanglingSymlinksAreTheOnesTheOverlayCannotResolve(t *testing.T) {
 	}, dangling)
 }
 
+// A ".." after a symlinked component climbs from where the link led, not
+// from where it sits: cleaning the target lexically first would judge a
+// different path.
+func TestDotDotClimbsFromWhereALinkLed(t *testing.T) {
+	a := buildLayerArtifact(t, func(tw *tar.Writer) {
+		writeDir(t, tw, "x/", 0, 0)
+		writeDir(t, tw, "x/y/", 0, 0)
+		writeFile(t, tw, "x/z", 0o755, 0, 0)
+		writeFile(t, tw, "q", 0o755, 0, 0)
+		writeLink(t, tw, "a", "/x/y")
+		writeLink(t, tw, "usr/local/bin/through", "/a/../z")
+		writeLink(t, tw, "usr/local/bin/lexical", "/a/../q")
+		writeLink(t, tw, "usr/local/bin/past-file", "/q/..")
+	})
+	w := a.(overlayWalker)
+
+	dangling, err := w.DanglingSymlinks(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []Symlink{
+		{Path: "/usr/local/bin/lexical", Target: "/a/../q"},
+		{Path: "/usr/local/bin/past-file", Target: "/q/.."},
+	}, dangling)
+}
+
 // An opaque marker empties the directory holding it without removing it,
 // so a link to that directory still resolves and a link into what the
 // lower layer put there does not.
