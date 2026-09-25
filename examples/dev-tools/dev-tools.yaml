@@ -64,6 +64,8 @@ capabilities:
           # go test, go vet, golangci-lint: module proxy and checksum db.
           - proxy.golang.org:443
           - sum.golang.org:443
+          # The module proxy redirects archive downloads to this host.
+          - storage.googleapis.com:443
           # docker buildx: the frontend the `# syntax=` line names, the
           # digest-pinned markdownlint image, the base images kits FROM.
           - registry-1.docker.io:443
