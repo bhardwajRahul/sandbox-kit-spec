@@ -48,6 +48,14 @@ func TestExampleSetsResolveAndMerge(t *testing.T) {
 				// A tracked example's current default can move beyond the
 				// version the set pins. Expand its version arg from that pin.
 				listed := publishedFormWithArgs(t, exampleFor(t, k.Ref), map[string]string{"version": tagged.Tag()})
+				// The build resolves each member's create-phase args from
+				// the set's kits[].args before its declarations reach the
+				// merge, defaults answering whatever the set leaves unsaid
+				// (§9.5). The same step here, through the same function,
+				// or a member declaring one would leave a `${{ kit.args.* }}`
+				// reference in the merged descriptor that nothing declares.
+				listed, _, err = kitDeclarations(listed, k, d.Args)
+				require.NoError(t, err, "%s: create-phase args of %s do not resolve from the set's kits[].args", filepath.Base(descriptor), k.Ref)
 				listed.Version = resolve.EffectiveProvideVersion(k.Ref, listed)
 				u := &resolve.Unit{Reference: k.Ref, Descriptor: listed}
 				units = append(units, u)
