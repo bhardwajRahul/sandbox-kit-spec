@@ -171,13 +171,17 @@ capabilities:
             esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
             url=$(esc "$MCP_GATEWAY_URL")
             auth=$(esc "$MCP_SENTINEL_TOKEN_NAME")
+            # Codex's grammar for a streamable HTTP server: the transport
+            # is implied by `url` (a `command` would make it stdio; there
+            # is no `type` key), and static headers go in `http_headers`.
+            # A `[...headers]` sub-table is not read, so the gateway
+            # would be reached without its bearer token and codex would
+            # warn about both keys at startup.
             cat >> "$cfg" <<EOF
 
             [mcp_servers.mcp-gateway]
-            type = "http"
             url = "$url"
-            [mcp_servers.mcp-gateway.headers]
-            Authorization = "Bearer $auth"
+            http_headers = { Authorization = "Bearer $auth" }
             EOF
           user: agent
           env: [MCP_GATEWAY_URL, MCP_SENTINEL_TOKEN_NAME]
