@@ -1,0 +1,82 @@
+# syntax=docker/sandbox-kit:3
+# The toolchain for working on this repository, as an overlay for an agent
+# workload that already carries Go and Docker. The sandbox-templates agent
+# images (codex, claude, ...) ship go, docker with buildx, gh, git, jq and
+# node; Taskfile.yaml also reaches for task, golangci-lint and regctl, and
+# those are what this mixin adds — at the versions CI pins, so a local
+# `task lint` and the workflow judge alike.
+schemaVersion: "3"
+displayName: Sandbox Kit Spec dev tools
+description: >-
+  Task, golangci-lint and regctl at the versions this repository's CI
+  pins, plus the egress a `task` run needs: the Go module proxy, Docker
+  Hub and dhi.io for the build frontend and the lint image, and the
+  release endpoints the version checks read.
+sourceUrl: https://github.com/docker/sandbox-kit-spec
+# Union of the shipped tools: Task (MIT), golangci-lint (GPL-3.0),
+# regclient (Apache-2.0).
+licenses: [MIT, GPL-3.0-only, Apache-2.0]
+
+kind: mixin
+version: "1.0.0"
+
+# One arg per tool. Each drives the download, the build's version check
+# and the provide, so a bump is one edit and the provide cannot claim a
+# version the overlay does not carry.
+args:
+  taskVersion:
+    default: "3.53.1"
+    pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+    description: Task release to install; .github/workflows pins the same one
+    buildArg: TASK_VERSION
+  golangciLintVersion:
+    default: "2.10.1"
+    pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+    description: golangci-lint release to install; ci.yaml pins the same one
+    buildArg: GOLANGCI_LINT_VERSION
+  regctlVersion:
+    default: "0.11.6"
+    pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+    description: regclient release whose regctl to install
+    buildArg: REGCTL_VERSION
+
+provides:
+  - "task@${{ kit.args.taskVersion }}"
+  - "golangci-lint@${{ kit.args.golangciLintVersion }}"
+  - "regctl@${{ kit.args.regctlVersion }}"
+
+# No requires, deliberately. The Taskfile needs Go and Docker, but these
+# three binaries are static and run on any base — and `deb/golang` or
+# `deb/docker-ce` would refuse a workload whose toolchain came from a
+# tarball, which is how the sandbox-templates images ship Go. The context
+# file says what the workload is expected to carry.
+
+capabilities:
+  # Egress a `task` run makes from inside the sandbox. Everything here is
+  # runtime: the overlay is built on the host, so there is no install
+  # phase to grant. Kit builds (`task kit:dev`) reach whatever each kit's
+  # own recipe downloads — nix, npm, vendor CDNs — and that is the
+  # composed policy's business, not this one's.
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          # go test, go vet, golangci-lint: module proxy and checksum db.
+          - proxy.golang.org:443
+          - sum.golang.org:443
+          # docker buildx: the frontend the `# syntax=` line names, the
+          # digest-pinned markdownlint image, the base images kits FROM.
+          - registry-1.docker.io:443
+          - auth.docker.io:443
+          - index.docker.io:443
+          - production.cloudflare.docker.com:443
+          - dhi.io:443
+          # scripts/kit-version.sh: the upstream release endpoints
+          # `task versions:check` and `versions:update` read.
+          - api.github.com:443
+          - registry.npmjs.org:443
+          - downloads.claude.ai:443
+
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      contentFile: ./dev-tools-context.md
