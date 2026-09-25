@@ -35,7 +35,7 @@ args:
     env: CODEX_MODEL
   reasoningEffort:
     default: ""
-    pattern: '^(minimal|low|medium|high|xhigh)?$'
+    pattern: '^(none|minimal|low|medium|high|xhigh|max|ultra|persistent)?$'
     description: Reasoning effort (config.toml `model_reasoning_effort`); empty keeps the CLI default
     env: CODEX_REASONING_EFFORT
 
