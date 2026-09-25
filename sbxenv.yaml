@@ -1,0 +1,71 @@
+# Docker Sandboxes environment for working on this repository with Codex.
+# From the repository root: `sbx env plan` shows what it would set up and
+# changes nothing; `sbx env run` creates the sandbox (or attaches to it)
+# and drops into it; `sbx env rm` removes it. Run them WITHOUT a path:
+# naming one (`sbx env run .`) skips the user-level ~/.sbxenv.yaml that
+# is merged beneath this file for personal defaults.
+schemaVersion: "1"
+name: sandbox-kit-spec-env
+
+# The v3 Codex workload kit this repository publishes from examples/codex.
+# `agent:` is the handle sbx derives from the kit's reference, not the
+# reference itself; the reference lives under kits:. Bump the tag when
+# `task versions:check` reports a newer Codex release and the kit has been
+# republished under it.
+agent: sbx-kit-codex
+kits:
+  # The kit's create-phase args select the model: they seed `model` and
+  # `model_reasoning_effort` into ~/.codex/config.toml, which is what
+  # `codex --model … -c model_reasoning_effort=…` would set per launch,
+  # and export CODEX_MODEL / CODEX_REASONING_EFFORT into the sandbox.
+  # `--kit-arg model=…` overrides per invocation.
+  - source: docker/sbx-kit-codex:0.157.0
+    args:
+      model: gpt-6-astra
+      reasoningEffort: high
+  # This repository's own toolchain — task, golangci-lint, regctl at the
+  # versions CI pins, and the egress a `task` run needs. Built from source
+  # on every create, so it always matches the checkout.
+  - ./examples/dev-tools
+
+# The repository itself, mounted read/write. A relative path resolves
+# against this file's directory, so this mounts the repository wherever
+# `sbx env` is invoked from. This file is bound read-only inside the mount
+# because it decides what later invocations run on the host.
+workspace: .
+
+env:
+  # The template sets GODEBUG=tarinsecurepath=0,zipinsecurepath=0, which
+  # switches off the ErrInsecurePath that archive/tar returns for `..`
+  # and absolute entries — and the tck's layer-walk tests expect it. An
+  # empty value restores the Go runtime's defaults for every process in
+  # the sandbox, so `task test` judges as CI does.
+  GODEBUG: ""
+
+sandboxOptions:
+  # Re-resolve every kit tag against its registry on each create rather
+  # than trusting what the sandbox engine's image store already holds. A
+  # v3 composition is digest-locked at create time anyway; this makes the
+  # choice explicit so a republished tag is never served from cache.
+  pullPolicy: always
+
+# Which stored credentials the proxy may use on the agent's behalf, and
+# where. Both secrets already exist in the global store (`sbx secret ls`):
+# nothing is provisioned here, only approved. These merge into
+# ~/.config/sbx/credentials.yaml and survive `sbx env rm` unless it is
+# given --prune-bindings.
+bindings:
+  # ChatGPT OAuth for the codex kit: the token endpoint it refreshes at,
+  # and the resource host its model calls route through (the kit's
+  # credential@1 config names both).
+  openai:
+    oauth:
+      domains:
+        - auth.openai.com
+        - chatgpt.com
+  # The stored GitHub token, for gh and the REST API.
+  github:
+    apiKey:
+      domains:
+        - api.github.com
+        - github.com
