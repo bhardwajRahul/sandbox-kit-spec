@@ -395,6 +395,10 @@ const (
 	// image config, where images already express it.
 	CapabilitySbx = "com.docker.sandbox/sbx@1"
 
+	// CapabilityLongRunning keeps a workload running independently of client
+	// sessions. Workloads and mixins can request it; it takes no config.
+	CapabilityLongRunning = "com.docker.sandbox/long-running@1"
+
 	// CapabilityKitRegistry requests the runtime's kit registry — the daemon's
 	// registry facade over the engine image store, where kit builds push
 	// results and pull the kit frontend. Reaching it is the host's

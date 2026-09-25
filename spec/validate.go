@@ -431,6 +431,7 @@ var singletonCapabilities = map[string]bool{
 	CapabilityLifecycle:       true,
 	CapabilityAgentContext:    true,
 	CapabilitySbx:             true,
+	CapabilityLongRunning:     true,
 }
 
 // argvContains reports whether any argv element contains the substring
@@ -449,6 +450,7 @@ var configlessCapabilities = map[string]bool{
 	CapabilityPrivileged:  true,
 	CapabilityKitRegistry: true,
 	CapabilitySbx:         true,
+	CapabilityLongRunning: true,
 }
 
 // validateCapabilityEntries checks the typed capability list. Type syntax and

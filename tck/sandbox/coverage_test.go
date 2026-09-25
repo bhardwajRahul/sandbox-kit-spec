@@ -70,7 +70,7 @@ var covers = map[string][]string{
 	// The refusal probe composes one required fixture per unclaimed
 	// well-known type, which is lifecycle's refusal duty exercised for
 	// every claimant.
-	"conformance.md §2.2/required-unclaimed-refused": {"lifecycle@1/required-unsatisfiable-refused"},
+	"conformance.md §2.2/required-unclaimed-refused": {"lifecycle@1/required-unsatisfiable-refused", "long-running@1/required-unsatisfiable-refused"},
 
 	// The volume check observes stop/start retention (the MUST) before
 	// recreating (the SHOULD plus the writable-layer control).
@@ -87,6 +87,7 @@ var kitCovers = map[string][]string{
 	// decodes, and refuses the authoring-only kind: set — a published
 	// set that was never merged describes layers it does not have.
 	"descriptor-valid": {
+		"long-running@1/no-config",
 		"SPEC-v3 §9.2/versioned-provides",
 		"SPEC-v3 §3.4/set-kind-never-published",
 	},

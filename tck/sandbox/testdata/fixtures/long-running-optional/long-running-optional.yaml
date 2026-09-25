@@ -1,0 +1,11 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: workload
+displayName: Optional session-independent workload
+provides: ["kit-tck-long-running-optional@1.0.0"]
+capabilities:
+  - type: com.docker.sandbox/long-running@1
+    optional: true
+build: |
+  FROM docker/sandbox-templates:claude-code-docker
+  CMD ["sleep", "infinity"]

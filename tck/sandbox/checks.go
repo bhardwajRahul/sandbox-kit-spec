@@ -126,6 +126,9 @@ func installPhaseScoped(fixture string) func(context.Context, *Env) []report.Fin
 }
 
 var checks = []check{
+	{requirement: "long-running@1/survives-session-disconnect", capability: capLongRunning, run: survivesSessionDisconnect},
+	{requirement: "long-running@1/explicit-stop-honored", capability: capLongRunning, run: longRunningStop},
+	{requirement: "conformance.md §2.2/optional-long-running-accepted", run: optionalLongRunning},
 	{
 		// A required capability the runtime cannot provide has to be
 		// refused: the author declared it because the kit does not work
@@ -180,6 +183,7 @@ var checks = []check{
 				alone bool
 			}{
 				{capability: capSbx, fixture: fixtureSbxWorkload, alone: true},
+				{capability: capLongRunning, fixture: fixtureLongRunning},
 				{capLifecycle, fixtureHooks, false},
 				{capNetworkPolicy, fixtureEgress, false},
 				{capNetworkPolicyV2, fixtureHTTPEgress, false},

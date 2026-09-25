@@ -55,7 +55,7 @@ func allCapabilityTypes() []string {
 		CapabilityVolume, CapabilityPort,
 		CapabilityUSBDevice, CapabilityResources, CapabilityPrivileged, CapabilityKitRegistry,
 		CapabilityAgentSessions, CapabilityLifecycle, CapabilityAgentContext,
-		CapabilityAgentSkills, CapabilitySbx,
+		CapabilityAgentSkills, CapabilitySbx, CapabilityLongRunning,
 	}
 }
 

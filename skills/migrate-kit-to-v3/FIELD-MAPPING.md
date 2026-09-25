@@ -375,6 +375,17 @@ rg -l '\$\{\{ *kit\.args\.' --glob '*-context.md' .
 belongs to the kit that owns the environment, and declaring it on a mixin is a
 validation error. A mixin carries `contentFile` alone.
 
+### long-running@1
+
+For a workload or mixin that must keep serving after the last client disconnects,
+add a required `com.docker.sandbox/long-running@1` entry with no `config`.
+Background startup hooks and published ports alone do not request this
+lifetime. The capability leaves explicit stop and failure handling intact;
+it does not express a Compose restart policy. Keep it on mixin variants
+when their service needs that lifetime too: a request from any Kit
+applies to the whole sandbox, and a required declaration wins over an
+optional one.
+
 ### sbx@1
 
 Config-less. Add it to every migrated **workload**: v2 `kind: sandbox` kits are

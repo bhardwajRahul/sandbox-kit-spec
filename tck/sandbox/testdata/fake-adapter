@@ -12,7 +12,7 @@ broken="${KIT_TCK_FAKE_BROKEN:-}"
 # suite narrows it, nothing when broken that way. The refusal duty below
 # is always keyed off this same list, because claiming and refusing are
 # two sides of one statement.
-default_claims="com.docker.sandbox/sbx@1,com.docker.sandbox/lifecycle@1,com.docker.sandbox/network-policy@1,com.docker.sandbox/network-policy@2,com.docker.sandbox/credential@1,com.docker.sandbox/agent-context@1,com.docker.sandbox/volume@1,com.docker.sandbox/resources@1,com.docker.sandbox/privileged@1,com.docker.sandbox/agent-skills@1"
+default_claims="com.docker.sandbox/long-running@1,com.docker.sandbox/sbx@1,com.docker.sandbox/lifecycle@1,com.docker.sandbox/network-policy@1,com.docker.sandbox/network-policy@2,com.docker.sandbox/credential@1,com.docker.sandbox/agent-context@1,com.docker.sandbox/volume@1,com.docker.sandbox/resources@1,com.docker.sandbox/privileged@1,com.docker.sandbox/agent-skills@1"
 claims="${KIT_TCK_FAKE_CLAIMS:-$default_claims}"
 if [ "$broken" = "claims-nothing" ]; then claims=""; fi
 verb="${1:-}"
@@ -83,6 +83,11 @@ create)
     for kit in "${kits[@]}"; do
       need=""
       case "$kit" in
+      *long-running-optional*)
+        if [ "$broken" = "refuses-optional-long-running" ]; then exit 2; fi
+        ;;
+      *long-running-workload*) ;;
+      *long-running*) need="com.docker.sandbox/long-running@1" ;;
       *skills-optional* | *scoped-egress*) ;;
       # Before the *context* arm, whose name this fixture also carries
       # through its own agent-context profile.
@@ -122,6 +127,10 @@ create)
   id="sbx-$$-${RANDOM}"
   dir="$state/$id"
   mkdir -p "$dir"
+  echo running >"$dir/status"
+  for kit in "${kits[@]}"; do
+    if [[ "$kit" == */long-running ]]; then : >"$dir/long-running-mixin"; fi
+  done
   printf '%s' "1" >"$dir/install.count"
   printf '%s' "1" >"$dir/startup.count"
   # The install phase could reach its install-only domain; the boundary
@@ -253,6 +262,11 @@ exec)
   [ "${1:-}" = "--" ] && shift
   dir="$state/$id"
   case "${1:-}" in
+  kit-tck-background)
+    if [ "$2" = start ]; then echo original >"$dir/background"; fi
+    if [ ! -f "$dir/background" ]; then echo "background process is gone" >&2; exit 1; fi
+    cat "$dir/background"
+    ;;
   cat)
     case "$2" in
     /var/tmp/install.count) cat "$dir/install.count" ;;
@@ -524,7 +538,28 @@ exec)
   esac
   ;;
 
-stop) ;;
+wait-idle)
+  dir="$state/$1"
+  case "$broken" in
+  stops-on-disconnect) echo stopped >"$dir/status" ;;
+  ignores-long-running-mixin)
+    if [ -f "$dir/long-running-mixin" ]; then echo stopped >"$dir/status"; fi
+    ;;
+  loses-background-on-disconnect) rm -f "$dir/background" ;;
+  restarts-background-on-disconnect) echo replacement >"$dir/background" ;;
+  idle-errors) echo "idle observation failed" >&2; exit 1 ;;
+  esac
+  ;;
+
+status)
+  if [ "$broken" = "status-errors" ]; then exit 1; fi
+  if [ "$broken" = "status-malformed" ]; then echo unknown; exit 0; fi
+  cat "$state/$1/status"
+  ;;
+
+stop)
+  if [ "$broken" != "ignores-explicit-stop" ]; then echo stopped >"$state/$1/status"; fi
+  ;;
 
 recreate)
   # A fresh container: the writable layer goes, declared volumes stay.
@@ -535,6 +570,7 @@ recreate)
 
 start)
   dir="$state/$1"
+  echo running >"$dir/status"
   if [ "$broken" = "loses-volume-on-restart" ]; then rm -rf "$dir/volume" && mkdir -p "$dir/volume"; fi
   if [ "$broken" != "no-startup" ]; then
     count=$(cat "$dir/startup.count")

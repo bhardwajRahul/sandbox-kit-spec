@@ -143,6 +143,8 @@ func SurfaceOf(d *Descriptor) Surface {
 		case CapabilityResources:
 			// Resource limits constrain the kit rather than grant it
 			// anything; they are not permission surface.
+		case CapabilityLongRunning:
+			// Session-independent lifetime grants no access across the boundary.
 		case CapabilityAgentSessions, CapabilityLifecycle, CapabilityAgentContext, CapabilitySbx:
 			// Content-trust declarations, not grants: session verbs,
 			// lifecycle hooks, and files run inside the sandbox on the
