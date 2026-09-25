@@ -396,7 +396,7 @@ const (
 	CapabilitySbx = "com.docker.sandbox/sbx@1"
 
 	// CapabilityLongRunning keeps a workload running independently of client
-	// sessions. It is workload-only and takes no config.
+	// sessions. Workloads and mixins can request it; it takes no config.
 	CapabilityLongRunning = "com.docker.sandbox/long-running@1"
 
 	// CapabilityKitRegistry requests the runtime's kit registry — the daemon's

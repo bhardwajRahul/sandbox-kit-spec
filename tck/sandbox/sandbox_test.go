@@ -117,6 +117,7 @@ func TestAConformingRuntimePasses(t *testing.T) {
 // requirement — the two network-policy versions state the same duty about
 // the host lists — and dropping it has to fail every one of them.
 var mutations = map[string][]string{
+	"ignores-long-running-mixin":        {"long-running@1/survives-session-disconnect"},
 	"stops-on-disconnect":               {"long-running@1/survives-session-disconnect"},
 	"loses-background-on-disconnect":    {"long-running@1/survives-session-disconnect"},
 	"restarts-background-on-disconnect": {"long-running@1/survives-session-disconnect"},

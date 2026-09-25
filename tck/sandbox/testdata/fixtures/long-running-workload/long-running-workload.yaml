@@ -1,0 +1,6 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: workload
+displayName: Background-process probe workload
+provides: ["kit-tck-long-running-workload@1.0.0"]
+# Lifetime is requested by the mixin, so ignoring its declaration is visible.

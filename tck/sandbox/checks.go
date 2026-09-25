@@ -183,7 +183,7 @@ var checks = []check{
 				alone bool
 			}{
 				{capability: capSbx, fixture: fixtureSbxWorkload, alone: true},
-				{capability: capLongRunning, fixture: fixtureLongRunning, alone: true},
+				{capability: capLongRunning, fixture: fixtureLongRunning},
 				{capLifecycle, fixtureHooks, false},
 				{capNetworkPolicy, fixtureEgress, false},
 				{capNetworkPolicyV2, fixtureHTTPEgress, false},

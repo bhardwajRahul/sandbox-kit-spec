@@ -526,7 +526,7 @@ behavior** for a runtime supporting the type:
 | `com.docker.sandbox/usb-device@1` | [usb-device@1](capabilities/com.docker.sandbox/usb-device@1.md) | instance |
 | `com.docker.sandbox/resources@1` | [resources@1](capabilities/com.docker.sandbox/resources@1.md) | singleton |
 | `com.docker.sandbox/privileged@1` | [privileged@1](capabilities/com.docker.sandbox/privileged@1.md) | singleton, config-less |
-| `com.docker.sandbox/long-running@1` | [long-running@1](capabilities/com.docker.sandbox/long-running@1.md) | singleton, config-less, workload-only |
+| `com.docker.sandbox/long-running@1` | [long-running@1](capabilities/com.docker.sandbox/long-running@1.md) | singleton, config-less |
 | `com.docker.sandbox/lifecycle@1` | [lifecycle@1](capabilities/com.docker.sandbox/lifecycle@1.md) | singleton |
 | `com.docker.sandbox/agent-context@1` | [agent-context@1](capabilities/com.docker.sandbox/agent-context@1.md) | singleton |
 | `com.docker.sandbox/agent-sessions@1` | [agent-sessions@1](capabilities/com.docker.sandbox/agent-sessions@1.md) | singleton |

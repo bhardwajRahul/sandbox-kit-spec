@@ -175,10 +175,7 @@
               "properties": {
                 "type": {
                   "not": {
-                    "enum": [
-                      "com.docker.sandbox/sbx@1",
-                      "com.docker.sandbox/long-running@1"
-                    ]
+                    "const": "com.docker.sandbox/sbx@1"
                   }
                 }
               }
@@ -186,7 +183,7 @@
           }
         }
       },
-      "description": "com.docker.sandbox/sbx@1 is workload-only: a mixin's image config never becomes the composed image's, so the identity it would promise is not the one a host reads. long-running@1 is workload-only because mixins cannot decide sandbox lifetime."
+      "description": "com.docker.sandbox/sbx@1 is workload-only: a mixin's image config never becomes the composed image's, so the identity it would promise is not the one a host reads."
     }
   ],
   "definitions": {

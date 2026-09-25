@@ -1,7 +1,7 @@
 # syntax=docker/sandbox-kit:3
 schemaVersion: "3"
-kind: workload
-displayName: Session-independent workload
+kind: mixin
+displayName: Session-independent service requirement
 provides: ["kit-tck-long-running@1.0.0"]
 capabilities:
   - type: com.docker.sandbox/long-running@1

@@ -88,7 +88,6 @@ var kitCovers = map[string][]string{
 	// set that was never merged describes layers it does not have.
 	"descriptor-valid": {
 		"long-running@1/no-config",
-		"long-running@1/workload-only",
 		"SPEC-v3 §9.2/versioned-provides",
 		"SPEC-v3 §3.4/set-kind-never-published",
 	},

@@ -19,7 +19,7 @@ func TestLongRunningValidation(t *testing.T) {
 		mixin := base(entry)
 		mixin.Kind = KindMixin
 		_, err = Validate(mixin)
-		require.ErrorContains(t, err, "workload-only")
+		require.NoError(t, err)
 	}
 
 	_, err := Validate(base(
@@ -44,7 +44,7 @@ func TestLongRunningValidation(t *testing.T) {
 	set.Kind = KindSet
 	set.Kits = []Kit{{Ref: "example.com/workload:1"}}
 	_, err = Validate(set)
-	require.NoError(t, err, "set kind is checked after resolution")
+	require.NoError(t, err)
 }
 
 func TestLongRunningMergeAndSurface(t *testing.T) {
@@ -53,18 +53,48 @@ func TestLongRunningMergeAndSurface(t *testing.T) {
 		// A set's own declarations enter Merge without a kind; its
 		// members supply the resolved kind that validation judges.
 		own := &Descriptor{SchemaVersion: SchemaVersion, Capabilities: []Capability{{Type: CapabilityLongRunning}}}
-		if kind == KindWorkload {
-			base.Capabilities = []Capability{{Type: CapabilityLongRunning, Optional: true}}
-		}
+		base.Capabilities = []Capability{{Type: CapabilityLongRunning, Optional: true}}
 		merged := mergeOK(t, Contribution{Reference: "base", Descriptor: base}, Contribution{Reference: "set", Descriptor: own}).Descriptor
 		_, err := Validate(merged)
-		if kind == KindMixin {
-			require.ErrorContains(t, err, "workload-only")
-			continue
-		}
 		require.NoError(t, err)
 		require.Len(t, merged.Capabilities, 1)
 		require.False(t, merged.Capabilities[0].Optional, "a required declaration wins")
 		require.Equal(t, SurfaceOf(&Descriptor{}), SurfaceOf(merged), "lifetime grants no permission surface")
+	}
+}
+
+// The requesting kit's kind and contribution order cannot weaken a
+// required declaration, and a mixin's request survives without any
+// matching request on the workload.
+func TestLongRunningMixinComposition(t *testing.T) {
+	required := []Capability{{Type: CapabilityLongRunning}}
+	optional := []Capability{{Type: CapabilityLongRunning, Optional: true}}
+	for _, tc := range []struct {
+		name            string
+		workload, mixin []Capability
+		wantOptional    bool
+	}{
+		{"mixin alone requires", nil, required, false},
+		{"mixin alone prefers", nil, optional, true},
+		{"mixin strengthens workload", optional, required, false},
+		{"workload strengthens mixin", required, optional, false},
+		{"both optional", optional, optional, true},
+		{"both required", required, required, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workload := Contribution{Reference: "workload", Descriptor: &Descriptor{
+				SchemaVersion: SchemaVersion, Kind: KindWorkload, Capabilities: tc.workload,
+			}}
+			mixin := Contribution{Reference: "mixin", Descriptor: &Descriptor{
+				SchemaVersion: SchemaVersion, Kind: KindMixin, Capabilities: tc.mixin,
+			}}
+			for _, inputs := range [][]Contribution{{workload, mixin}, {mixin, workload}} {
+				merged := mergeOK(t, inputs...).Descriptor
+				_, err := Validate(merged)
+				require.NoError(t, err)
+				require.Equal(t, KindWorkload, merged.Kind)
+				require.Equal(t, []Capability{{Type: CapabilityLongRunning, Optional: tc.wantOptional}}, merged.Capabilities)
+			}
+		})
 	}
 }

@@ -5,7 +5,7 @@ hook or a published port alone does not request this behavior: on a
 runtime with session-based auto-stop, the sandbox can otherwise stop when
 its last client disconnects.
 
-- **Shape**: singleton, **config-less**, workload-only.
+- **Shape**: singleton, **config-less**.
 - **Permission surface**: **no** — it changes when the host stops the
   workload, without granting access across the sandbox boundary.
 
@@ -21,10 +21,6 @@ workload can tolerate ordinary session-based auto-stop.
 
 - The entry **MUST NOT** carry `config`, including an empty or null <!-- tck: long-running@1/no-config -->
   value.
-- A validator **MUST** reject the entry on a mixin. Only the resolved <!-- tck: long-running@1/workload-only -->
-  workload can declare that its sandbox runs independently of sessions.
-  An authored set can declare it pending kind resolution; a set resolving
-  to a mixin is rejected.
 
 ## Runtime behavior
 
@@ -50,10 +46,12 @@ restart after a failure or promise uninterrupted availability.
 
 ## Composition
 
-The resolved workload owns the declaration. Mixins cannot impose a
-sandbox lifetime on the workload they extend. Identical declarations
-from a workload and its enclosing set collapse; a required declaration
-wins over an optional one.
+A workload, mixin, or enclosing set can request this capability. One
+Kit requesting it applies the behavior to the whole sandbox: a service
+supplied by a mixin may need to outlive client sessions just as the
+workload does. Identical declarations collapse; a required declaration
+wins over an optional one. A composition is optional only when every
+requester can tolerate session-based auto-stop.
 
 ## Gate
 

@@ -377,12 +377,14 @@ validation error. A mixin carries `contentFile` alone.
 
 ### long-running@1
 
-For a workload that must keep serving after the last client disconnects,
+For a workload or mixin that must keep serving after the last client disconnects,
 add a required `com.docker.sandbox/long-running@1` entry with no `config`.
 Background startup hooks and published ports alone do not request this
 lifetime. The capability leaves explicit stop and failure handling intact;
-it does not express a Compose restart policy. Omit it from mixin variants:
-only the resolved workload decides its sandbox lifetime.
+it does not express a Compose restart policy. Keep it on mixin variants
+when their service needs that lifetime too: a request from any Kit
+applies to the whole sandbox, and a required declaration wins over an
+optional one.
 
 ### sbx@1
 
@@ -441,7 +443,7 @@ A workload kit's `-mixin` sibling declares the same credentials, network policy,
 volumes, hooks, args and provides, minus what only the kit that owns the
 environment can carry:
 
-- no `long-running@1`, no `sbx@1`, no `agent-sessions@1`, no `agent-context@1.filename`
+- no `sbx@1`, no `agent-sessions@1`, no `agent-context@1.filename`
   (`contentFile` only)
 - no `ENTRYPOINT` — the base workload's launch command stays, and the user runs
   the tool from the shell. Say so in the descriptor's header comment.
@@ -526,7 +528,7 @@ Before calling a migration done:
 - [ ] `filename:` appears only on a workload, or on a set that resolves to
       one — a set of only mixins derives `kind: mixin` and its `filename` is
       rejected at publish, not at authoring time
-- [ ] no `long-running@1`, `sbx@1` or `agent-sessions@1` on a mixin
+- [ ] no `sbx@1` or `agent-sessions@1` on a mixin
 - [ ] the mixin's `ENV` is on the recipe's final stage, and profile.d is used
       only for values that collide or that only a shell needs
 - [ ] entrypoint, env, user and workdir live in the recipe, not the descriptor

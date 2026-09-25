@@ -86,6 +86,7 @@ create)
       *long-running-optional*)
         if [ "$broken" = "refuses-optional-long-running" ]; then exit 2; fi
         ;;
+      *long-running-workload*) ;;
       *long-running*) need="com.docker.sandbox/long-running@1" ;;
       *skills-optional* | *scoped-egress*) ;;
       # Before the *context* arm, whose name this fixture also carries
@@ -127,6 +128,9 @@ create)
   dir="$state/$id"
   mkdir -p "$dir"
   echo running >"$dir/status"
+  for kit in "${kits[@]}"; do
+    if [[ "$kit" == */long-running ]]; then : >"$dir/long-running-mixin"; fi
+  done
   printf '%s' "1" >"$dir/install.count"
   printf '%s' "1" >"$dir/startup.count"
   # The install phase could reach its install-only domain; the boundary
@@ -538,6 +542,9 @@ wait-idle)
   dir="$state/$1"
   case "$broken" in
   stops-on-disconnect) echo stopped >"$dir/status" ;;
+  ignores-long-running-mixin)
+    if [ -f "$dir/long-running-mixin" ]; then echo stopped >"$dir/status"; fi
+    ;;
   loses-background-on-disconnect) rm -f "$dir/background" ;;
   restarts-background-on-disconnect) echo replacement >"$dir/background" ;;
   idle-errors) echo "idle observation failed" >&2; exit 1 ;;

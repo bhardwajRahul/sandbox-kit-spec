@@ -8,8 +8,9 @@ import (
 )
 
 const (
-	capLongRunning     = "com.docker.sandbox/long-running@1"
-	fixtureLongRunning = "long-running"
+	capLongRunning             = "com.docker.sandbox/long-running@1"
+	fixtureLongRunning         = "long-running"
+	fixtureLongRunningWorkload = "long-running-workload"
 )
 
 func optionalLongRunning(ctx context.Context, e *Env) []report.Finding {
@@ -22,7 +23,7 @@ func optionalLongRunning(ctx context.Context, e *Env) []report.Finding {
 }
 
 func survivesSessionDisconnect(ctx context.Context, e *Env) []report.Finding {
-	id, cleanup, err := e.sandbox(ctx, []string{fixtureLongRunning}, nil)
+	id, cleanup, err := e.sandbox(ctx, []string{fixtureLongRunningWorkload, fixtureLongRunning}, nil)
 	if err != nil {
 		return []report.Finding{report.Failf("create: %v", err)}
 	}
@@ -58,7 +59,7 @@ func survivesSessionDisconnect(ctx context.Context, e *Env) []report.Finding {
 }
 
 func longRunningStop(ctx context.Context, e *Env) []report.Finding {
-	id, cleanup, err := e.sandbox(ctx, []string{fixtureLongRunning}, nil)
+	id, cleanup, err := e.sandbox(ctx, []string{fixtureLongRunningWorkload, fixtureLongRunning}, nil)
 	if err != nil {
 		return []report.Finding{report.Failf("create: %v", err)}
 	}

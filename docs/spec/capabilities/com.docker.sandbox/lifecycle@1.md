@@ -14,7 +14,7 @@ setup.
   ([network](network-policy@1.md), [credentials](credential@1.md)).
 
 Background hooks detach from boot; they do not by themselves prevent
-session-based sandbox auto-stop. A workload that needs to survive its
+session-based sandbox auto-stop. A Kit that needs to survive its
 last client disconnecting declares [long-running@1](long-running@1.md).
 
 ## Config
