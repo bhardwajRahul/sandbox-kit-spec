@@ -431,6 +431,7 @@ var singletonCapabilities = map[string]bool{
 	CapabilityLifecycle:       true,
 	CapabilityAgentContext:    true,
 	CapabilitySbx:             true,
+	CapabilityLongRunning:     true,
 }
 
 // argvContains reports whether any argv element contains the substring
@@ -449,6 +450,7 @@ var configlessCapabilities = map[string]bool{
 	CapabilityPrivileged:  true,
 	CapabilityKitRegistry: true,
 	CapabilitySbx:         true,
+	CapabilityLongRunning: true,
 }
 
 // validateCapabilityEntries checks the typed capability list. Type syntax and
@@ -472,6 +474,11 @@ func validateCapabilityEntries(d *Descriptor) error {
 	// kind is derived from its members later.
 	if d.Kind == KindMixin && HasCapability(needs, CapabilitySbx) {
 		return fieldErrorf("capabilities", "%s is workload-only: a mixin's image config never becomes the composed image's, so the identity it would promise is not the one a host reads", CapabilitySbx)
+	}
+	// Reject before composition loses which kit made the lifetime request.
+	// Sets are checked again once their resolved kind is known.
+	if d.Kind == KindMixin && HasCapability(needs, CapabilityLongRunning) {
+		return fieldErrorf("capabilities", "%s is workload-only: a mixin cannot decide the workload's sandbox lifetime", CapabilityLongRunning)
 	}
 	seenSingleton := map[string]int{}
 	seenExact := map[string]int{}

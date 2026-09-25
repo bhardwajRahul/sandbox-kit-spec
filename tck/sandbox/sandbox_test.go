@@ -57,6 +57,22 @@ func TestASingleCapabilityRuntimeIsJudgedOnlyOnItsClaim(t *testing.T) {
 	}
 }
 
+func TestLongRunningNeedsNoHelperCapabilities(t *testing.T) {
+	a := adapter.New(filepath.Join("testdata", "fake-adapter"))
+	a.Env = []string{
+		"KIT_TCK_FAKE_STATE=" + t.TempDir(),
+		"KIT_TCK_FAKE_CLAIMS=" + capLongRunning,
+		"KIT_TCK_FAKE_BROKEN=",
+	}
+	rep, err := Run(context.Background(), &Env{Adapter: a, Fixtures: Fixtures(FixtureDir)})
+	require.NoError(t, err)
+	require.False(t, rep.Failed(), "long-running alone must be testable:\n%s", rep)
+	for _, f := range rep.Findings {
+		require.NotContains(t, f.Requirement, "long-running",
+			"long-running checks must run clean, not skip: %s", f)
+	}
+}
+
 // The refusal duty covers well-known types too: a runtime omitting a type
 // from its claims and then accepting a kit that requires it would have
 // that type's checks skipped and pass while under-provisioning.
@@ -101,16 +117,24 @@ func TestAConformingRuntimePasses(t *testing.T) {
 // requirement — the two network-policy versions state the same duty about
 // the host lists — and dropping it has to fail every one of them.
 var mutations = map[string][]string{
-	"install-twice":          {"lifecycle@1/install-once"},
-	"no-startup":             {"lifecycle@1/startup-every-boot"},
-	"ignores-files":          {"lifecycle@1/files-written"},
-	"writes-files-as-root":   {"lifecycle@1/files-written"},
-	"writes-files-read-only": {"lifecycle@1/files-written"},
-	"leaks-env":              {"lifecycle@1/hook-env-restricted"},
-	"allows-everything":      {"network-policy@1/deny-by-default", "network-policy@2/deny-by-default"},
-	"ignores-http-method":    {"network-policy@2/http-method-enforced"},
-	"ignores-http-path":      {"network-policy@2/http-path-enforced"},
-	"ignores-http-deny":      {"network-policy@2/http-deny-precedence"},
+	"stops-on-disconnect":               {"long-running@1/survives-session-disconnect"},
+	"loses-background-on-disconnect":    {"long-running@1/survives-session-disconnect"},
+	"restarts-background-on-disconnect": {"long-running@1/survives-session-disconnect"},
+	"idle-errors":                       {"long-running@1/survives-session-disconnect"},
+	"status-errors":                     {"long-running@1/survives-session-disconnect", "long-running@1/explicit-stop-honored"},
+	"status-malformed":                  {"long-running@1/survives-session-disconnect", "long-running@1/explicit-stop-honored"},
+	"ignores-explicit-stop":             {"long-running@1/explicit-stop-honored"},
+	"refuses-optional-long-running":     {"conformance.md §2.2/optional-long-running-accepted"},
+	"install-twice":                     {"lifecycle@1/install-once"},
+	"no-startup":                        {"lifecycle@1/startup-every-boot"},
+	"ignores-files":                     {"lifecycle@1/files-written"},
+	"writes-files-as-root":              {"lifecycle@1/files-written"},
+	"writes-files-read-only":            {"lifecycle@1/files-written"},
+	"leaks-env":                         {"lifecycle@1/hook-env-restricted"},
+	"allows-everything":                 {"network-policy@1/deny-by-default", "network-policy@2/deny-by-default"},
+	"ignores-http-method":               {"network-policy@2/http-method-enforced"},
+	"ignores-http-path":                 {"network-policy@2/http-path-enforced"},
+	"ignores-http-deny":                 {"network-policy@2/http-deny-precedence"},
 	"leaves-install-egress-open": {
 		"network-policy@1/install-phase-scoped",
 		"network-policy@2/install-phase-scoped",

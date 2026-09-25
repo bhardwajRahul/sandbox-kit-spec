@@ -39,6 +39,9 @@ args:
 provides: ["wordpress@${{ kit.args.version }}"]
 
 capabilities:
+  # The site serves requests even after the last client session closes.
+  - type: com.docker.sandbox/long-running@1
+
   # compose `ports: 8080:80`, minus the host half: the kit declares which
   # container port is the service; which host port answers is the host's
   # decision at create.

@@ -104,6 +104,29 @@ func (a *Adapter) Exec(ctx context.Context, id string, argv ...string) (Result, 
 	return a.run(ctx, append([]string{"exec", id, "--"}, argv...)...)
 }
 
+// WaitIdle exercises final-session disconnection and waits beyond the
+// runtime's own auto-stop grace period without keeping the sandbox alive.
+func (a *Adapter) WaitIdle(ctx context.Context, id string) error {
+	return a.mustRun(ctx, "wait-idle", id)
+}
+
+// Status observes without attaching: Exec could implicitly restart a
+// sandbox and hide the auto-stop the long-running check is looking for.
+func (a *Adapter) Status(ctx context.Context, id string) (string, error) {
+	res, err := a.run(ctx, "status", id)
+	if err != nil {
+		return "", err
+	}
+	if res.ExitCode != 0 {
+		return "", fmt.Errorf("status: exit %d: %s", res.ExitCode, strings.TrimSpace(res.Stderr))
+	}
+	state := strings.TrimSpace(res.Stdout)
+	if state != "running" && state != "stopped" {
+		return "", fmt.Errorf("status: expected running or stopped, got %q", state)
+	}
+	return state, nil
+}
+
 // Recreate replaces the sandbox's container — a fresh writable layer —
 // preserving only declared volume state. Stop/start preserves the entire
 // filesystem, so it cannot tell a volume from an ordinary directory;

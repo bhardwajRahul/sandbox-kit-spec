@@ -70,6 +70,8 @@ An adapter **MUST NOT** require interactive input.
 | `start` | `<id>` | — | Start a stopped sandbox |
 | `recreate` | `<id>` | — | Replace the sandbox's container with a fresh writable layer, preserving only declared volume state |
 | `rm` | `<id>` | — | Discard the sandbox |
+| `wait-idle` | `<id>` | — | Disconnect the final client session and wait beyond the normal auto-stop grace period |
+| `status` | `<id>` | `running` or `stopped` | Observe sandbox state without starting it or attaching a session |
 
 `capabilities` is what makes a partial implementation testable: the suite
 skips the types a runtime does not claim, and asserts that a Kit
@@ -91,6 +93,29 @@ while preserving declared volume state. Because stop/start preserves
 everything, it cannot distinguish a volume from an ordinary directory;
 recreate is the observation that can, and the suite verifies the layer was
 really discarded before crediting anything to the volume.
+
+`wait-idle` and `status` are required only for adapters claiming
+`com.docker.sandbox/long-running@1`. `wait-idle` **MUST** exercise a real
+client session's connection and disconnection, leave no client sessions
+attached, and return only after the runtime's ordinary session auto-stop
+grace period has elapsed, with a margin for scheduling. The adapter knows
+that period; a fixed suite delay cannot bound every runtime's policy.
+A runtime with no session-based auto-stop needs no grace-period wait.
+
+While waiting, the adapter **MUST NOT** use exec, attach, keepalives, or
+other operations that reset the idle timer or restart the sandbox. It
+**MUST NOT** disable auto-stop or force detached mode to make the check
+pass: the runtime under test decides from the descriptor whether to keep
+the workload running. Session types with different disconnect paths
+**MUST** each be exercised before `wait-idle` returns, with a full idle
+interval after each final disconnection.
+
+`status` **MUST** read host-side state without starting, resuming, or
+attaching to the sandbox. It reports `stopped` only when the sandbox has
+finished stopping; a missing sandbox or a failed observation is an error,
+not a stopped state. The suite reads status before probing the background
+process, so an exec that implicitly starts a stopped sandbox cannot hide
+auto-stop, and reads it again after explicit stop.
 
 ### 2.3 Known values the suite arranges
 

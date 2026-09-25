@@ -496,7 +496,7 @@ capabilities:
 **Policy-shaped types are singletons** — at most one entry each:
 `network-policy@1`, `network-policy@2`, `resources@1`, `privileged@1`,
 `kit-registry@1`, `agent-sessions@1`, `lifecycle@1`, `agent-context@1`,
-`sbx@1`.
+`sbx@1`, `long-running@1`.
 
 The two `network-policy` versions are additionally **exclusive of each
 other**: a descriptor states one of them, never both. They describe the
@@ -526,6 +526,7 @@ behavior** for a runtime supporting the type:
 | `com.docker.sandbox/usb-device@1` | [usb-device@1](capabilities/com.docker.sandbox/usb-device@1.md) | instance |
 | `com.docker.sandbox/resources@1` | [resources@1](capabilities/com.docker.sandbox/resources@1.md) | singleton |
 | `com.docker.sandbox/privileged@1` | [privileged@1](capabilities/com.docker.sandbox/privileged@1.md) | singleton, config-less |
+| `com.docker.sandbox/long-running@1` | [long-running@1](capabilities/com.docker.sandbox/long-running@1.md) | singleton, config-less, workload-only |
 | `com.docker.sandbox/lifecycle@1` | [lifecycle@1](capabilities/com.docker.sandbox/lifecycle@1.md) | singleton |
 | `com.docker.sandbox/agent-context@1` | [agent-context@1](capabilities/com.docker.sandbox/agent-context@1.md) | singleton |
 | `com.docker.sandbox/agent-sessions@1` | [agent-sessions@1](capabilities/com.docker.sandbox/agent-sessions@1.md) | singleton |
@@ -570,7 +571,8 @@ candidate's against it:
   Kit rather than grant it anything, the next three run inside the sandbox
   on the entrypoint's trust plane, and `sbx@1` asks the host to launch the
   workload a particular way and to read an identity the image already
-  states (see their pages).
+  states (see their pages). `long-running@1` likewise grants no access;
+  it keeps the workload running independently of attached sessions.
 
 ---
 
@@ -896,8 +898,9 @@ The spec library enforces, beyond per-field rules stated above:
 - **capabilities**: type matches
   `^[a-z0-9]([a-z0-9.-]*[a-z0-9])?/[a-z0-9]([a-z0-9-]*[a-z0-9])?@[1-9][0-9]*$`;
   singleton and dedup arity per [§7.1](#71-arity); config-less types
-  (`privileged@1`, `kit-registry@1`, `sbx@1`) reject any config; well-known configs
-  decode strictly (unknown keys are errors) and pass their per-type rules
+  (`privileged@1`, `kit-registry@1`, `sbx@1`, `long-running@1`) reject any
+  config; well-known configs decode strictly (unknown keys are errors)
+  and pass their per-type rules
   (see the capability pages); **cross-entry**: every credential inject
   domain appears in the matching phase of the network policy's allow list
   (a bare `*`/`**` allow entry covers every domain). Entries whose config

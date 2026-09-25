@@ -55,7 +55,7 @@ func allCapabilityTypes() []string {
 		CapabilityVolume, CapabilityPort,
 		CapabilityUSBDevice, CapabilityResources, CapabilityPrivileged, CapabilityKitRegistry,
 		CapabilityAgentSessions, CapabilityLifecycle, CapabilityAgentContext,
-		CapabilityAgentSkills, CapabilitySbx,
+		CapabilityAgentSkills, CapabilitySbx, CapabilityLongRunning,
 	}
 }
 
@@ -98,8 +98,8 @@ func TestSchemaMatchesSpecConstants(t *testing.T) {
 		}
 	}
 	require.NotNil(t, mixinRule, "the schema states no mixin rule")
-	require.Equal(t, CapabilitySbx,
-		at(t, mixinRule, "then", "properties", "capabilities", "items", "properties", "type", "not")["const"])
+	require.ElementsMatch(t, []any{CapabilitySbx, CapabilityLongRunning},
+		at(t, mixinRule, "then", "properties", "capabilities", "items", "properties", "type", "not")["enum"])
 
 	// The reference pattern rejects what validateKits rejects: a local
 	// path names a kit that may not be published at all.
