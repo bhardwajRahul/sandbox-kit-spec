@@ -36,10 +36,11 @@ workspace: .
 
 env:
   # The template sets GODEBUG=tarinsecurepath=0,zipinsecurepath=0, which
-  # switches off the ErrInsecurePath that archive/tar returns for `..`
-  # and absolute entries — and the tck's layer-walk tests expect it. An
-  # empty value restores the Go runtime's defaults for every process in
-  # the sandbox, so `task test` judges as CI does.
+  # enables ErrInsecurePath checks for non-local archive entry names.
+  # The tck's layer-walk tests need entries such as `../..` to remain
+  # readable so they can exercise the walker's own path handling. An
+  # empty value restores Go's current defaults, which leave these checks
+  # disabled, so `task test` judges inside the sandbox as CI does.
   GODEBUG: ""
 
 sandboxOptions:
