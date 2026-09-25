@@ -1,30 +1,33 @@
 # v2's sandbox.image, as content. The template carries the platform floor
 # and a codex install; the build re-pins codex to the release this kit
 # publishes, so the provide cannot claim a version the image does not ship.
-# codex-code-mode-host rides along: codex spawns it as a sibling executable
-# for Code Mode and fails that feature closed when it is missing.
-FROM dhi.io/debian-base:trixie-dev AS build
-ARG CODEX_VERSION
-ARG TARGETARCH
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
-RUN case "$TARGETARCH" in \
-      amd64) target=x86_64-unknown-linux-musl ;; \
-      arm64) target=aarch64-unknown-linux-musl ;; \
-      *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
-    esac \
- && mkdir -p /out/usr/local/bin \
- && for bin in codex codex-code-mode-host; do \
-      curl -fsSLO "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/${bin}-${target}.tar.gz" \
-      && tar -xzf "${bin}-${target}.tar.gz" \
-      && install -m 0755 "${bin}-${target}" "/out/usr/local/bin/${bin}"; \
-    done \
- && /out/usr/local/bin/codex --version
-
+#
+# The re-pin goes through npm, the way the template installed it, and not
+# by dropping the release tarball's binary into /usr/local/bin. Codex
+# starts a background server by default and, to do so, has to be running
+# from what it calls a complete local package: the npm layout, with the
+# codex.js launcher and a platform package carrying vendor/<target>/bin/
+# (codex, codex-code-mode-host) and codex-resources/ (bwrap, zsh, rg, the
+# voice libraries). A lone binary has none of that beside it and exits
+# with "this CLI has no complete local package". The platform package is
+# an optional dependency npm selects for the stage's own architecture,
+# which under a multi-platform build is the target's.
 FROM dhi.io/sbx-templates:codex-docker
-COPY --from=build /out/usr/local/bin/ /usr/local/bin/
+ARG CODEX_VERSION
+# As agent, not root: the template hands the npm prefix to the agent so
+# it can add globals at run time, and a root-run install would take that
+# back for every path it touches. The cache lands outside the image.
+USER agent
+RUN npm install -g --no-fund --no-audit --cache /tmp/npm-cache \
+      "@openai/codex@${CODEX_VERSION}" \
+ && rm -rf /tmp/npm-cache \
+ # The pin is a claim about content: judge it the way the entrypoint
+ # will, through PATH, and make sure the platform package came along.
+ && test "$(command -v codex)" = /usr/local/share/npm-global/bin/codex \
+ && codex --version | grep -q "${CODEX_VERSION}" \
+ && test -x /usr/local/share/npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-*/vendor/*/bin/codex-code-mode-host
 # v2's environment.variables, in the slot OCI already owns for static env.
 ENV IS_SANDBOX=1 BROWSER=xdg-open CODEX_HOME=/home/agent/.codex GIT_TERMINAL_PROMPT=0
-USER agent
 WORKDIR /home/agent/workspace
 # v2's sandbox.entrypoint.
 ENTRYPOINT ["codex", "--dangerously-bypass-approvals-and-sandbox"]
