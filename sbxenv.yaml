@@ -1,9 +1,41 @@
-# Docker Sandboxes environment for working on this repository with Codex.
-# From the repository root: `sbx env plan` shows what it would set up and
-# changes nothing; `sbx env run` creates the sandbox (or attaches to it)
-# and drops into it; `sbx env rm` removes it. Run them WITHOUT a path:
-# naming one (`sbx env run .`) skips the user-level ~/.sbxenv.yaml that
-# is merged beneath this file for personal defaults.
+# Docker Sandboxes environment for developing this repository with Codex.
+# This is the sbx CLI's environment configuration. It combines the
+# published Codex workload with the dev-tools mixin built from this
+# checkout, mounts the repository read/write, and declares environment
+# variables and credential bindings for development. Its
+# schemaVersion belongs to sbx environments; the Kit descriptors under
+# examples/ use the separate Kit v3 grammar.
+#
+# Before the first run, on the host:
+#   1. Install a Docker Sandboxes CLI with `sbx env` support; see
+#      README.md under "How to get started" for installation instructions.
+#   2. Run `sbx login` to sign in to Docker Sandboxes.
+#   3. Run `sbx secret ls` and check that the store has OpenAI OAuth and
+#      GitHub API-key credentials matching the bindings below. This file
+#      approves their use; it does not create them. For setup, use
+#      `sbx secret --help`, and keep secret values out of this file.
+#
+# From the repository root on the host:
+#   sbx env plan   # Preview the setup without changing anything.
+#   sbx env run    # Create the sandbox, or attach to the existing one.
+#
+# Run these commands without a path: `sbx env run .` skips the user file
+# ~/.sbxenv.yaml that is otherwise merged beneath this file. Keep
+# personal defaults there; this file supplies the shared settings.
+#
+# Inside the sandbox, ask Codex to work on the mounted checkout and run
+# the repository checks. Edits are also visible on the host. Tools include
+# Go, Docker with buildx, task, golangci-lint, and regctl:
+#   task --list    # Show available development tasks.
+#   task validate  # Check Go formatting and run go vet.
+#   task lint      # Run the Go and Markdown linters.
+#   task test      # Run all tests, including fake-adapter conformance.
+# See AGENTS.md for checks required by particular changes.
+#
+# On the host, run `sbx env rm` from the repository root to remove the
+# sandbox. Credential bindings remain unless you pass --prune-bindings.
+# This file is read-only inside the mounted workspace; edit it on the
+# host when changing the environment setup.
 schemaVersion: "1"
 name: sandbox-kit-spec-env
 
