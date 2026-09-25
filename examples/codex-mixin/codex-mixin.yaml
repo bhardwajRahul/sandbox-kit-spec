@@ -23,6 +23,21 @@ args:
     pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
     description: Codex CLI release to install
     buildArg: CODEX_VERSION
+  # Model selection, resolved at create so one published kit serves every
+  # preference: `--kit-arg model=… reasoningEffort=…`, or a kits[] entry's
+  # args in sbxenv.yaml. Empty leaves codex's own default in force. Both
+  # are also exported into the sandbox environment, so a shell inside can
+  # read what the session was created with.
+  model:
+    default: ""
+    pattern: '^[A-Za-z0-9._-]*$'
+    description: Codex model to use (config.toml `model`); empty keeps the CLI default
+    env: CODEX_MODEL
+  reasoningEffort:
+    default: ""
+    pattern: '^(minimal|low|medium|high|xhigh)?$'
+    description: Reasoning effort (config.toml `model_reasoning_effort`); empty keeps the CLI default
+    env: CODEX_REASONING_EFFORT
 
 provides: ["codex@${{ kit.args.version }}"]
 
@@ -103,6 +118,15 @@ capabilities:
             sandbox_mode = "danger-full-access"
             mcp_oauth_credentials_store = "file"
             EOF
+            # Model selection from the create-phase args. These are
+            # top-level keys, so they must land here, before the
+            # model_providers and projects tables below would capture
+            # them. The args' patterns admit no quote or backslash, so
+            # the expanded value is safe inside the TOML string.
+            model='${{ kit.args.model }}'
+            effort='${{ kit.args.reasoningEffort }}'
+            [ -z "$model" ] || printf 'model = "%s"\n' "$model" >> /home/agent/.codex/config.toml
+            [ -z "$effort" ] || printf 'model_reasoning_effort = "%s"\n' "$effort" >> /home/agent/.codex/config.toml
             # Managed modes must not let remote clients replace the proxy
             # placeholder with sandbox-local ChatGPT OAuth. None mode
             # deliberately permits login.
