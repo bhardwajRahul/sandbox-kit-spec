@@ -117,6 +117,11 @@ Rules that hold for every commit:
   decision.
 - Never amend, rebase, or force-push over commits you did not create in
   this session unless explicitly asked.
+- Do not hard-wrap the body at 72 or 80 columns. Write one paragraph per
+  line and let the viewer wrap it: GitHub renders commit and pull
+  request bodies as text, so a manual break shows up as a ragged line
+  rather than a wrapped one. The 72-column habit belongs to Markdown
+  files in the tree (see Style), not to messages.
 
 ## Pull requests
 
@@ -142,6 +147,9 @@ has two parts:
 Keep the pull request as small as its subject. A refactor that a fix
 needed is a separate commit in the same pull request, not a second
 subject buried in the first.
+
+As with commit bodies, do not hard-wrap the description: one paragraph
+per line, and GitHub does the wrapping.
 
 ## Changing the grammar
 
