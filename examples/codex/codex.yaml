@@ -117,6 +117,16 @@ capabilities:
             requires_openai_auth = false
             EOF
             fi
+            # Trust the workspace for launches outside the entrypoint too.
+            # Keep this after all top-level config keys: the projects
+            # table would otherwise capture settings like model_provider.
+            ws="${WORKSPACE_DIR:-/home/agent/workspace}"
+            esc=$(printf '%s' "$ws" | sed 's/\\/\\\\/g; s/"/\\"/g')
+            cat >> /home/agent/.codex/config.toml <<EOF
+
+            [projects."$esc"]
+            trust_level = "trusted"
+            EOF
             case "$MODE" in
               oauth|apikey)
                 cat > /home/agent/.codex/auth.json << 'EOF'
@@ -130,7 +140,7 @@ capabilities:
                 ;;
             esac
           user: agent
-          env: [SBX_CRED_OPENAI_MODE]
+          env: [SBX_CRED_OPENAI_MODE, WORKSPACE_DIR]
           description: Seed Codex config/auth from SBX_CRED_OPENAI_MODE
       startup:
         # Gateway-first MCP registration; append-with-guard keeps it
