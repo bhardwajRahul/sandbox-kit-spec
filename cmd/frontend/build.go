@@ -136,6 +136,12 @@ func Build(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 		return nil, fmt.Errorf("%s lists kits: and has a companion %s; a set's content is the kits it lists, so the recipe would be staged but never built — delete the recipe, or drop the kits list", filename, content.name)
 	}
 
+	// Decode build-phase values before reading guidance or planning a set.
+	expanded, err := spec.Decode(published)
+	if err != nil {
+		return nil, withYAMLSource(fmt.Errorf("descriptor no longer decodes after expansion: %w", err), filename, src.descriptor)
+	}
+
 	// A set's content is the kits it lists: they are resolved, judged
 	// as a set, and merged into one kit before anything else here runs,
 	// because the merged descriptor is what gets published — the
@@ -147,10 +153,7 @@ func Build(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 		// registry namespace, a version they all share), and a
 		// reference resolved after the merge would be a reference the
 		// published descriptor still carries.
-		expanded, err := spec.Decode(published)
-		if err != nil {
-			return nil, withYAMLSource(fmt.Errorf("descriptor no longer decodes after expansion: %w", err), filename, src.descriptor)
-		}
+		//
 		// Revalidated now that the build-phase values are literal. A
 		// capability whose authored config referenced an arg passed
 		// leniently — typed checks defer until nothing is a
@@ -179,7 +182,7 @@ func Build(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 	// The agent-context body and the staged path are platform-independent;
 	// the staging itself runs per platform against each platform's
 	// filesystem.
-	agentContext, err := spec.AgentContextOf(d.Capabilities)
+	agentContext, err := spec.AgentContextOf(expanded.Capabilities)
 	if err != nil {
 		return nil, withYAMLSource(err, filename, src.descriptor)
 	}

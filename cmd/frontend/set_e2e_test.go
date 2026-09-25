@@ -120,12 +120,19 @@ args:
     default: spicy
     pattern: '^[a-z]+$'
     buildArg: FLAVOR
+  language:
+    default: en
+    buildArg: LANGUAGE
+capabilities:
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      contentFile: ./notes-${{ kit.args.language }}.md
 kits:
   - ref: `+registry+`/sbx-kit-base:1.0.0
   - ref: `+registry+`/sbx-kit-extra:2.0.0
     args:
       flavor: ${{ kit.args.flavor }}
-`, nil)
+`, map[string]string{"notes-en.md": "Team guidance."})
 
 	// The workload derived its own filesystem's package, epoch and
 	// revision removed, before any of the set machinery ran.
@@ -184,7 +191,7 @@ kits:
 	// concatenated context body.
 	out := e.run("docker", "run", "--rm", "--pull=always", registry+"/sbx-kit-team:3.0.0",
 		"-c", "ls /usr/share/sandbox/kit/ && cat /usr/share/sandbox/kit/team/context.md && cat /opt/extra")
-	for _, want := range []string{"base", "extra", "team", "Base guidance.", "Extra is installed."} {
+	for _, want := range []string{"base", "extra", "team", "Base guidance.", "Extra is installed.", "Team guidance."} {
 		require.Contains(t, out, want)
 	}
 
