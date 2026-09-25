@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/distribution/reference"
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/sandbox-kit-spec/v3/resolve"
@@ -40,7 +41,13 @@ func TestExampleSetsResolveAndMerge(t *testing.T) {
 			var units []*resolve.Unit
 			byUnit := map[*resolve.Unit]spec.Contribution{}
 			for _, k := range d.Kits {
-				listed := publishedForm(t, exampleFor(t, k.Ref))
+				ref, err := reference.ParseNormalizedNamed(k.Ref)
+				require.NoError(t, err)
+				tagged, ok := ref.(reference.Tagged)
+				require.True(t, ok, "set examples must pin a tagged kit: %s", k.Ref)
+				// A tracked example's current default can move beyond the
+				// version the set pins. Expand its version arg from that pin.
+				listed := publishedFormWithArgs(t, exampleFor(t, k.Ref), map[string]string{"version": tagged.Tag()})
 				listed.Version = resolve.EffectiveProvideVersion(k.Ref, listed)
 				u := &resolve.Unit{Reference: k.Ref, Descriptor: listed}
 				units = append(units, u)
@@ -116,6 +123,11 @@ func TestCodexACPExampleRequiresCompatibleCodex(t *testing.T) {
 // registry rather than an arg.
 func publishedForm(t *testing.T, descriptor string) *spec.Descriptor {
 	t.Helper()
+	return publishedFormWithArgs(t, descriptor, nil)
+}
+
+func publishedFormWithArgs(t *testing.T, descriptor string, overrides map[string]string) *spec.Descriptor {
+	t.Helper()
 	raw, err := os.ReadFile(descriptor)
 	require.NoError(t, err)
 	d, err := spec.Decode(raw)
@@ -127,7 +139,13 @@ func publishedForm(t *testing.T, descriptor string) *spec.Descriptor {
 			build[name] = decl
 		}
 	}
-	values, err := spec.ResolveArgs(build, nil)
+	supplied := map[string]string{}
+	for name, value := range overrides {
+		if _, ok := build[name]; ok {
+			supplied[name] = value
+		}
+	}
+	values, err := spec.ResolveArgs(build, supplied)
 	require.NoError(t, err, "%s: a build-phase arg has no default to expand", descriptor)
 	expanded, err := spec.ExpandBuildArgs(raw, d.Args, values)
 	require.NoError(t, err)
