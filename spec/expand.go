@@ -159,38 +159,104 @@ func expandCommand(c CommandLine, values map[string]string) (CommandLine, error)
 	return out, nil
 }
 
-// ExpandBuildArgs expands references to build-phase args (those declaring
-// buildArg:) through the raw descriptor bytes, producing the published
-// descriptor. Create-phase arg references are left intact for expansion at
-// create. Values are baked before signing, so the published annotation stays
-// literal and the permission gate keeps judging literal policy.
+// ExpandBuildArgs expands build-phase references structurally, preserving
+// the authored YAML's comments and ordering. Create-phase references remain.
 func ExpandBuildArgs(raw []byte, decls map[string]Arg, values map[string]string) ([]byte, error) {
-	buildPhase := make(map[string]bool, len(decls))
-	for name, decl := range decls {
-		if decl.BuildArg != "" {
-			buildPhase[name] = true
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return nil, fmt.Errorf("expand build args: %w", err)
+	}
+	var expandErr error
+	originals := map[*yaml.Node]yaml.Node{}
+	var expand func(*yaml.Node, bool)
+	expand = func(n *yaml.Node, key bool) {
+		if expandErr != nil {
+			return
+		}
+		if original, ok := originals[n.Alias]; n.Kind == yaml.AliasNode && ok {
+			// Only detach an alias when its use needs different scalar typing.
+			original.Anchor = ""
+			original.HeadComment, original.LineComment, original.FootComment = n.HeadComment, n.LineComment, n.FootComment
+			expand(&original, key)
+			if original.Tag != n.Alias.Tag || original.Value != n.Alias.Value {
+				*n = original
+			} else {
+				n.HeadComment, n.LineComment, n.FootComment = original.HeadComment, original.LineComment, original.FootComment
+			}
+			return
+		}
+		n.HeadComment = expandString(n.HeadComment, decls, values, "build", &expandErr)
+		n.LineComment = expandString(n.LineComment, decls, values, "build", &expandErr)
+		n.FootComment = expandString(n.FootComment, decls, values, "build", &expandErr)
+		if n.Kind == yaml.ScalarNode {
+			var decoded any
+			if err := n.Decode(&decoded); err != nil {
+				expandErr = err
+				return
+			}
+			if text, ok := decoded.(string); ok && ContainsArgRef(text) {
+				if n.Anchor != "" {
+					originals[n] = *n
+				}
+				var value any
+				if key {
+					value = expandString(text, decls, values, "build", &expandErr)
+				} else {
+					value = expandScalar(text, decls, values, "build", &expandErr)
+				}
+				var scalar yaml.Node
+				if err := scalar.Encode(value); err != nil {
+					expandErr = err
+					return
+				}
+				switch value := value.(type) {
+				case string:
+					scalar.SetString(value)
+					// yaml.v3 otherwise emits an unquoted << as a merge key.
+					if value == "<<" {
+						n.Style |= yaml.DoubleQuotedStyle
+					}
+				case float64:
+					// Match typedScalar's round-trip spelling, not YAML's exponent form.
+					scalar.Value = strconv.FormatFloat(value, 'f', -1, 64)
+					if _, err := strconv.ParseUint(scalar.Value, 10, 64); err == nil {
+						// YAML resolves unsigned integer spellings before floats.
+						scalar.Tag = "!!int"
+					}
+				}
+				n.Tag, n.Value = scalar.Tag, scalar.Value
+				if n.Tag != "!!str" {
+					n.Style = 0
+				}
+			}
+		}
+		keys := map[string]bool{}
+		for i, child := range n.Content {
+			isKey := n.Kind == yaml.MappingNode && i%2 == 0
+			expand(child, isKey)
+			if expandErr != nil {
+				return
+			}
+			// Merge directives contribute entries, not a literal << key.
+			if isKey && child.Tag != "!!merge" {
+				var name string
+				if err := child.Decode(&name); err != nil {
+					expandErr = err
+					return
+				}
+				if keys[name] {
+					expandErr = fmt.Errorf("build-phase expansion collapses two keys onto %q", name)
+					return
+				}
+				keys[name] = true
+			}
 		}
 	}
-
-	var expandErr error
-	out := argRef.ReplaceAllFunc(raw, func(m []byte) []byte {
-		name := argRef.FindSubmatch(m)[1]
-		if !buildPhase[string(name)] {
-			return m
-		}
-		v, ok := values[string(name)]
-		if !ok {
-			if expandErr == nil {
-				expandErr = fmt.Errorf("build-phase kit arg %q has no resolved value", name)
-			}
-			return m
-		}
-		return []byte(v)
-	})
+	expand(&doc, false)
 	if expandErr != nil {
 		return nil, expandErr
 	}
-	return out, nil
+	return yaml.Marshal(&doc)
 }
 
 // ExpandCreateArgs expands references to create-phase args (those NOT
@@ -237,7 +303,7 @@ func expandNode(n any, decls map[string]Arg, values map[string]string, expandErr
 		for key, child := range v {
 			// A key names something; it is text whatever the value looks
 			// like, so it never adopts a type.
-			expanded := expandString(key, decls, values, expandErr)
+			expanded := expandString(key, decls, values, "create", expandErr)
 			if _, taken := out[expanded]; taken {
 				// Two keys that expand to one key would silently drop a
 				// value, and which one survives is map-iteration order.
@@ -255,7 +321,7 @@ func expandNode(n any, decls map[string]Arg, values map[string]string, expandErr
 		}
 		return v
 	case string:
-		return expandScalar(v, decls, values, expandErr)
+		return expandScalar(v, decls, values, "create", expandErr)
 	default:
 		return n
 	}
@@ -266,21 +332,21 @@ func expandNode(n any, decls map[string]Arg, values map[string]string, expandErr
 // reaches a numeric config field (`container: ${{ kit.args.port }}`) — the
 // case typed validation is deferred for, and which a quoted "8080" cannot
 // satisfy. Anything else is substitution into text.
-func expandScalar(s string, decls map[string]Arg, values map[string]string, expandErr *error) any {
+func expandScalar(s string, decls map[string]Arg, values map[string]string, phase string, expandErr *error) any {
 	if m := argRef.FindStringSubmatch(s); m != nil && m[0] == s {
-		if v, ok := resolveRef(m[1], decls, values, expandErr); ok {
+		if v, ok := resolveRef(m[1], decls, values, phase, expandErr); ok {
 			return typedScalar(v)
 		}
 		return s
 	}
-	return expandString(s, decls, values, expandErr)
+	return expandString(s, decls, values, phase, expandErr)
 }
 
 // expandString substitutes every reference in one string and keeps it a
 // string.
-func expandString(s string, decls map[string]Arg, values map[string]string, expandErr *error) string {
+func expandString(s string, decls map[string]Arg, values map[string]string, phase string, expandErr *error) string {
 	return argRef.ReplaceAllStringFunc(s, func(match string) string {
-		if v, ok := resolveRef(argRef.FindStringSubmatch(match)[1], decls, values, expandErr); ok {
+		if v, ok := resolveRef(argRef.FindStringSubmatch(match)[1], decls, values, phase, expandErr); ok {
 			return v
 		}
 		return match
@@ -289,17 +355,14 @@ func expandString(s string, decls map[string]Arg, values map[string]string, expa
 
 // resolveRef reports the value one reference expands to, and whether this
 // pass owns it at all.
-func resolveRef(name string, decls map[string]Arg, values map[string]string, expandErr *error) (string, bool) {
-	if decl, ok := decls[name]; ok && decl.BuildArg != "" {
-		// Build-phase references are the frontend's to expand; in a
-		// published descriptor none remain, and in an authored one they
-		// are not this pass's business.
+func resolveRef(name string, decls map[string]Arg, values map[string]string, phase string, expandErr *error) (string, bool) {
+	if (decls[name].BuildArg != "") != (phase == "build") {
 		return "", false
 	}
 	v, ok := values[name]
 	if !ok {
 		if *expandErr == nil {
-			*expandErr = fmt.Errorf("create-phase kit arg %q has no resolved value", name)
+			*expandErr = fmt.Errorf("%s-phase kit arg %q has no resolved value", phase, name)
 		}
 		return "", false
 	}
