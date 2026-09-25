@@ -61,6 +61,7 @@ func TestASingleCapabilityRuntimeIsJudgedOnlyOnItsClaim(t *testing.T) {
 // from its claims and then accepting a kit that requires it would have
 // that type's checks skipped and pass while under-provisioning.
 func TestARequiredUnclaimedTypeMustBeRefused(t *testing.T) {
+	t.Parallel()
 	a := adapter.New(filepath.Join("testdata", "fake-adapter"))
 	a.Env = []string{
 		"KIT_TCK_FAKE_STATE=" + t.TempDir(),
@@ -163,6 +164,7 @@ func TestEachCheckFailsWhenItsBehaviorIsAbsent(t *testing.T) {
 
 	for broken, requirements := range mutations {
 		t.Run(broken, func(t *testing.T) {
+			t.Parallel()
 			rep := runAgainstFake(t, broken)
 			failed := failedRequirements(rep)
 			for _, requirement := range requirements {
@@ -178,6 +180,7 @@ func TestEachCheckFailsWhenItsBehaviorIsAbsent(t *testing.T) {
 // requirement still applies, because that is the one thing a runtime must
 // do about capabilities it lacks.
 func TestUnclaimedCapabilitiesAreSkipped(t *testing.T) {
+	t.Parallel()
 	rep := runAgainstFake(t, "claims-nothing")
 	require.False(t, rep.Failed(), "unclaimed capabilities must not fail:\n%s", rep)
 
@@ -230,6 +233,7 @@ func TestEveryCheckHasAMutationCase(t *testing.T) {
 // by refusing. Here the runtime declines the right kit for the right
 // reason but reports it as an error, which must not count.
 func TestAFailingCreateIsNotMistakenForARefusal(t *testing.T) {
+	t.Parallel()
 	rep := runAgainstFake(t, "refusal-as-error")
 	require.Contains(t, failedRequirements(rep), "SPEC-v3 §7.3/unknown-required-refused",
 		"a create that fails for unrelated reasons must not count as a refusal:\n%s", rep)
