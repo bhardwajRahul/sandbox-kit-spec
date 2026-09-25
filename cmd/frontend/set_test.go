@@ -514,3 +514,26 @@ func TestApplyArgExportsClearsDuplicateKeys(t *testing.T) {
 	}))
 	require.Equal(t, []string{"BARE", "MODE=new"}, config.Env)
 }
+
+func TestKitDeclarationsRejectsMalformedReExportedNetworkPolicy(t *testing.T) {
+	published, err := spec.Decode([]byte(`schemaVersion: "3"
+kind: mixin
+args:
+  host: {required: true}
+capabilities:
+  - type: com.docker.sandbox/network-policy@2
+    config:
+      runtime:
+        allow:
+          - "${{ kit.args.host }}"
+          - hosts: ["${{ kit.args.host }}"]
+            methods: []
+`))
+	require.NoError(t, err)
+
+	_, _, err = kitDeclarations(published, spec.Kit{
+		Args: map[string]string{"host": "${{ kit.args.target }}"},
+	}, map[string]spec.Arg{"target": {Required: true}})
+	require.ErrorContains(t, err, "declarations are invalid once the set's args are applied")
+	require.ErrorContains(t, err, "empty methods list")
+}

@@ -55,6 +55,8 @@ capabilities:
 	require.NoError(t, err)
 	_, err = ValidateRaw(raw, d)
 	require.NoError(t, err, "parameterized entries defer typed validation")
+	_, err = ValidatePublished(raw, d)
+	require.NoError(t, err)
 
 	values, err := ResolveArgs(d.Args, map[string]string{"port": "3000"})
 	require.NoError(t, err)
@@ -93,6 +95,55 @@ capabilities:
 		_, err := ValidateEffective(raw, d)
 		require.ErrorContains(t, err, "still references kit args")
 	})
+}
+
+func TestParameterizedNetworkPolicyV2DefersValueChecks(t *testing.T) {
+	for _, test := range []struct{ name, entry, host, method, path, want string }{
+		{"bare host", `"${{ kit.args.host }}"`, "*.example.com", "GET", "/v1/**", ""},
+		{"hosts only", `{hosts: ["${{ kit.args.host }}"]}`, "*.example.com", "GET", "/v1/**", ""},
+		{"bounded entry", `{hosts: ["${{ kit.args.host }}"], methods: ["${{ kit.args.method }}"], paths: ["${{ kit.args.path }}"]}`, "api.example.com", "GET", "/v1/**", ""},
+		{"invalid method", `{hosts: ["${{ kit.args.host }}"], methods: ["${{ kit.args.method }}"]}`, "api.example.com", "get", "/v1/**", "is not an uppercase HTTP method"},
+		{"invalid path", `{hosts: ["${{ kit.args.host }}"], methods: [GET], paths: ["${{ kit.args.path }}"]}`, "api.example.com", "GET", "v1/**", `must start with "/"`},
+		{"bounded wildcard", `{hosts: ["${{ kit.args.host }}"], methods: [GET]}`, "*.example.com", "GET", "/v1/**", "bounds the pattern"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw := []byte(`schemaVersion: "3"
+kind: mixin
+args:
+  host: {required: true}
+  method: {required: true}
+  path: {required: true}
+capabilities:
+  - type: com.docker.sandbox/network-policy@2
+    config:
+      runtime:
+        allow: [` + test.entry + `]
+`)
+			d, err := Decode(raw)
+			require.NoError(t, err)
+			_, err = ValidateRaw(raw, d)
+			require.NoError(t, err)
+			_, err = ValidatePublished(raw, d)
+			require.NoError(t, err)
+
+			values, err := ResolveArgs(d.Args, map[string]string{"host": test.host, "method": test.method, "path": test.path})
+			require.NoError(t, err)
+			effective, err := ExpandCreateArgs(raw, d.Args, values)
+			require.NoError(t, err)
+			d, err = Decode(effective)
+			require.NoError(t, err)
+			_, err = ValidateEffective(effective, d)
+			if test.want != "" {
+				require.ErrorContains(t, err, test.want)
+				return
+			}
+			require.NoError(t, err)
+			policy, err := NetworkPolicyV2Of(d.Capabilities)
+			require.NoError(t, err)
+			require.Len(t, policy.Runtime.Allow, 1)
+			require.Equal(t, []string{test.host}, policy.Runtime.Allow[0].Hosts)
+		})
+	}
 }
 
 // OCIAnnotations projects the descriptor's display metadata onto the

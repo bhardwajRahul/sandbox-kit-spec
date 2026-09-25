@@ -1411,46 +1411,49 @@ func TestCanonicalRequireNormalizesSuccessorUpperBounds(t *testing.T) {
 	require.Equal(t, CanonicalRequire(pinned), CanonicalRequire(open))
 }
 
-// How wide a network entry is comes from which fields it states, and a
-// placeholder hides none of that. Deferring the shape rules let an
-// invalid entry through to a merge that re-encodes it with omitempty,
-// dropping the empty list and publishing the unbounded allow that
-// omission means.
+// Shape checks must run before expansion or merge normalization can
+// discard an invalid entry alongside a valid one.
 func TestAParameterizedPolicyIsHeldToItsShape(t *testing.T) {
-	policy := func(entry string) []byte {
-		return []byte(`schemaVersion: "3"
-kind: workload
-version: "1.0.0"
+	for _, test := range []struct{ name, entries, field, want string }{
+		{"empty methods", `{hosts: ["${{ kit.args.host }}"], methods: []}`, "methods", "empty methods list"},
+		{"null methods", `{hosts: ["${{ kit.args.host }}"], methods: null}`, "methods", "empty methods list"},
+		{"empty paths", `{hosts: ["${{ kit.args.host }}"], paths: []}`, "paths", "empty paths list"},
+		{"empty paths with methods", `{hosts: ["${{ kit.args.host }}"], methods: [GET], paths: []}`, "paths", "empty paths list"},
+		{"null paths", `{hosts: ["${{ kit.args.host }}"], methods: [GET], paths: null}`, "paths", "empty paths list"},
+		{"paths without methods", `{hosts: ["${{ kit.args.host }}"], paths: ["/v1"]}`, "paths", "paths without methods"},
+		{"missing hosts", `{methods: ["${{ kit.args.method }}"]}`, "hosts", "declares no hosts"},
+		{"empty hosts", `{hosts: [], methods: ["${{ kit.args.method }}"]}`, "hosts", "declares no hosts"},
+		{"null hosts", `{hosts: null, methods: ["${{ kit.args.method }}"]}`, "hosts", "declares no hosts"},
+		{"empty host", `{hosts: [""], methods: ["${{ kit.args.method }}"]}`, "hosts", "has an empty host"},
+		{"literal entry beside parameterized entry", `{hosts: [api.example.com], methods: []}, "${{ kit.args.host }}"`, "methods", "empty methods list"},
+	} {
+		for _, phase := range []string{"install", "runtime"} {
+			for _, group := range []string{"allow", "deny"} {
+				t.Run(test.name+"/"+phase+"/"+group, func(t *testing.T) {
+					raw := []byte(fmt.Sprintf(`schemaVersion: "3"
+kind: mixin
 args:
   host:
     default: api.example.com
+  method:
+    default: GET
 capabilities:
-  - type: com.docker.sandbox/network-policy@1
+  - type: com.docker.sandbox/network-policy@2
     config:
-      runtime:
-        allow:
-          - ` + entry + `
-`)
+      %s:
+        %s: [%s]
+`, phase, group, test.entries))
+					d, err := Decode(raw)
+					require.NoError(t, err)
+					_, err = ValidateRaw(raw, d)
+					require.ErrorContains(t, err, test.want)
+					var fieldErr *FieldError
+					require.ErrorAs(t, err, &fieldErr)
+					require.Equal(t, fmt.Sprintf("capabilities[0].config.%s.%s[0].%s", phase, group, test.field), fieldErr.Path)
+					_, err = ValidatePublished(raw, d)
+					require.ErrorContains(t, err, test.want)
+				})
+			}
+		}
 	}
-	refuse := func(entry, want string) {
-		t.Helper()
-		raw := policy(entry)
-		d, err := Decode(raw)
-		require.NoError(t, err)
-		_, err = ValidateRaw(raw, d)
-		require.ErrorContains(t, err, want, "entry %s", entry)
-	}
-
-	refuse(`{hosts: ["${{ kit.args.host }}"], methods: []}`, "empty methods list")
-	refuse(`{hosts: ["${{ kit.args.host }}"], paths: []}`, "empty paths list")
-	refuse(`{hosts: ["${{ kit.args.host }}"], paths: ["/v1"]}`, "paths without methods")
-	refuse(`{hosts: [], methods: ["${{ kit.args.host }}"]}`, "declares no hosts")
-
-	// A parameterized entry that states nothing contradictory still
-	// defers its value checks to expansion.
-	raw := policy(`{hosts: ["${{ kit.args.host }}"], methods: ["${{ kit.args.host }}"]}`)
-	d, err := Decode(raw)
-	require.NoError(t, err)
-	_, err = ValidateRaw(raw, d)
-	require.NoError(t, err, "whether the method is an HTTP verb is not knowable yet")
 }
