@@ -12,7 +12,7 @@ Three things that move together:
 
 | Part | Where | What it is |
 |---|---|---|
-| The specification | `docs/spec/SPEC-v3.md`, `docs/spec/capabilities/`, `docs/spec/conformance.md` | Normative text. Every MUST/SHOULD is anchored and accounted for by a check or a waiver |
+| The specification | `docs/spec/SPEC-v3.md`, `docs/spec/capabilities/`, `docs/spec/conformance.md` | Normative text. In SPEC-v3 and the capability pages every MUST/SHOULD is anchored and accounted for by a check or a waiver; `conformance.md` binds adapters and the suite itself and carries no anchors |
 | The reference implementation | `spec/`, `resolve/`, `assemble/`, `fetch/`, `cmd/frontend/`, `schema/` | Go types and validation (the grammar's source of truth), the resolver, the BuildKit frontend, and the JSON Schema pinned to the Go types |
 | The conformance suites | `tck/`, `cmd/kit-tck/` | `kit-tck validate` judges a published Kit; `kit-tck runtime` judges a runtime through an adapter. `tck/sandbox` also judges the suite itself against a fake adapter |
 
@@ -56,7 +56,7 @@ local run is the same verdict rather than a different one.
 | `task lint` | `golangci-lint` and `markdownlint` with the repo configs (`lint:go`, `lint:md`) | Every change. `lint:md` needs Docker; it runs a digest-pinned image over every `**/*.md` |
 | `task test:unit` | Every Go test except the sandbox conformance suite. Includes decoding and validating every descriptor under `examples/` and the schema-to-spec pins | Every change. Under a minute |
 | `task test:tck` | The sandbox conformance suite against the fake adapter, including every fake-adapter mutation | Any change under `tck/`, `docs/spec/`, or to a capability page. Minutes |
-| `task test` | Everything above in one `go test ./...` | Before opening a pull request |
+| `task test` | `test:unit` and `test:tck` together, as one `go test ./...`. It does not run `validate` or `lint`; those are separate | Before opening a pull request, alongside `validate` and `lint` |
 | `task kit:dev KIT=hello` | Builds the frontend from the current source under a unique tag and builds one example Kit against it | Any change under `cmd/frontend/`. Needs Docker with buildx |
 | `task kits:dev` | The same for every Kit in `KITS` | A frontend change that touches what every descriptor goes through (decoding, staging, export) |
 | `task test:e2e` | Publishes two Kits to a throwaway registry and builds a set over them | A change to set building, `fetch/`, or `assemble/`. Needs Docker; CI does not run it |
