@@ -18,9 +18,10 @@ import (
 func runAgainstFake(t *testing.T, broken string) report.Report {
 	t.Helper()
 	a := adapter.New(filepath.Join("testdata", "fake-adapter"))
-	a.Env = []string{"KIT_TCK_FAKE_STATE=" + t.TempDir()}
-	if broken != "" {
-		a.Env = append(a.Env, "KIT_TCK_FAKE_BROKEN="+broken)
+	a.Env = []string{
+		"KIT_TCK_FAKE_STATE=" + t.TempDir(),
+		"KIT_TCK_FAKE_BROKEN=" + broken,
+		"KIT_TCK_FAKE_CLAIMS=",
 	}
 
 	rep, err := Run(context.Background(), &Env{
@@ -36,12 +37,14 @@ func runAgainstFake(t *testing.T, broken string) report.Report {
 // and pass while everything else skips — not fail because a fixture
 // dragged in a required capability the runtime rightly refused.
 func TestASingleCapabilityRuntimeIsJudgedOnlyOnItsClaim(t *testing.T) {
-	t.Parallel()
+	// Host controls must not turn the conforming fake into a broken one.
+	t.Setenv("KIT_TCK_FAKE_BROKEN", "refuses-everything")
 
 	a := adapter.New(filepath.Join("testdata", "fake-adapter"))
 	a.Env = []string{
 		"KIT_TCK_FAKE_STATE=" + t.TempDir(),
 		"KIT_TCK_FAKE_CLAIMS=com.docker.sandbox/volume@1",
+		"KIT_TCK_FAKE_BROKEN=",
 	}
 
 	rep, err := Run(context.Background(), &Env{Adapter: a, Fixtures: Fixtures(FixtureDir)})
@@ -59,7 +62,6 @@ func TestASingleCapabilityRuntimeIsJudgedOnlyOnItsClaim(t *testing.T) {
 // that type's checks skipped and pass while under-provisioning.
 func TestARequiredUnclaimedTypeMustBeRefused(t *testing.T) {
 	t.Parallel()
-
 	a := adapter.New(filepath.Join("testdata", "fake-adapter"))
 	a.Env = []string{
 		"KIT_TCK_FAKE_STATE=" + t.TempDir(),
@@ -85,7 +87,8 @@ func failedRequirements(rep report.Report) []string {
 }
 
 func TestAConformingRuntimePasses(t *testing.T) {
-	t.Parallel()
+	// An empty mutation must override a broken mode inherited from the host.
+	t.Setenv("KIT_TCK_FAKE_BROKEN", "refuses-everything")
 
 	rep := runAgainstFake(t, "")
 	require.False(t, rep.Failed(), "conforming fake reported failures:\n%s", rep)
@@ -156,12 +159,12 @@ var mutations = map[string][]string{
 }
 
 func TestEachCheckFailsWhenItsBehaviorIsAbsent(t *testing.T) {
-	t.Parallel()
+	// Host claims must not skip the checks these mutations exercise.
+	t.Setenv("KIT_TCK_FAKE_CLAIMS", "com.docker.sandbox/volume@1")
 
 	for broken, requirements := range mutations {
 		t.Run(broken, func(t *testing.T) {
 			t.Parallel()
-
 			rep := runAgainstFake(t, broken)
 			failed := failedRequirements(rep)
 			for _, requirement := range requirements {
@@ -178,7 +181,6 @@ func TestEachCheckFailsWhenItsBehaviorIsAbsent(t *testing.T) {
 // do about capabilities it lacks.
 func TestUnclaimedCapabilitiesAreSkipped(t *testing.T) {
 	t.Parallel()
-
 	rep := runAgainstFake(t, "claims-nothing")
 	require.False(t, rep.Failed(), "unclaimed capabilities must not fail:\n%s", rep)
 
@@ -232,7 +234,6 @@ func TestEveryCheckHasAMutationCase(t *testing.T) {
 // reason but reports it as an error, which must not count.
 func TestAFailingCreateIsNotMistakenForARefusal(t *testing.T) {
 	t.Parallel()
-
 	rep := runAgainstFake(t, "refusal-as-error")
 	require.Contains(t, failedRequirements(rep), "SPEC-v3 §7.3/unknown-required-refused",
 		"a create that fails for unrelated reasons must not count as a refusal:\n%s", rep)
