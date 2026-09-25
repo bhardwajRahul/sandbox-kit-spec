@@ -18,9 +18,10 @@ import (
 func runAgainstFake(t *testing.T, broken string) report.Report {
 	t.Helper()
 	a := adapter.New(filepath.Join("testdata", "fake-adapter"))
-	a.Env = []string{"KIT_TCK_FAKE_STATE=" + t.TempDir()}
-	if broken != "" {
-		a.Env = append(a.Env, "KIT_TCK_FAKE_BROKEN="+broken)
+	a.Env = []string{
+		"KIT_TCK_FAKE_STATE=" + t.TempDir(),
+		"KIT_TCK_FAKE_BROKEN=" + broken,
+		"KIT_TCK_FAKE_CLAIMS=",
 	}
 
 	rep, err := Run(context.Background(), &Env{
@@ -36,10 +37,14 @@ func runAgainstFake(t *testing.T, broken string) report.Report {
 // and pass while everything else skips — not fail because a fixture
 // dragged in a required capability the runtime rightly refused.
 func TestASingleCapabilityRuntimeIsJudgedOnlyOnItsClaim(t *testing.T) {
+	// Host controls must not turn the conforming fake into a broken one.
+	t.Setenv("KIT_TCK_FAKE_BROKEN", "refuses-everything")
+
 	a := adapter.New(filepath.Join("testdata", "fake-adapter"))
 	a.Env = []string{
 		"KIT_TCK_FAKE_STATE=" + t.TempDir(),
 		"KIT_TCK_FAKE_CLAIMS=com.docker.sandbox/volume@1",
+		"KIT_TCK_FAKE_BROKEN=",
 	}
 
 	rep, err := Run(context.Background(), &Env{Adapter: a, Fixtures: Fixtures(FixtureDir)})
@@ -81,6 +86,9 @@ func failedRequirements(rep report.Report) []string {
 }
 
 func TestAConformingRuntimePasses(t *testing.T) {
+	// An empty mutation must override a broken mode inherited from the host.
+	t.Setenv("KIT_TCK_FAKE_BROKEN", "refuses-everything")
+
 	rep := runAgainstFake(t, "")
 	require.False(t, rep.Failed(), "conforming fake reported failures:\n%s", rep)
 }
@@ -150,6 +158,9 @@ var mutations = map[string][]string{
 }
 
 func TestEachCheckFailsWhenItsBehaviorIsAbsent(t *testing.T) {
+	// Host claims must not skip the checks these mutations exercise.
+	t.Setenv("KIT_TCK_FAKE_CLAIMS", "com.docker.sandbox/volume@1")
+
 	for broken, requirements := range mutations {
 		t.Run(broken, func(t *testing.T) {
 			rep := runAgainstFake(t, broken)
