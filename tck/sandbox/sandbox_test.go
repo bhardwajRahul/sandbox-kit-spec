@@ -117,6 +117,19 @@ func TestAConformingRuntimePasses(t *testing.T) {
 // requirement — the two network-policy versions state the same duty about
 // the host lists — and dropping it has to fail every one of them.
 var mutations = map[string][]string{
+	"ignores-git-identity":              {"git-identity@1/global-defaults"},
+	"corrupts-git-identity":             {"git-identity@1/global-defaults"},
+	"late-git-identity":                 {"git-identity@1/before-hooks"},
+	"forces-git-identity":               {"git-identity@1/local-precedence"},
+	"imports-source-git-settings":       {"git-identity@1/identity-only"},
+	"clobbers-guest-git-settings":       {"git-identity@1/identity-only"},
+	"edits-identity-source":             {"git-identity@1/source-unchanged"},
+	"rereads-identity-on-recreate":      {"git-identity@1/pinned-selection"},
+	"loses-git-identity-on-start":       {"git-identity@1/pinned-selection"},
+	"imports-unrequested-identity":      {"git-identity@1/absent-without-grant"},
+	"accepts-missing-identity":          {"git-identity@1/unavailable-refuses-required"},
+	"refuses-optional-identity":         {"git-identity@1/unavailable-refuses-required"},
+	"imports-unavailable-identity":      {"git-identity@1/unavailable-refuses-required"},
 	"ignores-long-running-mixin":        {"long-running@1/survives-session-disconnect"},
 	"stops-on-disconnect":               {"long-running@1/survives-session-disconnect"},
 	"loses-background-on-disconnect":    {"long-running@1/survives-session-disconnect"},
@@ -262,4 +275,17 @@ func TestAFailingCreateIsNotMistakenForARefusal(t *testing.T) {
 	rep := runAgainstFake(t, "refusal-as-error")
 	require.Contains(t, failedRequirements(rep), "SPEC-v3 §7.3/unknown-required-refused",
 		"a create that fails for unrelated reasons must not count as a refusal:\n%s", rep)
+}
+
+func TestGitIdentityNeedsNoHelperCapabilities(t *testing.T) {
+	a := adapter.New(filepath.Join("testdata", "fake-adapter"))
+	a.Env = []string{"KIT_TCK_FAKE_STATE=" + t.TempDir(), "KIT_TCK_FAKE_CLAIMS=" + capGitIdentity, "KIT_TCK_FAKE_BROKEN="}
+	rep, err := Run(context.Background(), &Env{Adapter: a, Fixtures: Fixtures(FixtureDir)})
+	require.NoError(t, err)
+	require.False(t, rep.Failed(), "git-identity alone must be testable:\n%s", rep)
+	for _, f := range rep.Findings {
+		if f.Requirement != "git-identity@1/before-hooks" {
+			require.NotContains(t, f.Requirement, "git-identity@1", "%s", f)
+		}
+	}
 }

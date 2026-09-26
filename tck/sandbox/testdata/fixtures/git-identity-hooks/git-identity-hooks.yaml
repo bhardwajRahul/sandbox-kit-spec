@@ -1,0 +1,14 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+displayName: Git identity hook timing
+description: Records the workload user's global identity during install and startup
+capabilities:
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      install:
+        - command: sh -c 'kit-tck-git-identity defaults > /home/agent/git-identity-install'
+          user: agent
+      startup:
+        - command: sh -c 'kit-tck-git-identity defaults > /home/agent/git-identity-startup'
+          user: agent

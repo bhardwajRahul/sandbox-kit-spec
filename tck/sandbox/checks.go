@@ -125,7 +125,7 @@ func installPhaseScoped(fixture string) func(context.Context, *Env) []report.Fin
 	}
 }
 
-var checks = []check{
+var checks = append(gitIdentityChecks, []check{
 	{requirement: "long-running@1/survives-session-disconnect", capability: capLongRunning, run: survivesSessionDisconnect},
 	{requirement: "long-running@1/explicit-stop-honored", capability: capLongRunning, run: longRunningStop},
 	{requirement: "conformance.md §2.2/optional-long-running-accepted", run: optionalLongRunning},
@@ -184,6 +184,7 @@ var checks = []check{
 			}{
 				{capability: capSbx, fixture: fixtureSbxWorkload, alone: true},
 				{capability: capLongRunning, fixture: fixtureLongRunning},
+				{capability: capGitIdentity, fixture: fixtureGitIdentity},
 				{capLifecycle, fixtureHooks, false},
 				{capNetworkPolicy, fixtureEgress, false},
 				{capNetworkPolicyV2, fixtureHTTPEgress, false},
@@ -831,7 +832,7 @@ var checks = []check{
 			return nil
 		},
 	},
-}
+}...)
 
 // envVars parses `env` output into a name-to-value map.
 func envVars(environ string) map[string]string {

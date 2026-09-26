@@ -422,6 +422,7 @@ var needType = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?/[a-z0-9]([a-z
 // once per thing requested and dedup on their own key; unknown types
 // dedup on the exact request (type + config).
 var singletonCapabilities = map[string]bool{
+	CapabilityGitIdentity:     true,
 	CapabilityNetworkPolicy:   true,
 	CapabilityNetworkPolicyV2: true,
 	CapabilityResources:       true,
@@ -447,6 +448,7 @@ func argvContains(argv []string, sub string) bool {
 
 // configlessCapabilities take no config at all: present or absent.
 var configlessCapabilities = map[string]bool{
+	CapabilityGitIdentity: true,
 	CapabilityPrivileged:  true,
 	CapabilityKitRegistry: true,
 	CapabilitySbx:         true,

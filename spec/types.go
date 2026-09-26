@@ -330,6 +330,9 @@ const (
 	// one bounds the other.
 	CapabilityNetworkPolicyV2 = "com.docker.sandbox/network-policy@2"
 
+	// CapabilityGitIdentity shares runtime-provided Git attribution, not credentials.
+	CapabilityGitIdentity = "com.docker.sandbox/git-identity@1"
+
 	// CapabilityCredential is one service the workload authenticates to;
 	// config decodes to Credential. Instance-shaped, keyed by
 	// (service, phase).

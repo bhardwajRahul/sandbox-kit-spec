@@ -12,7 +12,7 @@ broken="${KIT_TCK_FAKE_BROKEN:-}"
 # suite narrows it, nothing when broken that way. The refusal duty below
 # is always keyed off this same list, because claiming and refusing are
 # two sides of one statement.
-default_claims="com.docker.sandbox/long-running@1,com.docker.sandbox/sbx@1,com.docker.sandbox/lifecycle@1,com.docker.sandbox/network-policy@1,com.docker.sandbox/network-policy@2,com.docker.sandbox/credential@1,com.docker.sandbox/agent-context@1,com.docker.sandbox/volume@1,com.docker.sandbox/resources@1,com.docker.sandbox/privileged@1,com.docker.sandbox/agent-skills@1"
+default_claims="com.docker.sandbox/git-identity@1,com.docker.sandbox/long-running@1,com.docker.sandbox/sbx@1,com.docker.sandbox/lifecycle@1,com.docker.sandbox/network-policy@1,com.docker.sandbox/network-policy@2,com.docker.sandbox/credential@1,com.docker.sandbox/agent-context@1,com.docker.sandbox/volume@1,com.docker.sandbox/resources@1,com.docker.sandbox/privileged@1,com.docker.sandbox/agent-skills@1"
 claims="${KIT_TCK_FAKE_CLAIMS:-$default_claims}"
 if [ "$broken" = "claims-nothing" ]; then claims=""; fi
 verb="${1:-}"
@@ -27,10 +27,15 @@ create)
   kits=()
   greeting=""
   hostmode="readwrite"
+  identity_config=""
   while [ $# -gt 0 ]; do
     case "$1" in
     --arg)
       case "$2" in greeting=*) greeting="${2#greeting=}" ;; esac
+      shift 2
+      ;;
+    --git-identity-config)
+      identity_config="$2"
       shift 2
       ;;
     --skills-host-mode)
@@ -83,6 +88,9 @@ create)
     for kit in "${kits[@]}"; do
       need=""
       case "$kit" in
+      *git-identity-optional*) ;;
+      *git-identity-hooks*) need="com.docker.sandbox/lifecycle@1" ;;
+      *git-identity*) need="com.docker.sandbox/git-identity@1" ;;
       *long-running-optional*)
         if [ "$broken" = "refuses-optional-long-running" ]; then exit 2; fi
         ;;
@@ -124,10 +132,43 @@ create)
     exit 1
   fi
 
+  identity_required=""
+  identity_requested=""
+  for kit in "${kits[@]}"; do
+    case "$kit" in
+    */git-identity) identity_required=1; identity_requested=1 ;;
+    */git-identity-optional) identity_requested=1 ;;
+    esac
+  done
+  identity_name=""
+  identity_email=""
+  if [ -n "$identity_config" ] && [ "$identity_config" != off ]; then
+    identity_name=$(git config --file "$identity_config" --get user.name || true)
+    identity_email=$(git config --file "$identity_config" --get user.email || true)
+  fi
+  if [ -n "$identity_requested" ] && { [ -z "$identity_name" ] || [ -z "$identity_email" ]; }; then
+    if [ -n "$identity_required" ] && [ "$broken" != accepts-missing-identity ]; then
+      echo "refusing: Git identity unavailable" >&2
+      exit 2
+    fi
+    if [ -z "$identity_required" ] && [ "$broken" = refuses-optional-identity ]; then exit 2; fi
+    if [ "$broken" != imports-unavailable-identity ]; then identity_requested=""; fi
+  fi
+
   id="sbx-$$-${RANDOM}"
   dir="$state/$id"
   mkdir -p "$dir"
   echo running >"$dir/status"
+  printf '%s\n' 'Image Author' image@example.invalid >"$dir/git-identity"
+  if [ -n "$identity_requested" ] || [ "$broken" = imports-unrequested-identity ]; then
+    if [ "$broken" != ignores-git-identity ]; then
+      printf '%s\n%s\n' "$identity_name" "$identity_email" >"$dir/git-identity"
+    fi
+    if [ "$broken" = corrupts-git-identity ]; then echo wrong >"$dir/git-identity"; fi
+  fi
+  if [ -n "$identity_config" ] && [ "$identity_config" != off ]; then printf '%s' "$identity_config" >"$dir/git-source"; fi
+  cat "$dir/git-identity" "$dir/git-identity" >"$dir/git-hooks"
+  if [ "$broken" = late-git-identity ]; then echo missing >"$dir/git-hooks"; fi
   for kit in "${kits[@]}"; do
     if [[ "$kit" == */long-running ]]; then : >"$dir/long-running-mixin"; fi
   done
@@ -270,6 +311,28 @@ exec)
   [ "${1:-}" = "--" ] && shift
   dir="$state/$id"
   case "${1:-}" in
+  kit-tck-git-identity)
+    case "$2" in
+    defaults) cat "$dir/git-identity" ;;
+    hooks) cat "$dir/git-hooks" ;;
+    absent)
+      test "$(head -1 "$dir/git-identity")" = 'Image Author'
+      test "$(tail -1 "$dir/git-identity")" = image@example.invalid
+      echo absent ;;
+    only)
+      if [ "$broken" = imports-source-git-settings ] || [ "$broken" = clobbers-guest-git-settings ]; then exit 1; fi
+      echo only ;;
+    local)
+      if [ "$broken" = forces-git-identity ]; then exit 1; fi
+      echo local ;;
+    edit)
+      if [ "$broken" = edits-identity-source ] && [ -f "$dir/git-source" ]; then
+        echo changed >>"$(cat "$dir/git-source")"
+      fi
+      echo attempted ;;
+    *) exit 1 ;;
+    esac
+    ;;
   kit-tck-background)
     if [ "$2" = start ]; then echo original >"$dir/background"; fi
     if [ ! -f "$dir/background" ]; then echo "background process is gone" >&2; exit 1; fi
@@ -570,6 +633,10 @@ stop)
   ;;
 
 recreate)
+  if [ "$broken" = rereads-identity-on-recreate ] && [ -f "$state/$1/git-source" ]; then
+    git config --file "$(cat "$state/$1/git-source")" --get user.name >"$state/$1/git-identity"
+    git config --file "$(cat "$state/$1/git-source")" --get user.email >>"$state/$1/git-identity"
+  fi
   # A fresh container: the writable layer goes, declared volumes stay.
   dir="$state/$1"
   if [ "$broken" != "keeps-writable-layer" ]; then rm -f "$dir/scratch"; fi
@@ -578,6 +645,7 @@ recreate)
 
 start)
   dir="$state/$1"
+  if [ "$broken" = loses-git-identity-on-start ]; then echo missing >"$dir/git-identity"; fi
   echo running >"$dir/status"
   if [ "$broken" = "loses-volume-on-restart" ]; then rm -rf "$dir/volume" && mkdir -p "$dir/volume"; fi
   if [ "$broken" != "no-startup" ]; then

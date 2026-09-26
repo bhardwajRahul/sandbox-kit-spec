@@ -28,6 +28,8 @@ var anchorPattern = regexp.MustCompile(`<!-- tck: (.+?) -->`)
 // judges several statements, and one statement is often judged from
 // several angles.
 var covers = map[string][]string{
+	"git-identity@1/global-defaults":              {"git-identity@1/runtime-provided"},
+	"git-identity@1/unavailable-refuses-required": {"git-identity@1/runtime-provided"},
 	// Reading the staged body behind the profile's reference judges what
 	// the profile is; full progressive semantics are waived until a
 	// fixture can observe them.
@@ -88,6 +90,7 @@ var kitCovers = map[string][]string{
 	// set that was never merged describes layers it does not have.
 	"descriptor-valid": {
 		"long-running@1/no-config",
+		"git-identity@1/no-config",
 		"SPEC-v3 §9.2/versioned-provides",
 		"SPEC-v3 §3.4/set-kind-never-published",
 	},

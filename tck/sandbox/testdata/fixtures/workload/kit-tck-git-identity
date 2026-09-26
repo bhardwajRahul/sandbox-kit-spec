@@ -1,0 +1,41 @@
+#!/bin/sh
+set -eu
+case "${1:?probe mode required}" in
+defaults)
+  git config --global --get user.name
+  git config --global --get user.email
+  ;;
+absent)
+  test "$(git config --global --get user.name)" = 'Image Author'
+  test "$(git config --global --get user.email)" = image@example.invalid
+  echo absent
+  ;;
+only)
+  test "$(git config --global --get alias.kit-tck-guest)" = status
+  for key in alias.kit-tck-source credential.helper http.extraHeader core.hooksPath; do
+    if git config --global --get "$key"; then exit 1; else test "$?" = 1; fi
+  done
+  echo only
+  ;;
+hooks)
+  cat /home/agent/git-identity-install /home/agent/git-identity-startup
+  ;;
+local)
+  dir=$(mktemp -d)
+  trap 'rm -rf "$dir"' EXIT
+  git -C "$dir" init -q
+  git -C "$dir" config user.name 'Local Author'
+  git -C "$dir" config user.email local@example.invalid
+  git -C "$dir" -c commit.gpgsign=false commit -q --allow-empty -m test
+  test "$(git -C "$dir" log -1 --format='%an <%ae>|%cn <%ce>')" = 'Local Author <local@example.invalid>|Local Author <local@example.invalid>'
+  echo local
+  ;;
+edit)
+  # Read-only sandbox defaults may refuse edits; either way the source
+  # binding must remain unchanged. The suite checks reachability first.
+  git config --global user.name 'Guest Changed' || :
+  git config --global user.email guest-changed@example.invalid || :
+  echo attempted
+  ;;
+*) exit 1 ;;
+esac

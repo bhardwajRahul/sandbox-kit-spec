@@ -1,0 +1,8 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+displayName: Git identity
+description: Requests runtime-provided Git attribution without importing unrelated configuration
+capabilities:
+  - type: com.docker.sandbox/git-identity@1
+    optional: true

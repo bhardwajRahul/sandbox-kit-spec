@@ -1,0 +1,6 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "com.docker.sandbox/git-identity@1",
+  "description": "Runtime-provided Git name and email. Config-less: the kit cannot choose sources or identity values.",
+  "not": {}
+}
