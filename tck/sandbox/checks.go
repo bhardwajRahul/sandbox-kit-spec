@@ -749,11 +749,12 @@ var checks = []check{
 			// The requirement covers hooks too, and a runtime can exec as
 			// one identity while running its own hooks as another. Only
 			// where the host claims lifecycle: without it there are no
-			// hooks to observe.
+			// hooks to observe. restricted-env is the fixture whose hook
+			// records the environment it was given.
 			if !e.claims(capLifecycle) {
 				return findings
 			}
-			hookID, hookCleanup, err := e.sandbox(ctx, []string{fixtureSbxWorkload, fixtureHooks}, nil)
+			hookID, hookCleanup, err := e.sandbox(ctx, []string{fixtureSbxWorkload, fixtureRestrictedEnv}, nil)
 			if err != nil {
 				return append(findings, report.Failf("create with hooks: %v", err))
 			}

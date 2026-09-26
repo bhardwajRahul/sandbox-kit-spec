@@ -177,6 +177,14 @@ create)
       done
     fi
   } >"$dir/hook.env"
+  # Only a composed kit whose hook records its environment produces the
+  # file, as on a real runtime: a check reading it from any other
+  # composition must fail here too, not only against real runtimes.
+  records_env=
+  for kit in "${kits[@]}"; do
+    if [[ "$kit" == *restricted-env* || "$kit" == *credential-inject-only-install* ]]; then records_env=1; fi
+  done
+  if [ -z "$records_env" ]; then rm -f "$dir/hook.env"; fi
   if [ "$broken" = "ignores-files" ]; then printf '%s' "" >"$dir/kit-written"; else printf '%s' "$greeting" >"$dir/kit-written"; fi
   mkdir -p "$dir/volume"
   if [ "$hostmode" = "readonly" ]; then : >"$dir/host-skills-readonly"; fi
