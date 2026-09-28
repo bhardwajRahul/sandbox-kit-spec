@@ -253,6 +253,10 @@ type Capability struct {
 	// "com.docker.sandbox/network-policy@1".
 	Type string `json:"type" yaml:"type"`
 
+	// Name is a display label, not identity: duplicate labels are allowed
+	// and renaming a request changes neither its grants nor its merge key.
+	Name string `json:"name,omitempty" yaml:"name,omitempty"`
+
 	// Optional marks a capability the kit degrades gracefully without:
 	// an unknown or unprovided optional capability is skipped and recorded,
 	// while a required one fails resolution closed. For credentials this
@@ -289,6 +293,11 @@ func (c *Capability) UnmarshalYAML(unmarshal func(any) error) error {
 	if err := unmarshal(&keys); err != nil {
 		return err
 	}
+	// YAML coerces numbers and booleans into Go strings and accepts null.
+	// Match the schema's string-only label instead of silently renaming it.
+	if name, ok := keys["name"]; ok && name.ShortTag() != "!!str" {
+		return fmt.Errorf("capability name must be a string")
+	}
 	_, c.configSet = keys["config"]
 	return nil
 }
@@ -306,6 +315,9 @@ func (c *Capability) UnmarshalJSON(data []byte) error {
 	var keys map[string]json.RawMessage
 	if err := json.Unmarshal(data, &keys); err != nil {
 		return err
+	}
+	if name, ok := keys["name"]; ok && bytes.Equal(bytes.TrimSpace(name), []byte("null")) {
+		return fmt.Errorf("capability name must be a string")
 	}
 	_, c.configSet = keys["config"]
 	return nil
@@ -659,6 +671,7 @@ type AgentSkills struct {
 type AgentSkillsCapability struct {
 	AgentSkills
 	Optional    bool
+	Name        string
 	Description string
 }
 

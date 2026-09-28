@@ -156,6 +156,8 @@ func TestSchemaMatchesSpecConstants(t *testing.T) {
 	// The need type pattern is the same expression validateCapabilityEntries compiles.
 	needTypePattern := at(t, defs, "capability", "properties", "type")["pattern"].(string)
 	require.Equal(t, needType.String(), needTypePattern)
+	require.Equal(t, "string", at(t, defs, "capability", "properties", "name")["type"])
+	require.NotContains(t, at(t, defs, "capability")["required"], "name")
 
 	// Field-shape regexes in the per-type schemas match the validator's.
 	// Patterned fields that an authored descriptor may parameterize with

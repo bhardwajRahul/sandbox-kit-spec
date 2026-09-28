@@ -238,6 +238,10 @@
           "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?/[a-z0-9]([a-z0-9-]*[a-z0-9])?@[1-9][0-9]*$",
           "description": "<namespace>/<name>@<config-schema-version>. The namespace admits host-specific capability types; the version moves when the type's config schema does."
         },
+        "name": {
+          "type": "string",
+          "description": "Optional human-readable display label. Spaces and duplicate names are allowed; the label does not change identity, merging, or permissions."
+        },
         "optional": {
           "type": "boolean",
           "description": "An unknown or unprovided optional need is skipped and recorded; a required one fails resolution closed. For credentials this subsumes the older per-credential required flag."

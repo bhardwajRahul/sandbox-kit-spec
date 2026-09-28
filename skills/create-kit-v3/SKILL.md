@@ -111,6 +111,12 @@ silently absent.
 
 ## Capabilities
 
+Use an optional entry-level `name` for a short display label and
+`description` for its explanation. Names may contain spaces and need
+not be unique; they do not change identity, permissions, or merge keys.
+When entries merge, the first nonempty label in contribution order wins.
+This label is separate from config fields such as `apiKey.name`.
+
 A capability is a typed request the host answers. `optional: true` means the
 kit degrades without it; the default is required, which fails resolution
 closed. Read the page for each type you emit — each is normative for its config
