@@ -419,6 +419,7 @@ type capabilityMerge struct {
 
 type networkAsk struct {
 	reference string
+	name      string
 	v2        bool
 	policy    *PhasedNetworkV2
 	optional  bool
@@ -426,12 +427,14 @@ type networkAsk struct {
 
 type lifecycleAsk struct {
 	reference string
+	name      string
 	lifecycle *Lifecycle
 	optional  bool
 }
 
 type contextAsk struct {
 	reference string
+	name      string
 	context   *AgentContext
 	optional  bool
 }
@@ -445,6 +448,7 @@ func (m *capabilityMerge) add(reference string, n Capability) error {
 		}
 		m.network = append(m.network, networkAsk{
 			reference: reference,
+			name:      n.Name,
 			v2:        n.Type == CapabilityNetworkPolicyV2,
 			policy:    p,
 			optional:  n.Optional,
@@ -456,7 +460,7 @@ func (m *capabilityMerge) add(reference string, n Capability) error {
 		if err := decodeForMerge(reference, n, &l); err != nil {
 			return err
 		}
-		m.lifecycle = append(m.lifecycle, lifecycleAsk{reference: reference, lifecycle: &l, optional: n.Optional})
+		m.lifecycle = append(m.lifecycle, lifecycleAsk{reference: reference, name: n.Name, lifecycle: &l, optional: n.Optional})
 		return nil
 
 	case CapabilityAgentContext:
@@ -464,7 +468,7 @@ func (m *capabilityMerge) add(reference string, n Capability) error {
 		if err := decodeForMerge(reference, n, &a); err != nil {
 			return err
 		}
-		m.context = append(m.context, contextAsk{reference: reference, context: &a, optional: n.Optional})
+		m.context = append(m.context, contextAsk{reference: reference, name: n.Name, context: &a, optional: n.Optional})
 		return nil
 
 	case CapabilityResources:
@@ -503,6 +507,10 @@ func (m *capabilityMerge) add(reference string, n Capability) error {
 			prev.reference, reference, describeCapability(n))
 	}
 	// Identical asks collapse, and the stricter optionality wins.
+	if prev.capability.Name == "" {
+		prev.capability.Name = n.Name
+		m.byKey[key] = prev
+	}
 	if !n.Optional {
 		m.optional[key] = false
 	}
@@ -517,6 +525,9 @@ func mergeSole(slot **keyed, reference string, n Capability, label string) error
 		return nil
 	}
 	if sameRequest((*slot).capability, n) {
+		if (*slot).capability.Name == "" {
+			(*slot).capability.Name = n.Name
+		}
 		if !n.Optional {
 			(*slot).capability.Optional = false
 		}
@@ -683,11 +694,15 @@ func (m *capabilityMerge) mergedNetwork() (*Capability, error) {
 		return nil, nil
 	}
 	v2 := false
+	name := ""
 	// Required wins, as it does for every other merged entry: optional
 	// says its asker degrades without the grant, and one that does not
 	// degrade decides for the whole.
 	optional := true
 	for _, ask := range m.network {
+		if name == "" {
+			name = ask.name
+		}
 		if ask.v2 {
 			v2 = true
 		}
@@ -720,6 +735,7 @@ func (m *capabilityMerge) mergedNetwork() (*Capability, error) {
 		return nil, err
 	}
 	c.Optional = optional
+	c.Name = name
 	return c, nil
 }
 
@@ -839,8 +855,12 @@ func (m *capabilityMerge) mergedLifecycle() (*Capability, error) {
 	}
 	merged := &Lifecycle{}
 	interactiveFrom := ""
+	name := ""
 	optional := true
 	for _, ask := range m.lifecycle {
+		if name == "" {
+			name = ask.name
+		}
 		merged.Install = append(merged.Install, ask.lifecycle.Install...)
 		merged.Startup = append(merged.Startup, ask.lifecycle.Startup...)
 		merged.Files = append(merged.Files, ask.lifecycle.Files...)
@@ -887,6 +907,7 @@ func (m *capabilityMerge) mergedLifecycle() (*Capability, error) {
 		return nil, err
 	}
 	c.Optional = optional
+	c.Name = name
 	return c, nil
 }
 
@@ -900,9 +921,13 @@ func (m *capabilityMerge) mergedContext(opts MergeOptions) (*Capability, []Conte
 
 	merged := &AgentContext{}
 	filenameFrom := ""
+	name := ""
 	optional := true
 	var sources []ContextSource
 	for _, ask := range m.context {
+		if name == "" {
+			name = ask.name
+		}
 		if ask.context.Filename != "" {
 			// Only a workload states the profile, and a composition has
 			// one workload, so two is a set that was mis-assembled
@@ -942,6 +967,7 @@ func (m *capabilityMerge) mergedContext(opts MergeOptions) (*Capability, []Conte
 		return nil, nil, err
 	}
 	c.Optional = optional
+	c.Name = name
 	return c, sources, nil
 }
 

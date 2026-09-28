@@ -52,9 +52,10 @@ capabilities:
       contentFile: ./gh-context.md
 ```
 
-Note what is *absent*: no name, no image reference, no entrypoint, no env.
-A Kit's identity is the reference you consume it by, and its runtime
-contract is the image config — where images already keep those things.
+Note what is *absent*: no top-level identity name, no image reference, no
+entrypoint, no env. A Kit's identity is the reference you consume it by,
+and its runtime contract is the image config — where images already keep
+those things. Capability-entry names are display labels, not Kit identity.
 `provides` states matchable identity, which is a different question from
 "what is this file called".
 

@@ -38,12 +38,14 @@ There are exactly two kinds of Kit, distinguished by the `kind:` field:
 | **`workload`** | A root filesystem; the image config carries entrypoint, cmd, env, user, workdir. | Exactly one |
 | **`mixin`** | An overlay that lands on a workload's filesystem. May be declaration-only (a single descriptor-file layer). | Zero or more |
 
-A descriptor deliberately carries **no name, no image reference, and no
-runtime config**: identity is the reference a Kit is consumed by, matchable
-identity is what [`provides`](#5-provides-requires-integrates-conflicts)
-states, and runtime config lives in the image config where images already
-carry it. A `version:` field exists only as a fallback for consumption
-references that carry no version of their own ([§4](#4-top-level-fields)).
+A descriptor deliberately carries **no top-level identity name, image
+reference, or runtime config**: identity is the reference a Kit is consumed
+by, matchable identity is what
+[`provides`](#5-provides-requires-integrates-conflicts) states, and runtime
+config lives in the image config where images already carry it.
+Capability-entry names are display labels, not Kit identity. A `version:`
+field exists only as a fallback for consumption references that carry no
+version of their own ([§4](#4-top-level-fields)).
 
 ### 1.1 Descriptor and content
 
@@ -477,6 +479,7 @@ whole ask through one mechanism or refuses the parts it does not know.
 ```yaml
 capabilities:
   - type: com.docker.sandbox/credential@1    # REQUIRED: <namespace>/<name>@<version>
+    name: GitHub access                      # optional display label
     optional: true                           # default false
     description: GitHub API access           # shown wherever the request is listed
     config:                                  # type-specific payload
@@ -487,9 +490,27 @@ capabilities:
 | Field | Type | Rules |
 |---|---|---|
 | `type` | string | REQUIRED. `<namespace>/<name>@<version>`: dotted lowercase namespace, hyphenated lowercase name, integer config-schema version. The version moves when the type's config schema does — capability types evolve without a descriptor schema-major bump. |
+| `name` | string | optional. Human-readable display label; spaces and duplicate names are allowed. |
 | `optional` | bool | The Kit degrades gracefully without it: an unknown or unprovidable optional entry is skipped and recorded; a required one fails resolution closed. |
 | `config` | map | Type-specific request payload. Strictly decoded for well-known types (unknown config keys are errors); carried opaquely for unknown types. |
 | `description` | string | optional. |
+
+A capability's `name` labels the request; `description` explains it.
+Neither is an identifier. The name is separate from names inside config,
+such as `credential@1`'s `apiKey.name`, which names an environment variable.
+A runtime MAY use the label in selection UIs and derive one from the type
+and instance key when the label is absent or empty.
+
+Names **MUST NOT** affect capability identity, arity, merge compatibility, <!-- tck: SPEC-v3 §7/name-display-only -->
+permission surface, or execution behavior. Changing only a name does not
+widen permissions.
+
+Names **MUST NOT** be the sole identifier in selection <!-- tck: SPEC-v3 §7/name-not-identity -->
+records or diagnostics; the source Kit and descriptor location distinguish
+requests with the same label.
+
+A stated name **MUST** be a string and survive descriptor decoding and <!-- tck: SPEC-v3 §7/name-round-trip -->
+serialization. An empty string is equivalent to an omitted label.
 
 ### 7.1 Arity
 
@@ -736,6 +757,7 @@ error. In that order they reconcile into one descriptor:
 | `agent-context@1` | At most one of them states `filename`. The bodies concatenate into one staged file, since the type is a singleton and a sandbox surfaces one profile. |
 | Config-less and unknown types | Presence is the union; unknown types deduplicate on type plus config, as the permission surface does. |
 | `optional` | An entry any of them requires is required in the merged kit: `optional` says its asker degrades without it, and one that does not degrade decides for the set. |
+| Capability `name` | When contributions merge into one entry, the first nonempty name in contribution order **MUST** be retained. Labels do not prevent merging. | <!-- tck: SPEC-v3 §9.5/capability-name-first -->
 
 A merged descriptor **MUST** be identical across every platform a <!-- tck: SPEC-v3 §9.5/declarations-platform-independent -->
 multi-platform set builds for: the annotation is written once per
@@ -876,7 +898,7 @@ locked set and an assembler emits an ordinary image — config synthesized
 from the merged declarations, layers concatenated in dependency order —
 identified by the lock, which is what makes recreate exact. Local handles,
 state keying, and lock formats are runtime concerns outside this
-specification; the artifact carries no name on purpose.
+specification; the descriptor carries no top-level identity name on purpose.
 
 ---
 

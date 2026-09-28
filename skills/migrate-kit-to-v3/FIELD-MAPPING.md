@@ -36,7 +36,9 @@ agentInstructions             →  capability agent-context@1
 
 Every key in v3 is `lowerCamelCase` with acronyms title-cased: `sourceUrl`,
 `apiKey`, `iconUrl`. Decoding is strict — an unrecognized key anywhere is an
-error, which is why a v2 `name:` left in place fails rather than being ignored.
+error, which is why a v2 top-level `name:` left in place fails rather than
+being ignored. An optional `name` on a capability entry is a display label,
+not the removed Kit identity field.
 
 ### Fields the v2 kit may never have written
 
@@ -231,6 +233,12 @@ Three things to keep straight:
   must be present on every base for the kit to work, not what the hooks invoke.
 
 ## Capabilities
+
+Entries may carry an optional human-readable `name` alongside their
+`description`. Spaces and duplicate labels are allowed. Names do not
+change identity or permissions; merging retains the first nonempty
+label in contribution order. This field is distinct from names inside
+config, such as a credential's `apiKey.name` environment variable.
 
 Each entry is a typed request the host answers. `optional: true` means the kit
 degrades gracefully without it; the default is required, which fails resolution
