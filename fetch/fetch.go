@@ -337,9 +337,14 @@ func mergeKits(kits []*Kit, args []map[string]string, partial bool, opts ...Reso
 		}
 		for _, records := range [][]spec.SelectionRecord{selected.Selected, selected.Skipped} {
 			for j := range records {
-				if records[j].Source == nil {
-					records[j].Source = &spec.CapabilitySource{Kit: u.Reference, Path: records[j].Path}
+				source := spec.CapabilitySource{Path: records[j].Path}
+				if records[j].Source != nil {
+					source = *records[j].Source
 				}
+				if source.Kit == "" {
+					source.Kit = u.Reference
+				}
+				records[j].Source = &source
 				for k := range records[j].MemberSources {
 					if records[j].MemberSources[k].Kit == "" {
 						records[j].MemberSources[k].Kit = u.Reference

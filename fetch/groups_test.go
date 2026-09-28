@@ -93,3 +93,43 @@ func TestResolveValidatesSkippedMembersAfterExpansion(t *testing.T) {
 	_, err = client.ResolvePartial(t.Context(), []Request{{Reference: reg.ref("kits/group", "1.0.0"), Args: map[string]string{"port": "70000"}}}, WithCapabilitySelector(func(spec.Capability) bool { t.Fatal("invalid member reached selection"); return false }))
 	require.ErrorContains(t, err, "capabilities[0].group.capabilities[0]")
 }
+
+func TestResolveCompletesSelectionSourcesWithoutMutatingDeclarations(t *testing.T) {
+	for _, grouped := range []bool{false, true} {
+		for _, accept := range []bool{false, true} {
+			for _, sourceKit := range []string{"", "original-publisher"} {
+				t.Run(fmt.Sprintf("group=%t/accept=%t/source=%s", grouped, accept, sourceKit), func(t *testing.T) {
+					reg := newRegistry(t)
+					entry := spec.Capability{Type: spec.CapabilityVolume, Config: map[string]any{"path": "/cache"}}
+					if grouped {
+						entry = spec.Capability{Group: &spec.CapabilityGroup{Optional: true, Capabilities: []spec.Capability{entry}}}
+					} else {
+						entry.Optional = true
+					}
+					entry.Source = &spec.CapabilitySource{Kit: sourceKit, Path: "capabilities[7]"}
+					d := &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindMixin, Capabilities: []spec.Capability{entry}}
+					reg.tag("kits/source", "1.0.0", reg.image(t, kitJSON(t, d)))
+					client, err := New()
+					require.NoError(t, err)
+					ref := reg.ref("kits/source", "1.0.0")
+					result, err := client.ResolvePartial(t.Context(), reqs(ref), WithCapabilitySelector(func(spec.Capability) bool { return accept }))
+					require.NoError(t, err)
+					selection := result.Selections[0]
+					records := selection.Selection.Skipped
+					if accept {
+						records = selection.Selection.Selected
+					}
+					require.Len(t, records, 1)
+					wantKit := sourceKit
+					if wantKit == "" {
+						wantKit = ref
+					}
+					require.Equal(t, &spec.CapabilitySource{Kit: wantKit, Path: "capabilities[7]"}, records[0].Source)
+					original := selection.Original.Capabilities[0].Source
+					require.Equal(t, entry.Source, original)
+					require.NotSame(t, original, records[0].Source)
+				})
+			}
+		}
+	}
+}
