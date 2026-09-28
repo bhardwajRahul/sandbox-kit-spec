@@ -184,6 +184,7 @@ func Build(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 	// filesystem.
 	var guidance []spec.ContextSource
 	if plan == nil {
+		grouped := spec.HasGroups(expanded.Capabilities)
 		for i, entry := range spec.DeclaredCapabilities(expanded.Capabilities) {
 			if entry.Type != spec.CapabilityAgentContext {
 				continue
@@ -195,7 +196,7 @@ func Build(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 			if ac.ContentFile == "" {
 				continue
 			}
-			if stagedGuidanceCollides(ac.ContentFile) {
+			if !grouped && stagedGuidanceCollides(ac.ContentFile) {
 				return nil, fmt.Errorf("agent-context contentFile %s stages as %s, which is reserved for staged sources", ac.ContentFile, path.Base(ac.ContentFile))
 			}
 			body, err := readContextFile(ctx, c, strings.TrimPrefix(ac.ContentFile, "./"))
@@ -203,7 +204,7 @@ func Build(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 				return nil, fmt.Errorf("agent-context contentFile %s: %w", ac.ContentFile, err)
 			}
 			target := path.Join(stagedKitRoot, stem, path.Base(ac.ContentFile))
-			if spec.HasGroups(expanded.Capabilities) {
+			if grouped {
 				target = path.Join(stagedKitRoot, stem, fmt.Sprintf("context-%d", i), path.Base(ac.ContentFile))
 			}
 			published, err = rewriteContentFile(published, ac.ContentFile, target)
