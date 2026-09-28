@@ -37,6 +37,14 @@ type Surface struct {
 	CredentialsInstall []string `json:"credentialsInstall,omitempty"`
 	CredentialsRuntime []string `json:"credentialsRuntime,omitempty"`
 
+	// SSHAgent holds what the SSH agent may sign, per phase: "<phase>"
+	// for an unbounded grant, "<phase> sign <namespace>" and "<phase>
+	// authenticate <[user@]host>" for a bounded one. Kept apart from
+	// credentials because the agent grants more than one service: an
+	// unbounded grant signs with every key it holds, for anything the
+	// sandbox asks.
+	SSHAgent []string `json:"sshAgent,omitempty"`
+
 	StoragePaths []string `json:"storagePaths,omitempty"`
 
 	// SkillsPaths are the in-container paths the host's shared skills
@@ -103,6 +111,13 @@ func SurfaceOf(d *Descriptor) Surface {
 			} else {
 				s.CredentialsRuntime = append(s.CredentialsRuntime, c.Service)
 			}
+		case CapabilitySSHAgent:
+			var a SSHAgent
+			if err := DecodeCapabilityConfig(n, &a); err != nil {
+				s.Services = append(s.Services, capabilitySurfaceEntry(n))
+				continue
+			}
+			s.SSHAgent = append(s.SSHAgent, sshAgentSurface(a)...)
 		case CapabilityAgentSkills:
 			var sk AgentSkills
 			if err := DecodeCapabilityConfig(n, &sk); err != nil {
@@ -160,6 +175,7 @@ func SurfaceOf(d *Descriptor) Surface {
 	}
 	s.CredentialsInstall = normalized(s.CredentialsInstall)
 	s.CredentialsRuntime = normalized(s.CredentialsRuntime)
+	s.SSHAgent = normalized(s.SSHAgent)
 	s.StoragePaths = normalized(s.StoragePaths)
 	s.SkillsPaths = normalized(s.SkillsPaths)
 	s.SkillsWritePaths = normalized(s.SkillsWritePaths)
@@ -287,6 +303,7 @@ func DiffWidenings(granted, candidate Surface) []Widening {
 		granted.NetworkRuntimeHTTPDeny, candidate.NetworkRuntimeHTTPDeny))
 	add("credentials.install", missingFrom(granted.CredentialsInstall, candidate.CredentialsInstall))
 	add("credentials.runtime", missingFrom(granted.CredentialsRuntime, candidate.CredentialsRuntime))
+	add("ssh-agent", sshAgentWidenings(granted.SSHAgent, candidate.SSHAgent))
 	add("storage", missingFrom(granted.StoragePaths, candidate.StoragePaths))
 	add("skills", missingFrom(granted.SkillsPaths, candidate.SkillsPaths))
 	add("skills.write", missingFrom(granted.SkillsWritePaths, candidate.SkillsWritePaths))

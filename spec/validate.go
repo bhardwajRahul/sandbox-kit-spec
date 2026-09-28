@@ -478,6 +478,7 @@ func validateCapabilityEntries(d *Descriptor) error {
 	seenSingleton := map[string]int{}
 	seenExact := map[string]int{}
 	seenCredential := map[string]int{}
+	seenSSHAgent := map[string]int{}
 	seenVolume := map[string]int{}
 	seenSkills := map[string]int{}
 	seenPort := map[string]int{}
@@ -553,6 +554,20 @@ func validateCapabilityEntries(d *Descriptor) error {
 				return fieldErrorf(path+".config.service", "capabilities[%d]: credential for service %q phase %q already declared at capabilities[%d]", i, c.Service, c.Phase, prev)
 			}
 			seenCredential[key] = i
+		case CapabilitySSHAgent:
+			a, err := validateSSHAgentNeed(path, i, n)
+			if err != nil {
+				return err
+			}
+			// One entry per phase: two with different bounds would leave
+			// the reader to guess whether they add up or one narrows the
+			// other. Across kits they merge; within one kit, write one.
+			for _, phase := range a.Phase {
+				if prev, dup := seenSSHAgent[phase]; dup {
+					return fieldErrorf(path+".config.phase", "capabilities[%d]: ssh-agent for phase %q already declared at capabilities[%d]", i, phase, prev)
+				}
+				seenSSHAgent[phase] = i
+			}
 		case CapabilityVolume:
 			var v Volume
 			if err := DecodeCapabilityConfig(n, &v); err != nil {
@@ -878,6 +893,16 @@ func validatePresenceRules(path string, i int, n Capability) error {
 			}
 		}
 		return nil
+	}
+	if n.Type == CapabilitySSHAgent {
+		if err := validateSSHAgentNulls(path, i, n); err != nil {
+			return err
+		}
+		var a SSHAgent
+		if err := DecodeCapabilityConfig(n, &a); err != nil {
+			return nil
+		}
+		return validateSSHAgentPresence(path, i, a)
 	}
 	if n.Type != CapabilityAgentContext {
 		return nil

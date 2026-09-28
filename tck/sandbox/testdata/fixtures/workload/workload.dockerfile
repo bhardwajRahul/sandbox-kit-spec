@@ -126,6 +126,15 @@ has() { [ $(( (dec >> $1) & 1 )) -eq 1 ]; }
 if has 21 && has 16 && has 17 && [ "${seccomp:-0}" = "0" ]; then echo yes; else echo no; fi
 PRIV
 
+# Observes the SSH agent a sandbox was given, one agent-protocol request
+# at a time: the script's docstring lists what it sends. It speaks the
+# protocol itself rather than through ssh-add because the checks need
+# requests ssh-add cannot make on demand — a namespaced signature, a login
+# after a session binding, a bare request of any type — and it prints the
+# data and signature of every signing request so the suite verifies them
+# itself.
+COPY --chmod=0755 kit-tck-ssh-agent.py /usr/local/bin/kit-tck-ssh-agent
+
 # A bare `bash` reads stdin, and the contract promises the adapter neither
 # a TTY nor anything on it, so it can exit at EOF — leaving a
 # process-based runtime with an already-stopped sandbox and failing every
@@ -143,5 +152,13 @@ PRIV
 # may legitimately vary with the kit set).
 ENV KIT_TCK_CANARY=image-baseline
 
+# Capture the entrypoint's own environment before it starts waiting: exec
+# commands can have SSH_AUTH_SOCK even if the original workload did not.
+COPY --chmod=0755 <<'ENTRY' /usr/local/bin/kit-tck-workload-entrypoint
+#!/bin/sh
+printf '%s' "${SSH_AUTH_SOCK:-}" > /var/tmp/kit-tck-workload-ssh-sock
+exec sleep infinity
+ENTRY
+
 WORKDIR /home/agent/workspace
-ENTRYPOINT ["sleep", "infinity"]
+ENTRYPOINT ["/usr/local/bin/kit-tck-workload-entrypoint"]

@@ -2,8 +2,10 @@ package sandbox
 
 import (
 	"context"
+	"net"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -110,6 +112,29 @@ func TestAConformingRuntimePasses(t *testing.T) {
 	require.False(t, rep.Failed(), "conforming fake reported failures:\n%s", rep)
 }
 
+func TestBackingAgentCloseWithIdleClient(t *testing.T) {
+	a, err := startBackingAgent()
+	require.NoError(t, err)
+	conn, err := net.Dial("unix", a.Socket())
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	// The server must have accepted this client before Close, otherwise
+	// the test would only exercise closing a listener with no handlers.
+	require.Eventually(t, func() bool {
+		a.connsMu.Lock()
+		defer a.connsMu.Unlock()
+		return len(a.conns) == 1
+	}, time.Second, time.Millisecond)
+	done := make(chan error, 1)
+	go func() { done <- a.Close() }()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("closing the backing agent blocked on an idle client")
+	}
+}
+
 // Each of these breaks one behavior, so a check that never fails would be
 // caught here rather than by trusting it.
 // mutations maps a way of breaking the fake runtime to the requirements
@@ -117,25 +142,50 @@ func TestAConformingRuntimePasses(t *testing.T) {
 // requirement — the two network-policy versions state the same duty about
 // the host lists — and dropping it has to fail every one of them.
 var mutations = map[string][]string{
-	"ignores-long-running-mixin":        {"long-running@1/survives-session-disconnect"},
-	"stops-on-disconnect":               {"long-running@1/survives-session-disconnect"},
-	"loses-background-on-disconnect":    {"long-running@1/survives-session-disconnect"},
-	"restarts-background-on-disconnect": {"long-running@1/survives-session-disconnect"},
-	"idle-errors":                       {"long-running@1/survives-session-disconnect"},
-	"status-errors":                     {"long-running@1/survives-session-disconnect", "long-running@1/explicit-stop-honored"},
-	"status-malformed":                  {"long-running@1/survives-session-disconnect", "long-running@1/explicit-stop-honored"},
-	"ignores-explicit-stop":             {"long-running@1/explicit-stop-honored"},
-	"refuses-optional-long-running":     {"conformance.md §2.2/optional-long-running-accepted"},
-	"install-twice":                     {"lifecycle@1/install-once"},
-	"no-startup":                        {"lifecycle@1/startup-every-boot"},
-	"ignores-files":                     {"lifecycle@1/files-written"},
-	"writes-files-as-root":              {"lifecycle@1/files-written"},
-	"writes-files-read-only":            {"lifecycle@1/files-written"},
-	"leaks-env":                         {"lifecycle@1/hook-env-restricted"},
-	"allows-everything":                 {"network-policy@1/deny-by-default", "network-policy@2/deny-by-default"},
-	"ignores-http-method":               {"network-policy@2/http-method-enforced"},
-	"ignores-http-path":                 {"network-policy@2/http-path-enforced"},
-	"ignores-http-deny":                 {"network-policy@2/http-deny-precedence"},
+	"ignores-ssh-agent":                     {"ssh-agent@1/agent-reachable", "ssh-agent@1/operations-restricted", "ssh-agent@1/every-boot"},
+	"ssh-agent-drops-sign":                  {"ssh-agent@1/agent-reachable"},
+	"ssh-agent-missing-workload-env":        {"ssh-agent@1/agent-reachable"},
+	"ssh-agent-missing-startup-env":         {"ssh-agent@1/agent-reachable"},
+	"ssh-agent-relays-everything":           {"ssh-agent@1/operations-restricted"},
+	"ssh-agent-forwards-refused":            {"ssh-agent@1/operations-restricted"},
+	"ssh-agent-without-grant":               {"ssh-agent@1/absent-without-grant"},
+	"ssh-agent-install-missing":             {"ssh-agent@1/phase-scoped"},
+	"leaves-install-ssh-agent-open":         {"ssh-agent@1/phase-scoped"},
+	"leaks-install-ssh-agent-to-entrypoint": {"ssh-agent@1/phase-scoped"},
+	"ssh-agent-first-boot-only":             {"ssh-agent@1/every-boot"},
+	"ssh-agent-accepts-without-agent":       {"ssh-agent@1/unavailable-refuses-required"},
+	"ssh-agent-refuses-optional":            {"ssh-agent@1/unavailable-skips-optional"},
+	"ignores-sign-bounds":                   {"ssh-agent@1/signatures-bounded"},
+	"drops-bound-signature":                 {"ssh-agent@1/signatures-bounded"},
+	"forwards-unclassified":                 {"ssh-agent@1/signatures-bounded"},
+	"ignores-login-bounds":                  {"ssh-agent@1/logins-bounded", "ssh-agent@1/binding-verified"},
+	"drops-bound-login":                     {"ssh-agent@1/logins-bounded", "ssh-agent@1/binding-verified"},
+	"ignores-hostbound-key":                 {"ssh-agent@1/logins-bounded"},
+	"trusts-invalid-login-key":              {"ssh-agent@1/logins-bounded"},
+	"ignores-login-user":                    {"ssh-agent@1/logins-bounded"},
+	"ignores-session-id":                    {"ssh-agent@1/logins-bounded"},
+	"trusts-any-host-key":                   {"ssh-agent@1/logins-bounded"},
+	"trusts-unverified-binding":             {"ssh-agent@1/binding-verified"},
+	"trusts-forwarding-binding":             {"ssh-agent@1/binding-verified"},
+	"ignores-long-running-mixin":            {"long-running@1/survives-session-disconnect"},
+	"stops-on-disconnect":                   {"long-running@1/survives-session-disconnect"},
+	"loses-background-on-disconnect":        {"long-running@1/survives-session-disconnect"},
+	"restarts-background-on-disconnect":     {"long-running@1/survives-session-disconnect"},
+	"idle-errors":                           {"long-running@1/survives-session-disconnect"},
+	"status-errors":                         {"long-running@1/survives-session-disconnect", "long-running@1/explicit-stop-honored"},
+	"status-malformed":                      {"long-running@1/survives-session-disconnect", "long-running@1/explicit-stop-honored"},
+	"ignores-explicit-stop":                 {"long-running@1/explicit-stop-honored"},
+	"refuses-optional-long-running":         {"conformance.md §2.2/optional-long-running-accepted"},
+	"install-twice":                         {"lifecycle@1/install-once"},
+	"no-startup":                            {"lifecycle@1/startup-every-boot"},
+	"ignores-files":                         {"lifecycle@1/files-written"},
+	"writes-files-as-root":                  {"lifecycle@1/files-written"},
+	"writes-files-read-only":                {"lifecycle@1/files-written"},
+	"leaks-env":                             {"lifecycle@1/hook-env-restricted"},
+	"allows-everything":                     {"network-policy@1/deny-by-default", "network-policy@2/deny-by-default"},
+	"ignores-http-method":                   {"network-policy@2/http-method-enforced"},
+	"ignores-http-path":                     {"network-policy@2/http-path-enforced"},
+	"ignores-http-deny":                     {"network-policy@2/http-deny-precedence"},
 	"leaves-install-egress-open": {
 		"network-policy@1/install-phase-scoped",
 		"network-policy@2/install-phase-scoped",

@@ -1,0 +1,133 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "com.docker.sandbox/ssh-agent@1",
+  "description": "Phase-scoped access to an SSH agent chosen by the runtime and user. Unrestricted defaults to true; false bounds signatures to sign and authenticate. One entry can cover one or both phases.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "phase"
+  ],
+  "properties": {
+    "phase": {
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "enum": [
+                "install",
+                "runtime"
+              ]
+            },
+            {
+              "$ref": "../../definitions/kit-arg.schema.json#/definitions/bearing"
+            }
+          ]
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "anyOf": [
+              {
+                "enum": [
+                  "install",
+                  "runtime"
+                ]
+              },
+              {
+                "$ref": "../../definitions/kit-arg.schema.json#/definitions/bearing"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "sign": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Namespaces of the namespaced (SSHSIG) signatures the agent may make: git for commits and tags, file for files. Omit for none in a bounded entry; an empty list is an error.",
+      "items": {
+        "type": "string",
+        "anyOf": [
+          {
+            "pattern": "^[!-~]+$"
+          },
+          {
+            "$ref": "../../definitions/kit-arg.schema.json#/definitions/bearing"
+          }
+        ]
+      }
+    },
+    "authenticate": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Servers the agent may log in to, as host or user@host: a literal lowercase DNS name with no wildcard, port, or IP address. A login is signed only for a session the client bound to one of these servers' host keys. Omit for no logins in a bounded entry; an empty list is an error.",
+      "items": {
+        "type": "string",
+        "anyOf": [
+          {
+            "pattern": "^([a-z_][a-z0-9_.-]*@)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$",
+            "not": {
+              "pattern": "^([a-z_][a-z0-9_.-]*@)?[0-9.]+$"
+            }
+          },
+          {
+            "$ref": "../../definitions/kit-arg.schema.json#/definitions/bearing"
+          }
+        ]
+      }
+    },
+    "unrestricted": {
+      "type": "boolean",
+      "default": true,
+      "description": "When true (the default), sign requests are unrestricted. Set false to require the sign or authenticate bounds."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "unrestricted": {
+            "const": false
+          }
+        },
+        "required": [
+          "unrestricted"
+        ]
+      },
+      "then": {
+        "anyOf": [
+          {
+            "required": [
+              "sign"
+            ]
+          },
+          {
+            "required": [
+              "authenticate"
+            ]
+          }
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "sign"
+              ]
+            },
+            {
+              "required": [
+                "authenticate"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

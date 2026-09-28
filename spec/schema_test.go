@@ -55,7 +55,7 @@ func allCapabilityTypes() []string {
 		CapabilityVolume, CapabilityPort,
 		CapabilityUSBDevice, CapabilityResources, CapabilityPrivileged, CapabilityKitRegistry,
 		CapabilityAgentSessions, CapabilityLifecycle, CapabilityAgentContext,
-		CapabilityAgentSkills, CapabilitySbx, CapabilityLongRunning,
+		CapabilityAgentSkills, CapabilitySbx, CapabilityLongRunning, CapabilitySSHAgent,
 	}
 }
 
@@ -181,6 +181,12 @@ func TestSchemaMatchesSpecConstants(t *testing.T) {
 	credential := loadJSON(t, perTypeSchemaPath(CapabilityCredential))
 	require.Equal(t, handleName.String(), literalPattern(t, at(t, credential, "properties", "service")))
 	assertAcceptsKitArg(t, at(t, credential, "properties", "service"), "bearing")
+
+	sshAgent := loadJSON(t, perTypeSchemaPath(CapabilitySSHAgent))
+	require.Equal(t, sshSignatureNamespace.String(), literalPattern(t, at(t, sshAgent, "properties", "sign", "items")))
+	require.Equal(t, sshDestination.String(), literalPattern(t, at(t, sshAgent, "properties", "authenticate", "items")))
+	assertAcceptsKitArg(t, at(t, sshAgent, "properties", "sign", "items"), "bearing")
+	assertAcceptsKitArg(t, at(t, sshAgent, "properties", "authenticate", "items"), "bearing")
 	// The schema wraps the validator's env-var pattern in an optional
 	// group: an empty name is the inject-only shape, which the validator
 	// accepts only alongside inject rules (a cross-field rule a regex

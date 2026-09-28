@@ -505,7 +505,8 @@ other.
 
 **Instance-shaped types appear once per thing requested**, deduplicated on
 their own key: `credential@1` on (service, phase), `volume@1` on path,
-`agent-skills@1` on path, `port@1` on (container, transport).
+`agent-skills@1` on path, `port@1` on (container, transport),
+`ssh-agent@1` on each phase it names.
 `usb-device@1` is instance-shaped with no dedup key beyond the exact
 entry.
 
@@ -521,6 +522,7 @@ behavior** for a runtime supporting the type:
 | `com.docker.sandbox/network-policy@1` | [network-policy@1](capabilities/com.docker.sandbox/network-policy@1.md) | singleton |
 | `com.docker.sandbox/network-policy@2` | [network-policy@2](capabilities/com.docker.sandbox/network-policy@2.md) | singleton, exclusive with `@1` |
 | `com.docker.sandbox/credential@1` | [credential@1](capabilities/com.docker.sandbox/credential@1.md) | per (service, phase) |
+| `com.docker.sandbox/ssh-agent@1` | [ssh-agent@1](capabilities/com.docker.sandbox/ssh-agent@1.md) | per phase (one entry may name both) |
 | `com.docker.sandbox/volume@1` | [volume@1](capabilities/com.docker.sandbox/volume@1.md) | per path |
 | `com.docker.sandbox/port@1` | [port@1](capabilities/com.docker.sandbox/port@1.md) | per (container, transport) |
 | `com.docker.sandbox/usb-device@1` | [usb-device@1](capabilities/com.docker.sandbox/usb-device@1.md) | instance |
@@ -548,7 +550,8 @@ pages above.
 
 A descriptor projects onto a **permission surface**: the normalized
 (sorted, deduplicated) set of everything the host must grant — phased
-network allow/deny lists, credentials by phase, storage paths, skills
+network allow/deny lists, credentials by phase, what the SSH agent may
+sign by phase, storage paths, skills
 paths, ports, USB matches, privileged, plus one `type+config-digest` entry
 for every other request. The projection input is the **effective descriptor** — published
 declarations with this installation's create-phase arg values expanded
@@ -560,7 +563,8 @@ candidate's against it:
 - Version movement whose surface stays within the granted one **MAY** apply
   silently.
 - Any **widening** — a new allow entry, a **removed deny entry** (the deny
-  was part of what made the grant acceptable), a new credential, path,
+  was part of what made the grant acceptable), a new credential, a wider
+  SSH agent grant, path,
   port, USB match, privileged, write access over a skills path already
   granted read, or any config change on an other-typed request — **MUST** <!-- tck: SPEC-v3 §7.4/widenings-gate -->
   stop for approval.

@@ -126,6 +126,16 @@ func installPhaseScoped(fixture string) func(context.Context, *Env) []report.Fin
 }
 
 var checks = []check{
+	{requirement: "ssh-agent@1/agent-reachable", capability: capSSHAgent, needs: []string{capLifecycle}, run: sshAgentReachable},
+	{requirement: "ssh-agent@1/operations-restricted", capability: capSSHAgent, run: sshAgentRestricted},
+	{requirement: "ssh-agent@1/signatures-bounded", capability: capSSHAgent, run: sshAgentSignaturesBounded},
+	{requirement: "ssh-agent@1/logins-bounded", capability: capSSHAgent, run: sshAgentLoginsBounded},
+	{requirement: "ssh-agent@1/binding-verified", capability: capSSHAgent, run: sshAgentBindingVerified},
+	{requirement: "ssh-agent@1/absent-without-grant", capability: capSSHAgent, run: sshAgentAbsentWithoutGrant},
+	{requirement: "ssh-agent@1/phase-scoped", capability: capSSHAgent, needs: []string{capLifecycle}, run: sshAgentPhaseScoped},
+	{requirement: "ssh-agent@1/every-boot", capability: capSSHAgent, run: sshAgentEveryBoot},
+	{requirement: "ssh-agent@1/unavailable-refuses-required", capability: capSSHAgent, run: sshAgentRequiredRefused},
+	{requirement: "ssh-agent@1/unavailable-skips-optional", capability: capSSHAgent, run: sshAgentOptionalSkipped},
 	{requirement: "long-running@1/survives-session-disconnect", capability: capLongRunning, run: survivesSessionDisconnect},
 	{requirement: "long-running@1/explicit-stop-honored", capability: capLongRunning, run: longRunningStop},
 	{requirement: "conformance.md §2.2/optional-long-running-accepted", run: optionalLongRunning},
@@ -188,6 +198,7 @@ var checks = []check{
 				{capNetworkPolicy, fixtureEgress, false},
 				{capNetworkPolicyV2, fixtureHTTPEgress, false},
 				{capCredential, fixtureCredential, false},
+				{capSSHAgent, fixtureSSHAgent, false},
 				{capAgentContext, fixtureContext, false},
 				{capVolume, fixtureVolume, false},
 				{capResources, fixtureResources, false},

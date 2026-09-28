@@ -48,6 +48,11 @@ var covers = map[string][]string{
 	// The check requires a non-empty sentinel where the secret is absent.
 	"credential@1/secret-absent-in-sandbox": {"credential@1/sentinel-not-empty"},
 
+	// The login check binds a session to a server whose host key the
+	// runtime was never given, validly signed: only matching bindings to
+	// keys from outside the sandbox refuses that login.
+	"ssh-agent@1/logins-bounded": {"ssh-agent@1/destination-keys-outside-sandbox"},
+
 	// The hook env check judges names against the declared set and values
 	// against the host sentinel; the files fixture's content is an arg
 	// reference, so files-written observes expansion too.
@@ -244,6 +249,13 @@ var waived = map[string]string{
 	"credential@1/oauth-token-endpoint-intercepted": "needs an OAuth fixture service the suite does not run yet",
 	"credential@1/phase-scoped":                     "needs an install-phase credential probe; the fixture binds runtime only",
 	"credential@1/required-without-binding-fails":   "the contract has the adapter bind the fixture secret, so the unbound path never occurs in-suite",
+
+	"ssh-agent@1/key-material-outside-sandbox": "non-observable: a key copied somewhere in the sandbox has no symptom a probe could search for; the relay filter check shows keys cannot be added or exported through the agent",
+	"ssh-agent@1/grant-names-scope":            "SHOULD; consent wording, not sandbox behavior",
+	"ssh-agent@1/keys-selectable":              "SHOULD; a user-side setting the adapter contract offers no input for",
+	"ssh-agent@1/confirmation-offered":         "SHOULD; asks the user, which a non-interactive suite cannot answer",
+	"ssh-agent@1/grant-expiry-offered":         "SHOULD; a user-side setting the adapter contract offers no input for",
+	"ssh-agent@1/signatures-observable":        "SHOULD; where a runtime records signatures is host-side and unspecified",
 
 	"kit-registry@1/no-route-unless-requested": "the facade is reference-implementation infrastructure, not portable behavior",
 	"kit-registry@1/endpoint-announced":        "the facade is reference-implementation infrastructure, not portable behavior",
