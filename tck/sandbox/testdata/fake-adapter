@@ -38,6 +38,10 @@ JSON
   fi
   if [ "$broken" = group-order ]; then printf 'independent,base' >"$dir/group-order"; fi
   if [ "$broken" = group-records ]; then echo '{"selection":{},"surface":{}}' >"$dir/selection.json"; fi
+  if [ "$broken" = group-member-paths ]; then
+    sed 's/,"members":\["[^"]*","[^"]*"\]//' "$dir/selection.json" >"$dir/selection.tmp"
+    mv "$dir/selection.tmp" "$dir/selection.json"
+  fi
 }
 
 case "$verb" in
@@ -162,6 +166,12 @@ create)
     */groups-conflict)
       if [ "$broken" != group-drop-conflict ]; then
         echo 'groups-conflict capabilities[0] and capabilities[1]: duplicate file' >&2
+        exit 2
+      fi
+      ;;
+    */groups-interactive-conflict)
+      if [ "$broken" != group-drop-interactive-conflict ]; then
+        echo 'groups-interactive-conflict capabilities[0] and capabilities[1]: multiple interactive declarations' >&2
         exit 2
       fi
       ;;

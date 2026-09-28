@@ -58,6 +58,10 @@ func groupSelection(ctx context.Context, e *Env) []report.Finding {
 		for _, r := range records {
 			if r.Path == "capabilities[1]" {
 				found = true
+				members := []string{"capabilities[1].group.capabilities[0]", "capabilities[1].group.capabilities[1]"}
+				if !slices.Equal(r.Members, members) {
+					return []report.Finding{report.Failf("group record lost ordered member locations: got %v, want %v", r.Members, members)}
+				}
 				if r.Source == nil || r.Source.Kit == "" || r.Source.Path == "" {
 					return []report.Finding{report.Failf("group record lost source identity")}
 				}
@@ -80,14 +84,16 @@ func groupSelection(ctx context.Context, e *Env) []report.Finding {
 }
 
 func groupConflicts(ctx context.Context, e *Env) []report.Finding {
-	_, cleanup, err := e.sandbox(ctx, []string{fixtureWorkload, "groups-conflict"}, nil)
-	defer cleanup()
-	var refused *adapter.RefusedError
-	if !errors.As(err, &refused) {
-		return []report.Finding{report.Failf("selected conflicting groups must refuse: %v", err)}
-	}
-	if !strings.Contains(refused.Detail, "capabilities[0]") || !strings.Contains(refused.Detail, "capabilities[1]") {
-		return []report.Finding{report.Failf("composition conflict must identify both sources: %s", refused.Detail)}
+	for _, fixture := range []string{"groups-conflict", "groups-interactive-conflict"} {
+		_, cleanup, err := e.sandbox(ctx, []string{fixtureWorkload, fixture}, nil)
+		cleanup()
+		var refused *adapter.RefusedError
+		if !errors.As(err, &refused) {
+			return []report.Finding{report.Failf("%s: selected conflicting groups must refuse: %v", fixture, err)}
+		}
+		if !strings.Contains(refused.Detail, "capabilities[0]") || !strings.Contains(refused.Detail, "capabilities[1]") {
+			return []report.Finding{report.Failf("%s: composition conflict must identify both sources: %s", fixture, refused.Detail)}
+		}
 	}
 	return nil
 }
