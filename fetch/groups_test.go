@@ -40,6 +40,7 @@ func TestResolveGroupsThroughPublicAPIs(t *testing.T) {
 				}
 				var port spec.Port
 				require.NoError(t, spec.DecodeCapabilityConfig(c, &port))
+				c.Config["container"] = 1
 				return port.Container == 8080
 			}))
 			require.NoError(t, err)
@@ -51,6 +52,10 @@ func TestResolveGroupsThroughPublicAPIs(t *testing.T) {
 			require.Equal(t, "9000", result.ContainerEnv["PORT"])
 			require.Empty(t, spec.SurfaceOf(result.Descriptor).Services)
 			require.Equal(t, []string{"8080/tcp"}, spec.SurfaceOf(result.Descriptor).Ports)
+			result.Kits[0].Descriptor.Capabilities[0].Config["container"] = 1234
+			var originalPort spec.Port
+			require.NoError(t, spec.DecodeCapabilityConfig(result.Selections[0].Original.Capabilities[0], &originalPort))
+			require.Equal(t, 8080, originalPort.Container)
 		})
 	}
 }

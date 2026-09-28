@@ -205,3 +205,55 @@ func TestGroupContextConflictRetainsOriginalMemberLocations(t *testing.T) {
 	require.ErrorContains(t, err, "original-kit capabilities[1].group.capabilities[0]")
 	require.ErrorContains(t, err, "consuming-set")
 }
+
+func TestSelectionIsolatesCallbackOutputsAndOriginals(t *testing.T) {
+	type typedConfig struct{ Values []string }
+	newConfig := func() map[string]any {
+		return map[string]any{
+			"nested": []any{map[string]any{"values": []string{"original"}}},
+			"typed":  &typedConfig{Values: []string{"original"}},
+			"array":  [1][]string{{"original"}},
+			"number": uint64(1 << 60),
+			"nil":    nil,
+		}
+	}
+	mutate := func(c Capability) {
+		c.Config["nested"].([]any)[0].(map[string]any)["values"].([]string)[0] = "changed"
+		c.Config["typed"].(*typedConfig).Values[0] = "changed"
+		c.Config["array"].([1][]string)[0][0] = "changed"
+		c.Source.Path = "changed"
+	}
+	for _, grouped := range []bool{false, true} {
+		for _, accept := range []bool{false, true} {
+			t.Run(fmt.Sprintf("group=%t/accept=%t", grouped, accept), func(t *testing.T) {
+				source := &CapabilitySource{Kit: "original", Path: "capabilities[0]"}
+				member := Capability{Type: "com.example/feature@1", Config: newConfig(), Source: source}
+				item := member
+				if grouped {
+					item = Capability{Source: source, Group: &CapabilityGroup{Optional: true, Capabilities: []Capability{member}}}
+				} else {
+					item.Optional = true
+				}
+				var callbackCopy Capability
+				selection, err := SelectCapabilities([]Capability{item}, func(c Capability) bool {
+					callbackCopy = c
+					mutate(c)
+					return accept
+				})
+				require.NoError(t, err)
+				records := selection.Skipped
+				if accept {
+					records = selection.Selected
+					require.Equal(t, newConfig(), selection.Capabilities[0].Config)
+					require.Equal(t, *source, *selection.Capabilities[0].Source)
+					mutate(selection.Capabilities[0])
+				}
+				mutate(callbackCopy)
+				records[0].Source.Path = "record changed"
+				records[0].MemberSources[0].Path = "member record changed"
+				require.Equal(t, newConfig(), member.Config)
+				require.Equal(t, "capabilities[0]", source.Path)
+			})
+		}
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -238,6 +239,8 @@ func ValidateExpandedDeclarations(raw []byte, d *Descriptor) ([]string, error) {
 // SelectCapabilities validates before calling the selector and flattens only
 // wholly selected constructs. A nil selector is an error, never allow-all.
 // Required rejection returns records alongside the error for diagnostics.
+// Callback inputs, selected capabilities, and source records do not share
+// mutable configuration or provenance with the original declarations.
 func SelectCapabilities(items []CapabilityItem, selectCapability SelectCapability) (Selection, error) {
 	var result Selection
 	if selectCapability == nil {
@@ -256,6 +259,10 @@ func SelectCapabilities(items []CapabilityItem, selectCapability SelectCapabilit
 	for i, item := range items {
 		at := fmt.Sprintf("capabilities[%d]", i)
 		record := SelectionRecord{Path: at, Name: item.Name, Source: item.Source}
+		if record.Source != nil {
+			source := *record.Source
+			record.Source = &source
+		}
 		optional := item.Optional
 		members := []Capability{item}
 		if item.Group != nil {
@@ -265,6 +272,7 @@ func SelectCapabilities(items []CapabilityItem, selectCapability SelectCapabilit
 		}
 		var selected []Capability
 		for j, c := range members {
+			c = cloneSelectionCapability(c)
 			memberPath := at
 			if item.Group != nil {
 				memberPath = fmt.Sprintf("%s.group.capabilities[%d]", at, j)
@@ -275,7 +283,7 @@ func SelectCapabilities(items []CapabilityItem, selectCapability SelectCapabilit
 				origin = *c.Source
 			}
 			record.MemberSources = append(record.MemberSources, origin)
-			if !selectCapability(c) {
+			if !selectCapability(cloneSelectionCapability(c)) {
 				record.Rejected = append(record.Rejected, memberPath)
 			}
 			if c.Source == nil {
@@ -296,6 +304,55 @@ func SelectCapabilities(items []CapabilityItem, selectCapability SelectCapabilit
 		}
 	}
 	return result, errs.err()
+}
+
+func cloneSelectionCapability(c Capability) Capability {
+	if c.Source != nil {
+		source := *c.Source
+		c.Source = &source
+	}
+	c.Config = cloneConfigValue(reflect.ValueOf(c.Config)).Interface().(map[string]any)
+	return c
+}
+
+// Preserve concrete scalar and container types from Go callers as well as
+// decoded YAML/JSON. A serialization round trip would change numeric types.
+func cloneConfigValue(v reflect.Value) reflect.Value {
+	out := reflect.New(v.Type()).Elem()
+	out.Set(v)
+	switch v.Kind() {
+	case reflect.Interface, reflect.Pointer:
+		if !v.IsNil() {
+			if v.Kind() == reflect.Pointer {
+				out.Set(reflect.New(v.Type().Elem()))
+				out.Elem().Set(cloneConfigValue(v.Elem()))
+			} else {
+				out.Set(cloneConfigValue(v.Elem()))
+			}
+		}
+	case reflect.Map:
+		if !v.IsNil() {
+			out.Set(reflect.MakeMapWithSize(v.Type(), v.Len()))
+			iter := v.MapRange()
+			for iter.Next() {
+				out.SetMapIndex(iter.Key(), cloneConfigValue(iter.Value()))
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		if v.Kind() == reflect.Slice && !v.IsNil() {
+			out.Set(reflect.MakeSlice(v.Type(), v.Len(), v.Len()))
+		}
+		for i := 0; i < v.Len(); i++ {
+			out.Index(i).Set(cloneConfigValue(v.Index(i)))
+		}
+	case reflect.Struct:
+		for i := 0; i < v.NumField(); i++ {
+			if out.Field(i).CanSet() {
+				out.Field(i).Set(cloneConfigValue(v.Field(i)))
+			}
+		}
+	}
+	return out
 }
 
 func contributionsHaveGroups(contributions []Contribution) bool {
