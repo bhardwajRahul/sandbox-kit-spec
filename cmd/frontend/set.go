@@ -1245,15 +1245,17 @@ func soleContract(kits []resolvedKit) ocispecs.ImageConfig {
 	return stated[0]
 }
 
-// stageSetContext concatenates the collected agent-context bodies into
-// the merged kit's one staged body.
-//
-// The type is a singleton because a sandbox surfaces one instruction
-// profile, so a set has to render its kits' guidance as one document.
-// Each section is headed by the kit it came from: an agent reading the
-// merged body can tell which tool a paragraph is about, and a human
-// diffing it can see which kit changed.
+// stageSetContext stages conditional bodies separately, or concatenates
+// unconditional bodies with headings identifying their contributing Kits.
 func stageSetContext(ctx context.Context, c gwclient.Client, ref gwclient.Reference, plat *ocispecs.Platform, staged string, sources []spec.ContextSource) (gwclient.Reference, error) {
+	// Create-time expansion only reaches the descriptor, never staged layers.
+	// Validate every body before writing either separate or combined content.
+	for _, source := range sources {
+		if names := spec.ReferencedArgs([]byte(source.Content)); len(names) > 0 {
+			return nil, fmt.Errorf("the agent context from %s references %v, and a set stages its kits' guidance into files, which create-phase expansion never reaches; pin the value in that kit's args, or drop the reference from the body",
+				source.Reference, names)
+		}
+	}
 	if len(sources) > 0 && sources[0].Target != "" {
 		for _, source := range sources {
 			var err error
@@ -1274,17 +1276,6 @@ func stageSetContext(ctx context.Context, c gwclient.Client, ref gwclient.Refere
 		// resolves every path before the layers merge, because
 		// afterwards there is no telling whose file a path holds.
 		content := source.Content
-		// Merging several bodies into one document means staging it,
-		// and a staged file is content rather than declaration: create
-		// expands the descriptor, never the layers. A body that was
-		// inline in its own kit would have been expanded there, so
-		// carrying it into a set unchanged would turn a resolved value
-		// into the literal ${{ … }} an agent reads. Refused rather
-		// than silently downgraded.
-		if names := spec.ReferencedArgs([]byte(content)); len(names) > 0 {
-			return nil, fmt.Errorf("the agent context from %s references %v, and a set stages its kits' guidance as one file, which create-phase expansion never reaches; pin the value in that kit's args, or drop the reference from the body",
-				source.Reference, names)
-		}
 		if strings.TrimSpace(content) == "" {
 			continue
 		}
