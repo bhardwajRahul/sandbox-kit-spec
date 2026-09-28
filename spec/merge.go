@@ -53,6 +53,9 @@ type ContextSource struct {
 
 	// Content is the inline body; empty when Path is set.
 	Content string
+
+	// Target is set when publication preserves a separately selectable body.
+	Target string
 }
 
 // MergeOptions carries what the merge cannot derive from the
@@ -75,6 +78,9 @@ type MergeOptions struct {
 // Context bodies are concatenated by the publisher at opts.ContextPath.
 // Runtime consumers use Compose and retain the input contributions.
 func Merge(contributions []Contribution, opts MergeOptions) (*MergeResult, error) {
+	if contributionsHaveGroups(contributions) {
+		return preserveGroups(contributions, opts)
+	}
 	result, err := mergeDeclarations(contributions)
 	if err != nil {
 		return nil, err
@@ -390,9 +396,19 @@ func mergeCapabilities(contributions []Contribution) ([]Capability, []ContextSou
 		optional: map[string]bool{},
 	}
 	for _, c := range contributions {
-		for _, n := range c.Descriptor.Capabilities {
-			if err := m.add(c.Reference, n); err != nil {
+		for i, n := range c.Descriptor.Capabilities {
+			if n.Group != nil {
+				return nil, nil, fmt.Errorf("compose: %s capabilities[%d]: select groups before composition", c.Reference, i)
+			}
+			reference := fmt.Sprintf("%s capabilities[%d]", c.Reference, i)
+			if n.Source != nil {
+				reference = fmt.Sprintf("%s (%s %s)", c.Reference, n.Source.Kit, n.Source.Path)
+			}
+			if err := m.add(reference, n); err != nil {
 				return nil, nil, err
+			}
+			if n.Type == CapabilityAgentContext {
+				m.context[len(m.context)-1].reference = c.Reference
 			}
 		}
 	}
@@ -887,14 +903,25 @@ func (m *capabilityMerge) mergedLifecycle() (*Capability, error) {
 	interactiveFrom := ""
 	name := ""
 	optional := true
+	seenFile := map[string]string{}
 	for _, ask := range m.lifecycle {
 		if name == "" {
 			name = ask.name
 		}
 		merged.Install = append(merged.Install, ask.lifecycle.Install...)
 		merged.Startup = append(merged.Startup, ask.lifecycle.Startup...)
+		for _, f := range ask.lifecycle.Files {
+			if ContainsArgRef(f.Path) {
+				return nil, fmt.Errorf("merge: %s: lifecycle file path %q resolves at create; pin the path", ask.reference, f.Path)
+			}
+			clean := path.Clean(f.Path)
+			if prev, dup := seenFile[clean]; dup {
+				return nil, fmt.Errorf("merge: %s and %s: %s is written by two contributions; one file has one author", prev, ask.reference, clean)
+			}
+			seenFile[clean] = ask.reference
+		}
 		merged.Files = append(merged.Files, ask.lifecycle.Files...)
-		if len(ask.lifecycle.Interactive) > 0 {
+		if ask.lifecycle.Interactive != nil {
 			if interactiveFrom != "" {
 				return nil, fmt.Errorf("merge: %s and %s both declare a lifecycle interactive tail; it replaces the launch command's arguments, so it has one author",
 					interactiveFrom, ask.reference)
@@ -905,31 +932,6 @@ func (m *capabilityMerge) mergedLifecycle() (*Capability, error) {
 		if !ask.optional {
 			optional = false
 		}
-	}
-	// Two kits writing the same path would each believe they own the
-	// file; the runtime writes them in order and the later one wins,
-	// which is a silent loss of whatever the earlier one configured.
-	//
-	// Judged on the cleaned path, because lifecycle validation asks
-	// only that a path be absolute: /etc/tool.conf and /etc/./tool.conf
-	// are two spellings of one file, and comparing them verbatim would
-	// let the second writer through.
-	seenFile := map[string]string{}
-	for _, f := range merged.Files {
-		// A path still naming an arg cannot be compared against
-		// another: two contributions writing ${{ kit.args.a }} and
-		// ${{ kit.args.b }} look different here and can resolve to
-		// one file at create, where the contributions are gone and
-		// nothing re-checks. The one-writer rule cannot be enforced
-		// on it, so the set is refused rather than published unjudged.
-		if ContainsArgRef(f.Path) {
-			return nil, fmt.Errorf("merge: a lifecycle file is written to %q, which resolves at create; two contributions could then write one path with nothing left to notice, so pin the path in the kit that declares it", f.Path)
-		}
-		clean := path.Clean(f.Path)
-		if prev, dup := seenFile[clean]; dup {
-			return nil, fmt.Errorf("merge: %s is written by two contributions (as %s and %s); one file has one author", clean, prev, f.Path)
-		}
-		seenFile[clean] = f.Path
 	}
 
 	c, err := capabilityFrom(CapabilityLifecycle, merged)

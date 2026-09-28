@@ -178,3 +178,32 @@ is conforming for the types it claims, provided it refuses what it cannot
 provide: silently ignoring a required capability is the one failure the
 model cannot tolerate, because the Kit's author declared it precisely
 because the Kit does not work without it.
+
+## Capability-group selection controls
+
+Capability groups are descriptor grammar, not an independently claimed
+capability. Group checks run when the runtime claims their member types.
+The adapter provides these controls without prescribing host approval UI:
+
+- `create ... --reject-capability <type>` arranges a false selection
+  answer for that type; repeat the flag for multiple types. Other
+  satisfiable claimed types are accepted for the fixture.
+- `selection <id>` returns JSON with `selection` (`selected` and
+  `skipped` records) and `surface` (the actual effective `spec.Surface`).
+  Records carry `path`, `source` (`kit` and original `path`), `members`,
+  and `rejected` member paths. Names alone are not identities. Paths use
+  the descriptor's zero-based `capabilities[i].group.capabilities[j]`
+  vocabulary. The adapter translates retained runtime records; it MUST
+  NOT recompute selection to answer the observation.
+- `selection-policy <id> --reject-capability <type>` changes the
+  selection answer for the next recreation of this sandbox, without
+  revoking its current grants. Stop/start MUST retain the original
+  decision; `recreate` makes a fresh selection using the new answer.
+
+The `groups` fixture distinguishes an optional volume-plus-lifecycle
+feature from an independent group with the same label. The checks observe
+files, hook ordering, skip attribution, and the effective storage grant.
+`groups-required` checks refusal diagnostics; `groups-conflict` checks
+that optional groups cannot be discarded to repair a selected conflict;
+`groups-failure` checks that an accepted hook's exit is an execution
+error, not a skip or preflight refusal.

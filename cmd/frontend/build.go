@@ -95,7 +95,7 @@ func Build(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 			return nil, withYAMLSource(fmt.Errorf("descriptor in %s comment block: %w", kitCommentMarker, err), filename, kitYAML)
 		}
 	}
-	if _, err := spec.ValidateRaw(src.descriptor, d); err != nil {
+	if _, err := spec.ValidateDeclarations(src.descriptor, d); err != nil {
 		return nil, withYAMLSource(err, filename, src.descriptor)
 	}
 
@@ -162,7 +162,7 @@ func Build(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 		// replaces it, so this is the only point where what the author
 		// actually wrote is judged in full, and setOwnDescriptor can
 		// otherwise normalize the evidence away before anything looks.
-		if _, err := spec.ValidateRaw(published, expanded); err != nil {
+		if _, err := spec.ValidateDeclarations(published, expanded); err != nil {
 			return nil, withYAMLSource(err, filename, src.descriptor)
 		}
 		// The set's OWN declarations, before the merge folds its kits'
@@ -182,32 +182,35 @@ func Build(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 	// The agent-context body and the staged path are platform-independent;
 	// the staging itself runs per platform against each platform's
 	// filesystem.
-	agentContext, err := spec.AgentContextOf(expanded.Capabilities)
-	if err != nil {
-		return nil, withYAMLSource(err, filename, src.descriptor)
-	}
-	var guidanceBody []byte
-	stagedGuidancePath := ""
-	// A set's context is its kits' bodies concatenated with its own,
-	// which the merge collected and stageSetContext writes; this is the
-	// one-kit case, a single authored body staged as it was written.
-	if plan == nil && agentContext != nil && agentContext.ContentFile != "" {
-		// The body stages beside the kit's own sources, so a basename
-		// matching one of them would replace the descriptor a composed
-		// sandbox reads to learn what this kit declared.
-		if stagedGuidanceCollides(agentContext.ContentFile) {
-			return nil, withYAMLSource(fmt.Errorf(
-				"agent-context contentFile %s stages as %s, which is where the kit's own sources go; rename it",
-				agentContext.ContentFile, path.Base(agentContext.ContentFile)), filename, src.descriptor)
-		}
-		guidanceBody, err = readContextFile(ctx, c, strings.TrimPrefix(agentContext.ContentFile, "./"))
-		if err != nil {
-			return nil, fmt.Errorf("agent-context contentFile %s: %w", agentContext.ContentFile, err)
-		}
-		stagedGuidancePath = path.Join(stagedKitRoot, stem, path.Base(agentContext.ContentFile))
-		published, err = rewriteContentFile(published, agentContext.ContentFile, stagedGuidancePath)
-		if err != nil {
-			return nil, err
+	var guidance []spec.ContextSource
+	if plan == nil {
+		for i, entry := range spec.DeclaredCapabilities(expanded.Capabilities) {
+			if entry.Type != spec.CapabilityAgentContext {
+				continue
+			}
+			var ac spec.AgentContext
+			if err := spec.DecodeCapabilityConfig(entry, &ac); err != nil {
+				return nil, withYAMLSource(err, filename, src.descriptor)
+			}
+			if ac.ContentFile == "" {
+				continue
+			}
+			if stagedGuidanceCollides(ac.ContentFile) {
+				return nil, fmt.Errorf("agent-context contentFile %s stages as %s, which is reserved for staged sources", ac.ContentFile, path.Base(ac.ContentFile))
+			}
+			body, err := readContextFile(ctx, c, strings.TrimPrefix(ac.ContentFile, "./"))
+			if err != nil {
+				return nil, fmt.Errorf("agent-context contentFile %s: %w", ac.ContentFile, err)
+			}
+			target := path.Join(stagedKitRoot, stem, path.Base(ac.ContentFile))
+			if spec.HasGroups(expanded.Capabilities) {
+				target = path.Join(stagedKitRoot, stem, fmt.Sprintf("context-%d", i), path.Base(ac.ContentFile))
+			}
+			published, err = rewriteContentFile(published, ac.ContentFile, target)
+			if err != nil {
+				return nil, err
+			}
+			guidance = append(guidance, spec.ContextSource{Content: string(body), Target: target})
 		}
 	}
 
@@ -266,8 +269,8 @@ func Build(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		if guidanceBody != nil {
-			b.ref, err = stageGuidance(ctx, c, b.ref, plat, stagedGuidancePath, guidanceBody)
+		for _, body := range guidance {
+			b.ref, err = stageGuidance(ctx, c, b.ref, plat, body.Target, []byte(body.Content))
 			if err != nil {
 				return nil, err
 			}
@@ -1030,6 +1033,9 @@ func rewriteContentFileNode(n *yaml.Node, contentFile, staged string) bool {
 		return false
 	}
 	for _, entry := range capabilities.Content {
+		if group := mappingValue(entry, "group"); group != nil && rewriteContentFileNode(group, contentFile, staged) {
+			return true
+		}
 		typ := mappingValue(entry, "type")
 		if typ == nil || typ.Value != spec.CapabilityAgentContext {
 			continue

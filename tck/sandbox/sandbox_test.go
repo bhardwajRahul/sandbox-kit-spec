@@ -117,6 +117,15 @@ func TestAConformingRuntimePasses(t *testing.T) {
 // requirement — the two network-policy versions state the same duty about
 // the host lists — and dropping it has to fail every one of them.
 var mutations = map[string][]string{
+	"group-file-leak":        {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-order":            {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-records":          {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-accept-required":  {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-drop-conflict":    {"SPEC-v3 §7.1.1/conflicts"},
+	"group-reselect-restart": {"SPEC-v3 §7.1.1/lifetime"},
+	"group-no-recreate":      {"SPEC-v3 §7.1.1/lifetime"},
+	"group-skip-failure":     {"SPEC-v3 §7.1.1/execution"},
+
 	"ignores-long-running-mixin":        {"long-running@1/survives-session-disconnect"},
 	"stops-on-disconnect":               {"long-running@1/survives-session-disconnect"},
 	"loses-background-on-disconnect":    {"long-running@1/survives-session-disconnect"},

@@ -10,7 +10,8 @@
 //
 // Decode and Validate read a descriptor. Merge folds an ordered set of
 // them into the one descriptor a composition publishes. Compose reconciles
-// runtime declarations; its callers retain the inputs for capability handlers
+// selected runtime declarations. SelectCapabilities evaluates atomic groups
+// using the runtime's callback; its callers retain selected inputs for handlers
 // that need per-Kit provenance. Ordering the set is resolve; reading the
 // descriptors out of a registry is fetch; folding the images is assemble.
 package spec

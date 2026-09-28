@@ -414,3 +414,17 @@ func TestSchemaPatternsCompileAsRE2(t *testing.T) {
 		walk(loadJSON(t, p))
 	}
 }
+
+func TestGroupSchemaMatchesGrammar(t *testing.T) {
+	schema := loadSchema(t)
+	defs := at(t, schema, "definitions")
+	require.Equal(t, "#/definitions/capabilityItem", at(t, schema, "properties", "capabilities", "items")["$ref"])
+	require.Len(t, at(t, defs, "capabilityItem")["oneOf"], 2)
+	group := at(t, defs, "capabilityGroup")
+	require.Equal(t, false, group["additionalProperties"])
+	require.Equal(t, float64(1), at(t, group, "properties", "capabilities")["minItems"])
+	require.Equal(t, "#/definitions/capabilityMember", at(t, group, "properties", "capabilities", "items")["$ref"])
+	member := at(t, defs, "capabilityMember")["allOf"].([]any)
+	require.Equal(t, []any{"optional"}, at(t, member[1].(map[string]any), "not")["required"])
+	require.ElementsMatch(t, allCapabilityTypes(), KnownCapabilities())
+}

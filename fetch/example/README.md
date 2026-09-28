@@ -101,3 +101,16 @@ so print the returned error directly.
 Publishing a flattened Kit remains `spec.Merge`'s job. Its
 `MergeOptions.ContextPath` belongs to the publisher that stages the
 combined body; runtime consumers do not choose a publishing path.
+
+For runtime selection, pass
+`fetch.WithCapabilitySelector(spec.Supported(claimedTypes...))` to
+`Resolve` or `ResolvePartial`. A custom callback can also inspect each
+expanded config and apply host policy. The default accepts types known
+to this library; it does not inspect host availability.
+
+Persist `Resolved.Selections` with the sandbox. `Resolved.Kits` contains
+only selected, unmerged contributions; `Selections` retains the original
+declarations for diagnostics. Apply hooks from `Resolved.Descriptor`,
+and use `spec.AgentContextsOf(kit.Descriptor.Capabilities)` to enumerate
+all selected per-Kit guidance bodies. Do not apply the original
+unselected declarations on startup or during image assembly.

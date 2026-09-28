@@ -314,6 +314,9 @@ func validateCapabilityNames(d *Descriptor) error {
 // every build-phase reference has been expanded, so provides entries are
 // literal. Create-phase references in hooks and files legitimately remain.
 func ValidatePublished(raw []byte, d *Descriptor) (warnings []string, err error) {
+	cp := *d
+	cp.declarationsOnly = true
+	d = &cp
 	var errs ValidationErrors
 	warnings, err = ValidateRaw(raw, d)
 	errs.add(err)
@@ -496,7 +499,7 @@ var configlessCapabilities = map[string]bool{
 // allow list — injection sets the header, egress is gated separately,
 // and the two must agree per phase or a credential is presented to a
 // domain the phase cannot reach.
-func validateCapabilityEntries(d *Descriptor) error {
+func validateCapabilityBlock(d *Descriptor) error {
 	var errs ValidationErrors
 	needs := d.Capabilities
 	// The platform contract is about the image config a workload's layers
@@ -520,6 +523,9 @@ func validateCapabilityEntries(d *Descriptor) error {
 	invalidCredentials := map[int]bool{}
 	for i, n := range needs {
 		path := fmt.Sprintf("capabilities[%d]", i)
+		if n.Source != nil && n.Source.Path == "" {
+			errs.add(fieldErrorf(path+".source.path", "source path is required"))
+		}
 		if !needType.MatchString(n.Type) {
 			errs.add(fieldErrorf(path+".type", "capabilities[%d]: type %q is not <namespace>/<name>@<version>", i, n.Type))
 			continue
@@ -756,7 +762,7 @@ func validateCapabilityEntries(d *Descriptor) error {
 	// descriptor instead, where every domain is literal. An invalid or
 	// ambiguous policy cannot judge credentials; an invalid credential
 	// only prevents checking that credential, not its valid siblings.
-	if deferCrossChecks {
+	if deferCrossChecks || d.declarationsOnly {
 		return errs.err()
 	}
 	errs.add(validateInjectWithinAllow(needs, invalidCredentials))

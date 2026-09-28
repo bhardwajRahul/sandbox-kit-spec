@@ -494,6 +494,7 @@ capabilities:
 | `optional` | bool | The Kit degrades gracefully without it: an unknown or unprovidable optional entry is skipped and recorded; a required one fails resolution closed. |
 | `config` | map | Type-specific request payload. Strictly decoded for well-known types (unknown config keys are errors); carried opaquely for unknown types. |
 | `description` | string | optional. |
+| `source` | object | optional diagnostic provenance: original `kit` and field `path`; not a trust input. |
 
 A capability's `name` labels the request; `description` explains it.
 Neither is an identifier. The name is separate from names inside config,
@@ -514,7 +515,9 @@ serialization. An empty string is equivalent to an omitted label.
 
 ### 7.1 Arity
 
-**Policy-shaped types are singletons** — at most one entry each:
+**Policy-shaped types are singletons** — at most one entry each per
+declaration block (ordinary top-level entries or one group), and in the
+effective merged descriptor:
 `network-policy@1`, `network-policy@2`, `resources@1`, `privileged@1`,
 `kit-registry@1`, `agent-sessions@1`, `lifecycle@1`, `agent-context@1`,
 `sbx@1`, `long-running@1`.
@@ -531,6 +534,85 @@ their own key: `credential@1` on (service, phase), `volume@1` on path,
 entry.
 
 Exact-duplicate entries of any type are rejected.
+
+### 7.1.1 Capability groups
+
+A `capabilities` item is an ordinary request or a `group` containing
+ordinary requests. Groups couple one feature's requests without adding
+a capability type. Names and descriptions remain display metadata.
+
+```yaml
+capabilities:
+  - group:
+      name: Shared skills
+      optional: true
+      capabilities:
+        - type: com.docker.sandbox/agent-skills@1
+          config: {path: /home/agent/.local/skills}
+        - type: com.docker.sandbox/lifecycle@1
+          config:
+            startup:
+              - command: [sh, -c, 'echo skills available']
+```
+
+The grammar MUST reject mixed ordinary/group items, empty or nested <!-- tck: SPEC-v3 §7.1.1/group-grammar -->
+groups, and member-level `optional`, even as false.
+The group's `optional` defaults to false. Required and one-member groups
+are valid. Singleton and duplicate constraints apply separately to the
+ordinary top-level entries and to each group's members.
+
+All declarations MUST validate before selection, including skipped <!-- tck: SPEC-v3 §7.1.1/validate-declarations -->
+groups and every member after create-argument expansion. Cross-entry
+constraints dependent on selection, including credential ownership and
+injection domains, are checked on the selected contributions and merged
+result. Selection does not bypass validation.
+
+The runtime supplies a selection function over expanded ordinary
+entries. A static list of supported types is sufficient; host policy,
+credential availability, and approval can further constrain the answer.
+
+The selection API MUST include a group only when every member is <!-- tck: SPEC-v3 §7.1.1/atomic-selection -->
+accepted. Otherwise it skips and records an optional group in full, or
+refuses a required group, identifying rejected members. Ordinary entries
+follow the same required/optional rule. No member is applied before
+selection finishes.
+
+The selection API MUST flatten accepted constructs at their declaration <!-- tck: SPEC-v3 §7.1.1/order -->
+positions, preserving member order and existing Kit dependency order.
+Only selected contributions merge; groups never merge by name. Lifecycle
+hooks concatenate without deduplicating repeated commands. Conflicting
+file paths or multiple interactive declarations are composition errors.
+
+Selected composition conflicts MUST fail before application; optional <!-- tck: SPEC-v3 §7.1.1/conflicts -->
+groups cannot be silently dropped to repair them. The effective
+permission surface contains only selected, merged contributions; groups
+add no grants of their own.
+
+Publishing MUST preserve conditional boundaries, relative declaration <!-- tck: SPEC-v3 §7.1.1/publishing -->
+order, referenced content, and source attribution. Publishing does not
+select against build-host availability. A publisher may represent an
+ordinary contribution as a one-member group with the same optionality
+to preserve its position beside conditional contributions. An item's
+optional `source` object records its original `kit` and field `path`;
+this is diagnostic metadata, never an authority or permission input.
+The consumer's actual artifact reference remains the source of trust.
+
+Selection records and composition diagnostics MUST retain original <!-- tck: SPEC-v3 §7.1.1/provenance -->
+item/member locations and source Kits; labels alone are not identities.
+The resolution APIs return selected per-Kit declarations separately
+from original declarations and selection records. Image assembly does
+not select again or omit Kit layers. Argument environment exports are
+independent of selection.
+
+The runtime MUST retain selection and skip records for the sandbox's <!-- tck: SPEC-v3 §7.1.1/lifetime -->
+lifetime, use the same selection on restart, and select afresh only on
+recreation. Loss of a selected resource follows that capability's own
+contract, not group reselection.
+
+The runtime MUST NOT apply skipped files or hooks, or reinterpret a <!-- tck: SPEC-v3 §7.1.1/execution -->
+selected hook's execution failure as an optional-group rejection.
+Selection atomicity promises neither hook rollback nor cleanup of files
+already present on reused volumes.
 
 ### 7.2 Well-known types
 

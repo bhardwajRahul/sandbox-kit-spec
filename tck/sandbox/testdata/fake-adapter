@@ -18,6 +18,28 @@ if [ "$broken" = "claims-nothing" ]; then claims=""; fi
 verb="${1:-}"
 shift || true
 
+# The group fixture's observable files, ordering, records and grant surface.
+write_group_state() {
+  local dir="$1" rejected="$2"
+  echo "$rejected" >"$dir/group-rejected"
+  if [ "$rejected" = yes ]; then
+    printf 'base,independent' >"$dir/group-order"
+    rm -f "$dir/group-feature"
+    if [ "$broken" = group-file-leak ]; then echo selected >"$dir/group-feature"; fi
+    cat >"$dir/selection.json" <<'JSON'
+{"selection":{"selected":[],"skipped":[{"path":"capabilities[1]","name":"Feature","source":{"kit":"groups","path":"capabilities[1]"},"members":["capabilities[1].group.capabilities[0]","capabilities[1].group.capabilities[1]"],"rejected":["capabilities[1].group.capabilities[0]"]}]},"surface":{}}
+JSON
+  else
+    printf 'base,feature,independent' >"$dir/group-order"
+    echo selected >"$dir/group-feature"
+    cat >"$dir/selection.json" <<'JSON'
+{"selection":{"selected":[{"path":"capabilities[1]","name":"Feature","source":{"kit":"groups","path":"capabilities[1]"},"members":["capabilities[1].group.capabilities[0]","capabilities[1].group.capabilities[1]"]}],"skipped":[]},"surface":{"storagePaths":["/var/tmp/group-volume"]}}
+JSON
+  fi
+  if [ "$broken" = group-order ]; then printf 'independent,base' >"$dir/group-order"; fi
+  if [ "$broken" = group-records ]; then echo '{"selection":{},"surface":{}}' >"$dir/selection.json"; fi
+}
+
 case "$verb" in
 capabilities)
   if [ -n "$claims" ]; then echo "$claims" | tr ',' '\n'; fi
@@ -27,10 +49,15 @@ create)
   kits=()
   greeting=""
   hostmode="readwrite"
+  group_rejected=no
   while [ $# -gt 0 ]; do
     case "$1" in
     --arg)
       case "$2" in greeting=*) greeting="${2#greeting=}" ;; esac
+      shift 2
+      ;;
+    --reject-capability)
+      if [ "$2" = com.docker.sandbox/volume@1 ]; then group_rejected=yes; fi
       shift 2
       ;;
     --skills-host-mode)
@@ -124,10 +151,36 @@ create)
     exit 1
   fi
 
+  for kit in "${kits[@]}"; do
+    case "$kit" in
+    */groups-required)
+      if [ "$group_rejected" = yes ] && [ "$broken" != group-accept-required ]; then
+        echo 'groups-required capabilities[0].group.capabilities[0]: rejected' >&2
+        exit 2
+      fi
+      ;;
+    */groups-conflict)
+      if [ "$broken" != group-drop-conflict ]; then
+        echo 'groups-conflict capabilities[0] and capabilities[1]: duplicate file' >&2
+        exit 2
+      fi
+      ;;
+    */groups-failure)
+      if [ "$broken" != group-skip-failure ]; then
+        echo 'groups-failure: selected hook exited 37' >&2
+        exit 1
+      fi
+      ;;
+    esac
+  done
+
   id="sbx-$$-${RANDOM}"
   dir="$state/$id"
   mkdir -p "$dir"
   echo running >"$dir/status"
+  for kit in "${kits[@]}"; do
+    if [[ "$kit" == */groups ]]; then write_group_state "$dir" "$group_rejected"; fi
+  done
   for kit in "${kits[@]}"; do
     if [[ "$kit" == */long-running ]]; then : >"$dir/long-running-mixin"; fi
   done
@@ -277,6 +330,8 @@ exec)
     ;;
   cat)
     case "$2" in
+    /var/tmp/group-order) cat "$dir/group-order" ;;
+    /var/tmp/group-feature) cat "$dir/group-feature" ;;
     /var/tmp/install.count) cat "$dir/install.count" ;;
     /var/tmp/startup.count) cat "$dir/startup.count" ;;
     /var/tmp/sbx-entrypoint-ran)
@@ -569,7 +624,18 @@ stop)
   if [ "$broken" != "ignores-explicit-stop" ]; then echo stopped >"$state/$1/status"; fi
   ;;
 
+selection)
+  cat "$state/$1/selection.json"
+  ;;
+
+selection-policy)
+  echo yes >"$state/$1/group-future-rejected"
+  ;;
+
 recreate)
+  if [ -f "$state/$1/group-rejected" ] && [ "$broken" != group-no-recreate ]; then
+    write_group_state "$state/$1" "$(cat "$state/$1/group-future-rejected")"
+  fi
   # A fresh container: the writable layer goes, declared volumes stay.
   dir="$state/$1"
   if [ "$broken" != "keeps-writable-layer" ]; then rm -f "$dir/scratch"; fi
@@ -578,6 +644,11 @@ recreate)
 
 start)
   dir="$state/$1"
+  if [ -f "$dir/group-rejected" ]; then
+    rejection="$(cat "$dir/group-rejected")"
+    if [ "$broken" = group-reselect-restart ]; then rejection="$(cat "$dir/group-future-rejected")"; fi
+    write_group_state "$dir" "$rejection"
+  fi
   echo running >"$dir/status"
   if [ "$broken" = "loses-volume-on-restart" ]; then rm -rf "$dir/volume" && mkdir -p "$dir/volume"; fi
   if [ "$broken" != "no-startup" ]; then

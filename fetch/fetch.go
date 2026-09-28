@@ -164,16 +164,22 @@ type Request struct {
 // Resolved is a runtime composition. Keep Kits alongside Descriptor so
 // capability handlers can inspect each contributor's declarations.
 type Resolved struct {
-	// Descriptor is the reconciled declaration set. It does not retain
+	// Selections records decisions in dependency order, alongside the original
+	// expanded declarations. Kits contains only selected contributions.
+	Selections []KitSelection
+
+	// Descriptor is the reconciled, selected declaration set. It does not retain
 	// per-Kit provenance; use Kits where a capability requires attribution.
 	Descriptor *spec.Descriptor
 
-	// Kits are the expanded inputs in dependency order, providers before
+	// Kits are selected, unmerged contributions in dependency order, providers before
 	// requirers (including the workload wherever its dependencies put it).
 	// Each retains its consumption reference, pinned image identity, and
 	// resolved create arguments, including defaults. Descriptor.Args is
 	// cleared because the values have already been applied.
 	// This is declaration order; image layers start with the workload.
+	// A Kit can contribute several selected lifecycle/context entries. Apply
+	// lifecycle from Descriptor; use spec.AgentContextsOf for per-Kit bodies.
 	Kits []*resolve.Unit
 
 	// ContainerEnv contains resolved env: argument exports. Apply them as
@@ -185,6 +191,24 @@ type Resolved struct {
 	// Warnings contains advisory findings from validating the merged
 	// descriptor.
 	Warnings []string
+}
+
+// KitSelection retains the source needed to explain or persist a decision.
+type KitSelection struct {
+	Reference string
+	Original  *spec.Descriptor
+	Raw       []byte
+	Selection spec.Selection
+}
+
+// ResolveOption configures create-time descriptor selection.
+type ResolveOption func(*resolveOptions)
+type resolveOptions struct{ selector spec.SelectCapability }
+
+// WithCapabilitySelector lets a runtime decide each expanded request. The
+// library retains atomic groups, ordering, validation, and source records.
+func WithCapabilitySelector(selector spec.SelectCapability) ResolveOption {
+	return func(o *resolveOptions) { o.selector = selector }
 }
 
 // Resolve fetches the requests, resolves them as a runnable set —
@@ -202,8 +226,8 @@ type Resolved struct {
 // Contributions are ordered by the dependency graph, providers before
 // the kits that require them, which is the order declaration merge
 // means by "first".
-func (c *Client) Resolve(ctx context.Context, reqs []Request) (*Resolved, error) {
-	return c.resolve(ctx, reqs, false)
+func (c *Client) Resolve(ctx context.Context, reqs []Request, opts ...ResolveOption) (*Resolved, error) {
+	return c.resolve(ctx, reqs, false, opts...)
 }
 
 // ResolvePartial is Resolve for a set that does not have to be
@@ -211,11 +235,11 @@ func (c *Client) Resolve(ctx context.Context, reqs []Request) (*Resolved, error)
 // To add a workload later, resolve the original requests with that workload;
 // the result's descriptor alone does not retain per-Kit declarations.
 // More than one workload is still an error.
-func (c *Client) ResolvePartial(ctx context.Context, reqs []Request) (*Resolved, error) {
-	return c.resolve(ctx, reqs, true)
+func (c *Client) ResolvePartial(ctx context.Context, reqs []Request, opts ...ResolveOption) (*Resolved, error) {
+	return c.resolve(ctx, reqs, true, opts...)
 }
 
-func (c *Client) resolve(ctx context.Context, reqs []Request, partial bool) (*Resolved, error) {
+func (c *Client) resolve(ctx context.Context, reqs []Request, partial bool, opts ...ResolveOption) (*Resolved, error) {
 	if len(reqs) == 0 {
 		return nil, fmt.Errorf("fetch: empty kit set")
 	}
@@ -229,7 +253,7 @@ func (c *Client) resolve(ctx context.Context, reqs []Request, partial bool) (*Re
 		kits = append(kits, k)
 		args = append(args, req.Args)
 	}
-	return mergeKits(kits, args, partial)
+	return mergeKits(kits, args, partial, opts...)
 }
 
 // Units builds the resolver's input from fetched kits.
@@ -259,7 +283,13 @@ func Units(kits []*Kit) ([]*resolve.Unit, error) {
 	return units, nil
 }
 
-func mergeKits(kits []*Kit, args []map[string]string, partial bool) (*Resolved, error) {
+func mergeKits(kits []*Kit, args []map[string]string, partial bool, opts ...ResolveOption) (*Resolved, error) {
+	options := resolveOptions{selector: spec.Supported(spec.KnownCapabilities()...)}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&options)
+		}
+	}
 	prepared := make([]*Kit, len(kits))
 	exports := make([]map[string]string, len(kits))
 	values := make([]map[string]string, len(kits))
@@ -270,7 +300,6 @@ func mergeKits(kits []*Kit, args []map[string]string, partial bool) (*Resolved, 
 		}
 		cp := *k
 		cp.Descriptor = expanded.descriptor
-		cp.Raw = expanded.raw
 		prepared[i] = &cp
 		exports[i] = expanded.env
 		values[i] = expanded.args
@@ -282,23 +311,49 @@ func mergeKits(kits []*Kit, args []map[string]string, partial bool) (*Resolved, 
 	for i, unit := range units {
 		unit.Args = values[i]
 	}
-	var resolution *resolve.Resolution
-	if partial {
-		resolution, err = resolve.ResolvePartial(units)
-	} else {
-		resolution, err = resolve.Resolve(units)
-	}
+	resolution, err := resolve.Dependencies(units, partial)
 	if err != nil {
 		return nil, err
 	}
-
+	originals := make(map[string]*Kit, len(prepared))
+	for _, k := range prepared {
+		originals[k.Reference] = k
+	}
 	ordered := resolution.Topological()
+	var selections []KitSelection
 	contributions := make([]spec.Contribution, 0, len(ordered))
-	for _, u := range ordered {
-		contributions = append(contributions, spec.Contribution{
-			Reference:  u.Reference,
-			Descriptor: u.Descriptor,
-		})
+	for i, u := range ordered {
+		original := originals[u.Reference]
+		selected, err := spec.SelectCapabilities(u.Descriptor.Capabilities, options.selector)
+		if err != nil {
+			return nil, spec.WithSource(err, u.Reference, original.Raw)
+		}
+		for j := range selected.Capabilities {
+			source := *selected.Capabilities[j].Source
+			if source.Kit == "" {
+				source.Kit = u.Reference
+			}
+			selected.Capabilities[j].Source = &source
+		}
+		for _, records := range [][]spec.SelectionRecord{selected.Selected, selected.Skipped} {
+			for j := range records {
+				if records[j].Source == nil {
+					records[j].Source = &spec.CapabilitySource{Kit: u.Reference, Path: records[j].Path}
+				}
+				for k := range records[j].MemberSources {
+					if records[j].MemberSources[k].Kit == "" {
+						records[j].MemberSources[k].Kit = u.Reference
+					}
+				}
+			}
+		}
+		selections = append(selections, KitSelection{Reference: u.Reference, Original: u.Descriptor, Raw: original.Raw, Selection: selected})
+		cp := *u
+		d := *u.Descriptor
+		d.Capabilities = selected.Capabilities
+		cp.Descriptor = &d
+		ordered[i] = &cp
+		contributions = append(contributions, spec.Contribution{Reference: u.Reference, Descriptor: &d})
 	}
 	merged, err := spec.Compose(contributions)
 	if err != nil {
@@ -308,7 +363,7 @@ func mergeKits(kits []*Kit, args []map[string]string, partial bool) (*Resolved, 
 	if err != nil {
 		return nil, err
 	}
-	result := &Resolved{Descriptor: merged, Kits: ordered, ContainerEnv: env}
+	result := &Resolved{Descriptor: merged, Kits: ordered, ContainerEnv: env, Selections: selections}
 	// Validate the bytes the descriptor serializes to: independently valid
 	// inputs can exceed the document budget once combined.
 	raw, err := json.Marshal(merged)
@@ -361,7 +416,7 @@ func expandKit(k *Kit, args map[string]string) (*expandedKit, error) {
 	if err != nil {
 		return nil, spec.WithSource(err, k.Reference+" (expanded descriptor)", expanded)
 	}
-	if _, err := spec.ValidateEffective(expanded, d); err != nil {
+	if _, err := spec.ValidateExpandedDeclarations(expanded, d); err != nil {
 		return nil, spec.WithSource(err, k.Reference+" (expanded descriptor)", expanded)
 	}
 	d.Args = nil

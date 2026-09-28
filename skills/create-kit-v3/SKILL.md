@@ -349,3 +349,29 @@ varies, keep the rest exact and vary only that part:
   `claude` and `claude-mixin` for one agent in both shapes, `motd` for the
   single-file inline form, `team` for a set.
 - Where the docs and the Go implementation in `spec/` disagree, the code wins.
+
+## Coupled optional features
+
+Use a `group` when skipping a capability also needs to skip its hooks,
+files, or guidance. Put `optional: true` on the group, never on its
+members (even `optional: false` is invalid). Groups are nonempty and
+cannot nest; required and one-member groups are valid. See
+`examples/optional-cache/optional-cache.yaml`.
+
+The selection API includes every member or none, before composition.
+A runtime supplies decisions on expanded entries; the API owns atomic
+selection and ordering. Validate all member configs even in skipped
+groups. Selected entries must still satisfy cross-entry rules, and a
+composition conflict is an error rather than a reason to skip another
+group. Singleton arity is per declaration block; lifecycle lists from
+selected blocks concatenate, and duplicate file paths are errors.
+
+Selection lasts for one sandbox installation, including restarts.
+Recreation selects afresh. A failing selected hook is an execution
+failure, not optional unavailability. Skipping a group does not remove
+old files from reused volumes, omit image layers, or suppress argument
+environment exports. Group names are display labels, not merge keys.
+
+Groups extend the unfinished schema-3 grammar in place. Descriptors
+using them require a reader implementing this extension; older strict
+readers reject them.
