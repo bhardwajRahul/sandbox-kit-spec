@@ -408,7 +408,7 @@ func mergeCapabilities(contributions []Contribution) ([]Capability, []ContextSou
 				return nil, nil, err
 			}
 			if n.Type == CapabilityAgentContext {
-				m.context[len(m.context)-1].reference = c.Reference
+				m.context[len(m.context)-1].contribution = c.Reference
 			}
 		}
 	}
@@ -480,9 +480,11 @@ type lifecycleAsk struct {
 
 type contextAsk struct {
 	reference string
-	name      string
-	context   *AgentContext
-	optional  bool
+	// Content lookup uses the consuming Kit, while diagnostics retain member paths.
+	contribution string
+	name         string
+	context      *AgentContext
+	optional     bool
 }
 
 func (m *capabilityMerge) add(reference string, n Capability) error {
@@ -973,9 +975,9 @@ func (m *capabilityMerge) mergedContext() (*Capability, []ContextSource, error) 
 		}
 		switch {
 		case ask.context.ContentFile != "":
-			sources = append(sources, ContextSource{Reference: ask.reference, Path: ask.context.ContentFile})
+			sources = append(sources, ContextSource{Reference: ask.contribution, Path: ask.context.ContentFile})
 		case ask.context.Content != "":
-			sources = append(sources, ContextSource{Reference: ask.reference, Content: ask.context.Content})
+			sources = append(sources, ContextSource{Reference: ask.contribution, Content: ask.context.Content})
 		}
 		if !ask.optional {
 			optional = false

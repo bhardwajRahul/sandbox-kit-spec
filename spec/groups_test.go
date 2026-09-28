@@ -186,3 +186,22 @@ func TestSelectedContextBodiesRemainSeparate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []AgentContext{{Content: "first"}, {Content: "second"}}, bodies)
 }
+
+func TestGroupContextConflictRetainsOriginalMemberLocations(t *testing.T) {
+	filename := Capability{Type: CapabilityAgentContext, Config: map[string]any{"filename": "AGENTS.md"}}
+	d := &Descriptor{SchemaVersion: SchemaVersion, Kind: KindWorkload, Capabilities: []Capability{
+		{Group: &CapabilityGroup{Capabilities: []Capability{filename}}},
+		{Group: &CapabilityGroup{Capabilities: []Capability{filename}}},
+	}}
+	published, err := Merge([]Contribution{{Reference: "original-kit", Descriptor: d}}, MergeOptions{})
+	require.NoError(t, err)
+	selected, err := SelectCapabilities(published.Descriptor.Capabilities, Supported(CapabilityAgentContext))
+	require.NoError(t, err)
+	effective := *published.Descriptor
+	effective.Capabilities = selected.Capabilities
+	_, err = Compose([]Contribution{{Reference: "consuming-set", Descriptor: &effective}})
+	require.ErrorContains(t, err, "agent-context filename")
+	require.ErrorContains(t, err, "original-kit capabilities[0].group.capabilities[0]")
+	require.ErrorContains(t, err, "original-kit capabilities[1].group.capabilities[0]")
+	require.ErrorContains(t, err, "consuming-set")
+}
