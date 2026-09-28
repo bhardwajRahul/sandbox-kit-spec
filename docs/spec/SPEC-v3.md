@@ -38,12 +38,14 @@ There are exactly two kinds of Kit, distinguished by the `kind:` field:
 | **`workload`** | A root filesystem; the image config carries entrypoint, cmd, env, user, workdir. | Exactly one |
 | **`mixin`** | An overlay that lands on a workload's filesystem. May be declaration-only (a single descriptor-file layer). | Zero or more |
 
-A descriptor deliberately carries **no name, no image reference, and no
-runtime config**: identity is the reference a Kit is consumed by, matchable
-identity is what [`provides`](#5-provides-requires-integrates-conflicts)
-states, and runtime config lives in the image config where images already
-carry it. A `version:` field exists only as a fallback for consumption
-references that carry no version of their own ([§4](#4-top-level-fields)).
+A descriptor deliberately carries **no top-level identity name, image
+reference, or runtime config**: identity is the reference a Kit is consumed
+by, matchable identity is what
+[`provides`](#5-provides-requires-integrates-conflicts) states, and runtime
+config lives in the image config where images already carry it.
+Capability-entry names are display labels, not Kit identity. A `version:`
+field exists only as a fallback for consumption references that carry no
+version of their own ([§4](#4-top-level-fields)).
 
 ### 1.1 Descriptor and content
 
@@ -896,7 +898,7 @@ locked set and an assembler emits an ordinary image — config synthesized
 from the merged declarations, layers concatenated in dependency order —
 identified by the lock, which is what makes recreate exact. Local handles,
 state keying, and lock formats are runtime concerns outside this
-specification; the artifact carries no name on purpose.
+specification; the descriptor carries no top-level identity name on purpose.
 
 ---
 

@@ -114,10 +114,11 @@ policy, the content, and the metadata together. A separate file describing
 an image is a second source of truth, and second sources drift.
 
 **Declare only what images cannot already express.** The descriptor carries
-no name, no image reference, no entrypoint or env. Identity is the reference
-you consume the Kit by; the runtime contract is the image config. Restating
-either would create two answers to one question, and one of them would be
-stale.
+no top-level identity name, no image reference, no entrypoint or env.
+Identity is the reference you consume the Kit by; capability-entry names
+are display labels. The runtime contract is the image config. Restating
+identity or runtime config would create two answers to one question, and
+one of them would be stale.
 
 **One model for every ask.** Resource grants and engine-executed behaviors
 are the same kind of request — a typed, versioned entry in `capabilities`.
