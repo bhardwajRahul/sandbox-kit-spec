@@ -9,7 +9,8 @@
 // set by the companion Dockerfile.
 //
 // Decode and Validate read a descriptor. Merge folds an ordered set of
-// them into the one descriptor a composition publishes. Ordering that set
-// is resolve; reading the descriptors out of a registry is fetch; folding
-// the images themselves is assemble.
+// them into the one descriptor a composition publishes. Compose reconciles
+// runtime declarations; its callers retain the inputs for capability handlers
+// that need per-Kit provenance. Ordering the set is resolve; reading the
+// descriptors out of a registry is fetch; folding the images is assemble.
 package spec
