@@ -22,6 +22,7 @@ func TestGroupGrammar(t *testing.T) {
 		"type: com.example/feature@1\ngroup: {capabilities: [{type: com.example/member@1}]}",
 		"optional: false\ngroup: {capabilities: [{type: com.example/member@1}]}",
 		"group: {name: 12, capabilities: [{type: com.example/member@1}]}",
+		"group: {optional: null, capabilities: [{type: com.example/member@1}]}",
 		"group: {unknown: true, capabilities: [{type: com.example/member@1}]}",
 		"group: {capabilities: [{type: com.example/member@1, unknown: true}]}",
 		"group: {capabilities: [{type: com.example/member@1, optional: false}]}",
@@ -45,6 +46,12 @@ func TestGroupGrammar(t *testing.T) {
 				_, err = ValidateRaw(encoded, d)
 			}
 			require.Error(t, err)
+			var jsonDescriptor Descriptor
+			jsonErr := json.Unmarshal(encoded, &jsonDescriptor)
+			if jsonErr == nil {
+				_, jsonErr = ValidateRaw(encoded, &jsonDescriptor)
+			}
+			require.Error(t, jsonErr)
 		})
 	}
 }

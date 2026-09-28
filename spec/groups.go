@@ -34,6 +34,9 @@ func (g *CapabilityGroup) UnmarshalYAML(unmarshal func(any) error) error {
 	if n, ok := keys["name"]; ok && n.ShortTag() != "!!str" {
 		return fmt.Errorf("group name must be a string")
 	}
+	if n, ok := keys["optional"]; ok && n.ShortTag() != "!!bool" {
+		return fmt.Errorf("group optional must be a boolean")
+	}
 	return nil
 }
 
@@ -50,6 +53,9 @@ func (g *CapabilityGroup) UnmarshalJSON(data []byte) error {
 	}
 	if n, ok := keys["name"]; ok && bytes.Equal(bytes.TrimSpace(n), []byte("null")) {
 		return fmt.Errorf("group name must be a string")
+	}
+	if n, ok := keys["optional"]; ok && bytes.Equal(bytes.TrimSpace(n), []byte("null")) {
+		return fmt.Errorf("group optional must be a boolean")
 	}
 	return nil
 }
