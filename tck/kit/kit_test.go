@@ -1488,3 +1488,37 @@ func TestAMissingPersistentEnvIsAWarning(t *testing.T) {
 	require.Equal(t, report.Warn, got.Severity)
 	require.Contains(t, got.Detail, "does not ship")
 }
+
+func TestDescriptorValidationFindingsIncludeSourceExcerpts(t *testing.T) {
+	a := conforming(t)
+	raw := "schemaVersion: \"3\"\nkind: mixin\niconUrl: http://example.com\nargs:\n  version:\n    pattern: '['\n"
+	a.annotations[spec.AnnotationDescriptor] = raw
+	rep, err := Run(t.Context(), a)
+	require.NoError(t, err)
+	var finding report.Finding
+	for _, f := range rep.Findings {
+		if f.Check == "descriptor-valid" {
+			finding = f
+		}
+	}
+	require.Equal(t, "descriptor-valid", finding.Check)
+	require.Contains(t, finding.Detail, spec.AnnotationDescriptor+":3:10: iconUrl:")
+	require.Contains(t, finding.Detail, spec.AnnotationDescriptor+":6:14: args.version.pattern:")
+	require.Contains(t, finding.Detail, "\n3 | iconUrl: http://example.com\n  |          ^")
+
+	var rendered strings.Builder
+	require.NoError(t, rep.Render(&rendered, report.Options{Width: 60}))
+	require.Contains(t, rendered.String(), "3 | iconUrl: http://example.com\n        |          ^")
+	require.Contains(t, rendered.String(), "6 |     pattern: '['\n        |              ^")
+}
+
+func TestListedKitValidationFindingsNameItsSource(t *testing.T) {
+	a := mergedSet(t, "shell")
+	ref := "reg.example.com/sbx-kit-shell:1.0.0"
+	listed := a.kits[ref].(*fake)
+	listed.annotations[spec.AnnotationDescriptor] = "schemaVersion: \"3\"\nkind: mixin\niconUrl: http://example.com\n"
+	finding := findings(t, a)["merged-set-declarations"]
+	require.Equal(t, report.Fail, finding.Severity)
+	require.Contains(t, finding.Detail, ref+" (published descriptor):3:10: iconUrl:")
+	require.Contains(t, finding.Detail, "\n3 | iconUrl: http://example.com\n  |          ^")
+}
