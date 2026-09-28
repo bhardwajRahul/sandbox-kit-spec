@@ -87,7 +87,7 @@ func Run(ctx context.Context, a Artifact) (report.Report, error) {
 	if err != nil {
 		var rep report.Report
 		rep.Add("descriptor-annotation", "SPEC-v3 §9.3",
-			report.Failf("descriptor annotation does not decode: %v", err))
+			report.Failf("descriptor annotation does not decode: %v", spec.WithSource(err, spec.AnnotationDescriptor, []byte(raw))))
 		return rep, nil
 	}
 
@@ -336,7 +336,7 @@ var checks = []check{
 		run: func(_ context.Context, s *state) []report.Finding {
 			raw := []byte(s.artifact.Annotations()[spec.AnnotationDescriptor])
 			if _, err := spec.ValidatePublished(raw, s.descriptor); err != nil {
-				return fail("published descriptor is invalid: %v", err)
+				return fail("published descriptor is invalid: %v", spec.WithSource(err, spec.AnnotationDescriptor, raw))
 			}
 			return nil
 		},
@@ -883,7 +883,7 @@ var checks = []check{
 				}
 				d, err := spec.Decode([]byte(raw))
 				if err != nil {
-					return fail("%s: descriptor does not decode: %v", k.Ref, err)
+					return fail("descriptor does not decode: %v", spec.WithSource(err, k.Ref+" (published descriptor)", []byte(raw)))
 				}
 				// Held to the published form before it is compared
 				// against: a kit the frontend could never have merged
@@ -891,7 +891,7 @@ var checks = []check{
 				// otherwise have its malformed declarations skipped
 				// and the merge reported as conforming to them.
 				if _, err := spec.ValidatePublished([]byte(raw), d); err != nil {
-					return fail("%s is not a valid published kit, so this set could not have merged it: %v", k.Ref, err)
+					return fail("%s is not a valid published kit, so this set could not have merged it: %v", k.Ref, spec.WithSource(err, k.Ref+" (published descriptor)", []byte(raw)))
 				}
 				published = append(published, spec.Contribution{Reference: k.Ref, Descriptor: d})
 				// What the merge read is not this descriptor but its

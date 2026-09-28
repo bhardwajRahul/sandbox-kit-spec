@@ -938,9 +938,23 @@ The spec library enforces, beyond per-field rules stated above:
   derived `workload` or `mixin`, never `set`; every listed Kit carries
   a digest.
 
-Errors carry the offending element's dotted path with source positions
-computed against the authored bytes, so build failures point at lines the
-author can edit.
+Validation collects independent failures in a `ValidationErrors`
+collection, preserving warnings alongside errors. A failed config decode
+skips that entry's value checks while other entries are still judged;
+strict descriptor decoding remains a separate gate.
+
+Errors carry the offending element's dotted path. `WithSource` adds the
+filename, line, and column computed against the authored bytes, followed
+by the source line and a caret at the offending value. Multiple errors
+are separated by a blank line. A missing field points at its nearest
+containing element. Callers that render source themselves, such as the
+BuildKit frontend, attach source positions to the plain errors instead
+of using `WithSource`, so each error has one source renderer. The error
+collection preserves validation order, sorting map keys so repeated runs
+produce the same diagnostics. Registry fetches, create-phase expansion,
+and conformance findings use the excerpt formatter, labeling registry
+content by its Kit reference or descriptor annotation rather than a local
+filename.
 
 Runtimes revalidate published descriptors on load (`ValidatePublished`), so
 a hand-crafted annotation that never went through the frontend cannot

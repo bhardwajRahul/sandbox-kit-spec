@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
@@ -46,10 +47,10 @@ func TestMerge(t *testing.T) {
 	merged, err := Merge(sandbox, []Input{gh, node})
 	require.NoError(t, err)
 
-	require.Len(t, merged.Manifest.Layers, 5, "sandbox layers then mixin layers, in order")
-	require.Equal(t, sandbox.Manifest.Layers[0].Digest, merged.Manifest.Layers[0].Digest)
-	require.Equal(t, gh.Manifest.Layers[0].Digest, merged.Manifest.Layers[2].Digest)
-	require.Equal(t, node.Manifest.Layers[1].Digest, merged.Manifest.Layers[4].Digest)
+	require.Len(t, merged.Layers, 5, "sandbox layers then mixin layers, in order")
+	require.Equal(t, sandbox.Manifest.Layers[0].Digest, merged.Layers[0].Digest)
+	require.Equal(t, gh.Manifest.Layers[0].Digest, merged.Layers[2].Digest)
+	require.Equal(t, node.Manifest.Layers[1].Digest, merged.Layers[4].Digest)
 
 	require.Len(t, merged.Config.RootFS.DiffIDs, 5, "diff_ids concatenate in the same order")
 	require.Equal(t, gh.Config.RootFS.DiffIDs[0], merged.Config.RootFS.DiffIDs[2])
@@ -57,8 +58,12 @@ func TestMerge(t *testing.T) {
 	require.Equal(t, []string{"/usr/local/bin/claude"}, merged.Config.Config.Entrypoint,
 		"runtime contract travels unchanged from the sandbox")
 
-	require.Equal(t, godigest.FromBytes(merged.ConfigJSON), merged.Manifest.Config.Digest)
-	require.Equal(t, int64(len(merged.ConfigJSON)), merged.Manifest.Config.Size)
+	manifest, err := merged.Manifest()
+	require.NoError(t, err)
+	raw, err := json.Marshal(merged.Config)
+	require.NoError(t, err)
+	require.Equal(t, godigest.FromBytes(raw), manifest.Config.Digest)
+	require.Equal(t, int64(len(raw)), manifest.Config.Size)
 
 	require.Len(t, merged.Config.History, 3, "one synthesized history entry per mixin layer")
 	require.Contains(t, merged.Config.History[0].CreatedBy, "gh-kit")
@@ -79,8 +84,12 @@ func TestMergeIsDeterministic(t *testing.T) {
 	second, err := Merge(sandbox, []Input{mixin})
 	require.NoError(t, err)
 
-	require.Equal(t, string(first.ConfigJSON), string(second.ConfigJSON))
-	require.Equal(t, first.Manifest.Config.Digest, second.Manifest.Config.Digest,
+	firstManifest, err := first.Manifest()
+	require.NoError(t, err)
+	secondManifest, err := second.Manifest()
+	require.NoError(t, err)
+	require.Equal(t, first.Config, second.Config)
+	require.Equal(t, firstManifest, secondManifest,
 		"one lock must name one image, so the same inputs must merge byte-identically")
 	for _, h := range first.Config.History {
 		require.Nil(t, h.Created, "a synthesized history entry carries no clock")
@@ -160,7 +169,7 @@ func TestMergePreservesSandboxConfig(t *testing.T) {
 
 	withoutTool, err := Merge(sandbox, nil)
 	require.NoError(t, err)
-	require.Equal(t, original.ConfigJSON, withoutTool.ConfigJSON)
+	require.Equal(t, original.Config, withoutTool.Config)
 }
 
 func TestMergePreservesSandboxConfigOnError(t *testing.T) {

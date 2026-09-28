@@ -27,7 +27,8 @@ type Unit struct {
 	// its source, not the name its build output happens to carry.
 	Image string
 
-	// Descriptor is the published descriptor, already validated.
+	// Descriptor is already validated. Callers that resolve create arguments
+	// before resolution supply the expanded descriptor here.
 	Descriptor *spec.Descriptor
 
 	// Args are the create-phase values resolved for this kit, recorded in

@@ -71,14 +71,14 @@ func (c *Client) fetch(ctx context.Context, ref string) (*Kit, error) {
 	}
 	d, err := spec.Decode(raw)
 	if err != nil {
-		return nil, err
+		return nil, spec.WithSource(err, ref+" (published descriptor)", raw)
 	}
 	// A fetched kit is published data. Decode only parses; the
 	// published-form rules are what keep a hand-written annotation
 	// from reaching resolve with kind: set, an unpinned kit, or a
 	// build arg still in the document.
 	if _, err := spec.ValidatePublished(raw, d); err != nil {
-		return nil, err
+		return nil, spec.WithSource(err, ref+" (published descriptor)", raw)
 	}
 	return &Kit{
 		Reference:  ref,
@@ -116,7 +116,7 @@ func (c *Client) readDescriptor(ctx context.Context, repo *remote.Repository, re
 	if err != nil {
 		return nil, "", err
 	}
-	raw, _, ok, err := c.annotation(ctx, repo, desc, body, 0, budget)
+	raw, _, ok, err := c.metadata(ctx, repo, desc, body, 0, budget, true)
 	if err != nil {
 		return nil, "", err
 	}
@@ -126,17 +126,10 @@ func (c *Client) readDescriptor(ctx context.Context, repo *remote.Repository, re
 	return raw, desc.Digest.String(), nil
 }
 
-// annotation reads the descriptor annotation from desc.
-//
-// platform is the image manifest the annotation was read from, so a
-// caller ranking several branches can keep the closer one. It is nil
-// when the annotation came from the tagged index itself.
-//
-// ok is false when desc is an index that does not hold the wanted
-// platform — a caller searching several nested indexes tries the next.
-// An image manifest is ok even when its annotation is empty; that
-// emptiness is "not a kit", not "look somewhere else".
-func (c *Client) annotation(ctx context.Context, repo *remote.Repository, desc ocispec.Descriptor, body []byte, depth int, budget *manifestBudget) ([]byte, *ocispec.Platform, bool, error) {
+// metadata selects platform metadata through the same bounded walk for both
+// descriptor resolution and image loading. annotationOnly permits the root
+// index annotation shortcut; image loading always reaches a platform manifest.
+func (c *Client) metadata(ctx context.Context, repo *remote.Repository, desc ocispec.Descriptor, body []byte, depth int, budget *manifestBudget, annotationOnly bool) ([]byte, *ocispec.Platform, bool, error) {
 	if !isIndex(desc.MediaType) {
 		if !isImageManifest(desc.MediaType) {
 			return nil, nil, false, fmt.Errorf("a kit is a plain image manifest, not %q", desc.MediaType)
@@ -148,7 +141,10 @@ func (c *Client) annotation(ctx context.Context, repo *remote.Repository, desc o
 		if err := requirePlainImageManifest(desc, manifest); err != nil {
 			return nil, nil, false, err
 		}
-		return []byte(manifest.Annotations[spec.AnnotationDescriptor]), desc.Platform, true, nil
+		if annotationOnly {
+			return []byte(manifest.Annotations[spec.AnnotationDescriptor]), desc.Platform, true, nil
+		}
+		return body, desc.Platform, true, nil
 	}
 	if depth > maxIndexDepth {
 		return nil, nil, false, fmt.Errorf("indexes nest deeper than any kit should")
@@ -169,7 +165,7 @@ func (c *Client) annotation(ctx context.Context, repo *remote.Repository, desc o
 	// Only the tagged index's annotation counts. A nested index is not
 	// what the reference resolved to, and adopting its annotation would
 	// hide an absent one on the index a consumer actually reads.
-	if depth == 0 {
+	if depth == 0 && annotationOnly {
 		if raw := index.Annotations[spec.AnnotationDescriptor]; raw != "" {
 			return []byte(raw), nil, true, nil
 		}
@@ -196,7 +192,7 @@ func (c *Client) annotation(ctx context.Context, repo *remote.Repository, desc o
 		if err != nil {
 			return nil, nil, false, err
 		}
-		return c.annotation(ctx, repo, d, body, depth+1, budget)
+		return c.metadata(ctx, repo, d, body, depth+1, budget, annotationOnly)
 	}
 	// A direct match that is already the platform asked for, or the
 	// only candidate, is read now. A merely compatible or platform-less
@@ -358,7 +354,7 @@ func fetchManifest(ctx context.Context, repo *remote.Repository, referenceName s
 	if err != nil {
 		return ocispec.Descriptor{}, nil, err
 	}
-	body, err := readLimited(rc, desc.Digest.String())
+	body, err := readVerified(rc, desc)
 	if err != nil {
 		return ocispec.Descriptor{}, nil, err
 	}
@@ -373,7 +369,24 @@ func fetchDescriptor(ctx context.Context, repo *remote.Repository, desc ocispec.
 	if err != nil {
 		return nil, err
 	}
-	return readLimited(rc, desc.Digest.String())
+	return readVerified(rc, desc)
+}
+
+func readVerified(rc io.ReadCloser, desc ocispec.Descriptor) ([]byte, error) {
+	body, err := readLimited(rc, desc.Digest.String())
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) != desc.Size {
+		return nil, fmt.Errorf("%s: expected %d bytes, got %d", desc.Digest, desc.Size, len(body))
+	}
+	if err := desc.Digest.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid metadata digest: %w", err)
+	}
+	if desc.Digest.Algorithm().FromBytes(body) != desc.Digest {
+		return nil, fmt.Errorf("%s: metadata digest mismatch", desc.Digest)
+	}
+	return body, nil
 }
 
 func readLimited(rc io.ReadCloser, name string) ([]byte, error) {

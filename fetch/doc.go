@@ -1,26 +1,22 @@
-// Package fetch reads published kit descriptors from OCI registries.
+// Package fetch reads published Kit descriptors and image metadata from OCI
+// registries. Credentials, transport, and platform selection belong to Client.
 //
-// resolve and spec do no registry IO: a caller hands them descriptors
-// it already has. This package is that fetch. Credentials and transport
-// belong to the caller, so a private registry is reached the same way
-// the rest of the program reaches it.
+// Resolve fetches a closed set of requests, resolves create arguments, validates
+// every input, orders the dependency graph, reconciles the descriptors with
+// spec.Compose, and validates the final descriptor. ResolvePartial performs the
+// same checks while allowing a mixin-only set. There is no validation bypass.
 //
-//	client, err := fetch.New(fetch.WithCredential(auth.StaticCredential(
-//		"docker.io",
-//		auth.Credential{Username: "user", Password: token},
-//	)))
-//	merged, err := client.Assemble(ctx, []fetch.Request{
-//		{Reference: "docker.io/me/sbx-kit-hello:1.0.0"},
-//		{Reference: "docker.io/me/sbx-kit-tool:1.0.0", Args: map[string]string{"team": "alpha"}},
-//	}, spec.MergeOptions{})
+// Resolved.Kits retains expanded input descriptors, pinned image identities,
+// and resolved arguments in dependency order. Resolved.ContainerEnv contains
+// env: exports for container creation; these override image defaults at runtime.
+// Resolved.Warnings contains advisory findings from final validation.
 //
-// Docker Hub redirects docker.io to registry-1.docker.io. auth.StaticCredential
-// already accounts for that host; a hand-rolled credential func must too.
+// LoadImage implements assemble.ImageLoader using the same credentials and
+// platform as descriptor resolution. Pass it to assemble.Assemble together
+// with Resolved.Kits to load the pinned images and compose their metadata.
+// Resolve reads manifests only; LoadImage also reads config blobs. Neither
+// downloads filesystem layers or performs filesystem collision checks.
 //
-// Assemble resolves a runnable set (exactly one workload) and merges
-// descriptors with spec.Merge. AssemblePartial is the mixin-only form.
-// The merged image config is assemble.Merge, which needs the manifests
-// and configs, not just these descriptors. Result.Env carries
-// create-phase env: exports, which do not survive in the descriptor;
-// the caller applies them to that config.
+// A complete runnable consumer lives in fetch/example. Publishing a flattened
+// Kit remains spec.Merge's job, with staging owned by the BuildKit frontend.
 package fetch

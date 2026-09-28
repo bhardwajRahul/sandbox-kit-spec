@@ -72,13 +72,43 @@ type MergeOptions struct {
 // what several of the rules below mean by "first" and "last", and
 // deriving it needs the resolver, which does not belong here.
 //
-// What the merge computes is the same judgment a runtime makes when it
-// composes the same kits at create, moved to publish: the union of what
-// they ask for, reconciled where a capability type admits only one
-// entry. Where two contributions ask for incompatible things, the merge
-// fails rather than picking — the artifact would otherwise record a
-// policy neither author wrote.
+// Context bodies are concatenated by the publisher at opts.ContextPath.
+// Runtime consumers use Compose and retain the input contributions.
 func Merge(contributions []Contribution, opts MergeOptions) (*MergeResult, error) {
+	result, err := mergeDeclarations(contributions)
+	if err != nil {
+		return nil, err
+	}
+	if len(result.ContextSources) > 0 {
+		if opts.ContextPath == "" {
+			return nil, fmt.Errorf("merge: %d agent-context bodies to stage but no ContextPath to stage them at", len(result.ContextSources))
+		}
+		for i := range result.Descriptor.Capabilities {
+			c := &result.Descriptor.Capabilities[i]
+			if c.Type == CapabilityAgentContext {
+				c.Config["contentFile"] = opts.ContextPath
+			}
+		}
+	}
+	return result, nil
+}
+
+// Compose reconciles ordered, expanded contributions for runtime use.
+// It shares Merge's conflict and reconciliation rules, without staging
+// content for publication. Retain the input contributions alongside the
+// returned descriptor: capability handlers need the individual declarations
+// wherever composition would otherwise erase their provenance.
+// The caller resolves dependencies and validates inputs before calling;
+// Compose does not perform descriptor validation or registry IO.
+func Compose(contributions []Contribution) (*Descriptor, error) {
+	result, err := mergeDeclarations(contributions)
+	if err != nil {
+		return nil, err
+	}
+	return result.Descriptor, nil
+}
+
+func mergeDeclarations(contributions []Contribution) (*MergeResult, error) {
 	if len(contributions) == 0 {
 		return nil, fmt.Errorf("merge: no contributions")
 	}
@@ -100,7 +130,7 @@ func Merge(contributions []Contribution, opts MergeOptions) (*MergeResult, error
 	if err := mergeLicenses(contributions, out); err != nil {
 		return nil, err
 	}
-	capabilities, sources, err := mergeCapabilities(contributions, opts)
+	capabilities, sources, err := mergeCapabilities(contributions)
 	if err != nil {
 		return nil, err
 	}
@@ -354,7 +384,7 @@ func mergeLicenses(contributions []Contribution, out *Descriptor) error {
 // concatenate, and the types that describe the whole sandbox rather
 // than a grant to it — resources, agent-sessions — admit one author,
 // because two different answers cannot both be the sandbox's.
-func mergeCapabilities(contributions []Contribution, opts MergeOptions) ([]Capability, []ContextSource, error) {
+func mergeCapabilities(contributions []Contribution) ([]Capability, []ContextSource, error) {
 	m := &capabilityMerge{
 		byKey:    map[string]keyed{},
 		optional: map[string]bool{},
@@ -366,7 +396,7 @@ func mergeCapabilities(contributions []Contribution, opts MergeOptions) ([]Capab
 			}
 		}
 	}
-	return m.finish(opts)
+	return m.finish()
 }
 
 // decodeForMerge reads one entry's typed config, explaining the one
@@ -640,7 +670,7 @@ func describeCapability(n Capability) string {
 	return n.Type
 }
 
-func (m *capabilityMerge) finish(opts MergeOptions) ([]Capability, []ContextSource, error) {
+func (m *capabilityMerge) finish() ([]Capability, []ContextSource, error) {
 	var out []Capability
 
 	if network, err := m.mergedNetwork(); err != nil {
@@ -668,7 +698,7 @@ func (m *capabilityMerge) finish(opts MergeOptions) ([]Capability, []ContextSour
 		out = append(out, *lifecycle)
 	}
 
-	context, sources, err := m.mergedContext(opts)
+	context, sources, err := m.mergedContext()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -913,8 +943,8 @@ func (m *capabilityMerge) mergedLifecycle() (*Capability, error) {
 
 // mergedContext folds the contributors' agent-context into one entry:
 // the profile filename from whichever contribution owns it, and every
-// body collected for the caller to stage as one file.
-func (m *capabilityMerge) mergedContext(opts MergeOptions) (*Capability, []ContextSource, error) {
+// body collected separately for publishers to stage.
+func (m *capabilityMerge) mergedContext() (*Capability, []ContextSource, error) {
 	if len(m.context) == 0 {
 		return nil, nil, nil
 	}
@@ -950,13 +980,7 @@ func (m *capabilityMerge) mergedContext(opts MergeOptions) (*Capability, []Conte
 		}
 	}
 
-	if len(sources) > 0 {
-		if opts.ContextPath == "" {
-			return nil, nil, fmt.Errorf("merge: %d agent-context bodies to stage but no ContextPath to stage them at", len(sources))
-		}
-		merged.ContentFile = opts.ContextPath
-	}
-	if merged.Filename == "" && merged.ContentFile == "" {
+	if merged.Filename == "" && len(sources) == 0 {
 		// Every contribution declared the type and stated nothing in
 		// it; the entry would ask for nothing.
 		return nil, nil, nil
