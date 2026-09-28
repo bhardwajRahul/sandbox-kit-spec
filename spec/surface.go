@@ -85,14 +85,14 @@ func SurfaceOf(d *Descriptor) Surface {
 			if r := p.Install; r != nil {
 				s.NetworkInstallAllow = append(s.NetworkInstallAllow, connectionHosts(r.Allow)...)
 				s.NetworkInstallDeny = append(s.NetworkInstallDeny, connectionHosts(r.Deny)...)
-				s.NetworkInstallHTTPAllow = append(s.NetworkInstallHTTPAllow, normalized(entrySurface(r.Allow))...)
-				s.NetworkInstallHTTPDeny = append(s.NetworkInstallHTTPDeny, normalized(entrySurface(r.Deny))...)
+				s.NetworkInstallHTTPAllow = append(s.NetworkInstallHTTPAllow, entrySurface(r.Allow)...)
+				s.NetworkInstallHTTPDeny = append(s.NetworkInstallHTTPDeny, entrySurface(r.Deny)...)
 			}
 			if r := p.Runtime; r != nil {
 				s.NetworkRuntimeAllow = append(s.NetworkRuntimeAllow, connectionHosts(r.Allow)...)
 				s.NetworkRuntimeDeny = append(s.NetworkRuntimeDeny, connectionHosts(r.Deny)...)
-				s.NetworkRuntimeHTTPAllow = append(s.NetworkRuntimeHTTPAllow, normalized(entrySurface(r.Allow))...)
-				s.NetworkRuntimeHTTPDeny = append(s.NetworkRuntimeHTTPDeny, normalized(entrySurface(r.Deny))...)
+				s.NetworkRuntimeHTTPAllow = append(s.NetworkRuntimeHTTPAllow, entrySurface(r.Allow)...)
+				s.NetworkRuntimeHTTPDeny = append(s.NetworkRuntimeHTTPDeny, entrySurface(r.Deny)...)
 			}
 		case CapabilityCredential:
 			var c Credential
@@ -160,6 +160,14 @@ func SurfaceOf(d *Descriptor) Surface {
 			s.Services = append(s.Services, capabilitySurfaceEntry(n))
 		}
 	}
+	s.NetworkInstallAllow = normalized(s.NetworkInstallAllow)
+	s.NetworkInstallDeny = normalized(s.NetworkInstallDeny)
+	s.NetworkInstallHTTPAllow = normalized(s.NetworkInstallHTTPAllow)
+	s.NetworkInstallHTTPDeny = normalized(s.NetworkInstallHTTPDeny)
+	s.NetworkRuntimeAllow = normalized(s.NetworkRuntimeAllow)
+	s.NetworkRuntimeDeny = normalized(s.NetworkRuntimeDeny)
+	s.NetworkRuntimeHTTPAllow = normalized(s.NetworkRuntimeHTTPAllow)
+	s.NetworkRuntimeHTTPDeny = normalized(s.NetworkRuntimeHTTPDeny)
 	s.CredentialsInstall = normalized(s.CredentialsInstall)
 	s.CredentialsRuntime = normalized(s.CredentialsRuntime)
 	s.StoragePaths = normalized(s.StoragePaths)
