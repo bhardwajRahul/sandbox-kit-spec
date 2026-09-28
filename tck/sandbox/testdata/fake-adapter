@@ -21,21 +21,27 @@ shift || true
 # The group fixture's observable files, ordering, records and grant surface.
 write_group_state() {
   local dir="$1" rejected="$2"
+  local -a records=()
+  local skipped='' surface='{}' IFS=,
+  if [ "$broken" != group-missing-ordinary-record ]; then
+    records+=('{"path":"capabilities[0]","source":{"kit":"groups","path":"capabilities[0]"},"members":["capabilities[0]"]}')
+  fi
   echo "$rejected" >"$dir/group-rejected"
   if [ "$rejected" = yes ]; then
     printf 'base,independent' >"$dir/group-order"
     rm -f "$dir/group-feature"
     if [ "$broken" = group-file-leak ]; then echo selected >"$dir/group-feature"; fi
-    cat >"$dir/selection.json" <<'JSON'
-{"selection":{"selected":[],"skipped":[{"path":"capabilities[1]","name":"Feature","source":{"kit":"groups","path":"capabilities[1]"},"members":["capabilities[1].group.capabilities[0]","capabilities[1].group.capabilities[1]"],"rejected":["capabilities[1].group.capabilities[0]"]}]},"surface":{}}
-JSON
+    skipped='{"path":"capabilities[1]","name":"Feature","source":{"kit":"groups","path":"capabilities[1]"},"members":["capabilities[1].group.capabilities[0]","capabilities[1].group.capabilities[1]"],"rejected":["capabilities[1].group.capabilities[0]"]}'
   else
     printf 'base,feature,independent' >"$dir/group-order"
     echo selected >"$dir/group-feature"
-    cat >"$dir/selection.json" <<'JSON'
-{"selection":{"selected":[{"path":"capabilities[1]","name":"Feature","source":{"kit":"groups","path":"capabilities[1]"},"members":["capabilities[1].group.capabilities[0]","capabilities[1].group.capabilities[1]"]}],"skipped":[]},"surface":{"storagePaths":["/var/tmp/group-volume"]}}
-JSON
+    records+=('{"path":"capabilities[1]","name":"Feature","source":{"kit":"groups","path":"capabilities[1]"},"members":["capabilities[1].group.capabilities[0]","capabilities[1].group.capabilities[1]"]}')
+    surface='{"storagePaths":["/var/tmp/group-volume"]}'
   fi
+  if [ "$broken" != group-missing-independent-record ]; then
+    records+=('{"path":"capabilities[2]","name":"Feature","source":{"kit":"groups","path":"capabilities[2]"},"members":["capabilities[2].group.capabilities[0]"]}')
+  fi
+  printf '{"selection":{"selected":[%s],"skipped":[%s]},"surface":%s}\n' "${records[*]}" "$skipped" "$surface" >"$dir/selection.json"
   if [ "$broken" = group-order ]; then printf 'independent,base' >"$dir/group-order"; fi
   if [ "$broken" = group-records ]; then echo '{"selection":{},"surface":{}}' >"$dir/selection.json"; fi
   if [ "$broken" = group-member-paths ]; then

@@ -55,6 +55,7 @@ func groupSelection(ctx context.Context, e *Env) []report.Finding {
 			records = state.Selection.Skipped
 		}
 		found := false
+		sourceKit := ""
 		for _, r := range records {
 			if r.Path == "capabilities[1]" {
 				found = true
@@ -65,6 +66,7 @@ func groupSelection(ctx context.Context, e *Env) []report.Finding {
 				if r.Source == nil || r.Source.Kit == "" || r.Source.Path == "" {
 					return []report.Finding{report.Failf("group record lost source identity")}
 				}
+				sourceKit = r.Source.Kit
 				if reject && !slices.Contains(r.Rejected, "capabilities[1].group.capabilities[0]") {
 					return []report.Finding{report.Failf("skip record lost rejected member")}
 				}
@@ -72,6 +74,24 @@ func groupSelection(ctx context.Context, e *Env) []report.Finding {
 		}
 		if !found {
 			return []report.Finding{report.Failf("group selection record missing")}
+		}
+		for _, expected := range []struct {
+			path   string
+			member string
+		}{
+			{"capabilities[0]", "capabilities[0]"},
+			{"capabilities[2]", "capabilities[2].group.capabilities[0]"},
+		} {
+			found := false
+			for _, record := range state.Selection.Selected {
+				if record.Path == expected.path && record.Source != nil && record.Source.Kit == sourceKit {
+					found = record.Source.Path == expected.path &&
+						slices.Equal(record.Members, []string{expected.member}) && len(record.Rejected) == 0
+				}
+			}
+			if !found {
+				return []report.Finding{report.Failf("required selection record %s missing or incomplete", expected.path)}
+			}
 		}
 	}
 	_, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, "groups-required"}, adapter.CreateOptions{RejectCapabilities: []string{groupVolume}})
