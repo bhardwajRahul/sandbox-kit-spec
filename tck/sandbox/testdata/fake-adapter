@@ -41,6 +41,10 @@ write_group_state() {
   if [ "$broken" != group-missing-independent-record ]; then
     records+=('{"path":"capabilities[2]","name":"Feature","source":{"kit":"groups","path":"capabilities[2]"},"members":["capabilities[2].group.capabilities[0]"]}')
   fi
+  if [ "$broken" = group-extra-grant ]; then
+    surface='{"services":["group:Feature"]}'
+    if [ "$rejected" != yes ]; then surface='{"services":["group:Feature"],"storagePaths":["/var/tmp/group-volume"]}'; fi
+  fi
   printf '{"selection":{"selected":[%s],"skipped":[%s]},"surface":%s}\n' "${records[*]}" "$skipped" "$surface" >"$dir/selection.json"
   if [ "$broken" = group-order ]; then printf 'independent,base' >"$dir/group-order"; fi
   if [ "$broken" = group-records ]; then echo '{"selection":{},"surface":{}}' >"$dir/selection.json"; fi
@@ -60,6 +64,7 @@ create)
   greeting=""
   hostmode="readwrite"
   group_rejected=no
+  lifecycle_rejected=no
   while [ $# -gt 0 ]; do
     case "$1" in
     --arg)
@@ -68,6 +73,7 @@ create)
       ;;
     --reject-capability)
       if [ "$2" = com.docker.sandbox/volume@1 ]; then group_rejected=yes; fi
+      if [ "$2" = com.docker.sandbox/lifecycle@1 ]; then lifecycle_rejected=yes; fi
       shift 2
       ;;
     --skills-host-mode)
@@ -163,6 +169,12 @@ create)
 
   for kit in "${kits[@]}"; do
     case "$kit" in
+    */ordinary-required)
+      if [ "$lifecycle_rejected" = yes ] && [ "$broken" != ordinary-ignore-required-rejection ]; then
+        echo "ordinary-required capabilities[0]: rejected" >&2
+        exit 2
+      fi
+      ;;
     */groups-required)
       if [ "$group_rejected" = yes ] && [ "$broken" != group-accept-required ]; then
         echo 'groups-required capabilities[0].group.capabilities[0]: rejected' >&2
@@ -171,13 +183,17 @@ create)
       ;;
     */groups-conflict)
       if [ "$broken" != group-drop-conflict ]; then
-        echo 'groups-conflict capabilities[0] and capabilities[1]: duplicate file' >&2
+        source_kit=groups-conflict
+        if [ "$broken" = group-conflict-no-kit ]; then source_kit=''; fi
+        echo "$source_kit capabilities[0] and capabilities[1]: duplicate file" >&2
         exit 2
       fi
       ;;
     */groups-interactive-conflict)
       if [ "$broken" != group-drop-interactive-conflict ]; then
-        echo 'groups-interactive-conflict capabilities[0] and capabilities[1]: multiple interactive declarations' >&2
+        source_kit=groups-interactive-conflict
+        if [ "$broken" = group-conflict-no-kit ]; then source_kit=''; fi
+        echo "$source_kit capabilities[0] and capabilities[1]: multiple interactive declarations" >&2
         exit 2
       fi
       ;;
@@ -196,6 +212,15 @@ create)
   echo running >"$dir/status"
   for kit in "${kits[@]}"; do
     if [[ "$kit" == */groups ]]; then write_group_state "$dir" "$group_rejected"; fi
+    if [[ "$kit" == */ordinary-optional ]]; then
+      ordinary_record='{"path":"capabilities[0]","source":{"kit":"ordinary-optional","path":"capabilities[0]"},"members":["capabilities[0]"]}'
+      if [ "$lifecycle_rejected" = yes ] && [ "$broken" != ordinary-ignore-optional-rejection ]; then
+        printf '{"selection":{"selected":[],"skipped":[%s,"rejected":["capabilities[0]"]}]},"surface":{}}\n' "${ordinary_record%?}" >"$dir/selection.json"
+      else
+        echo selected >"$dir/ordinary-feature"
+        printf '{"selection":{"selected":[%s],"skipped":[]},"surface":{}}\n' "$ordinary_record" >"$dir/selection.json"
+      fi
+    fi
   done
   for kit in "${kits[@]}"; do
     if [[ "$kit" == */long-running ]]; then : >"$dir/long-running-mixin"; fi
@@ -348,6 +373,7 @@ exec)
     case "$2" in
     /var/tmp/group-order) cat "$dir/group-order" ;;
     /var/tmp/group-feature) cat "$dir/group-feature" ;;
+    /var/tmp/ordinary-feature) cat "$dir/ordinary-feature" ;;
     /var/tmp/install.count) cat "$dir/install.count" ;;
     /var/tmp/startup.count) cat "$dir/startup.count" ;;
     /var/tmp/sbx-entrypoint-ran)

@@ -2,11 +2,13 @@ package sandbox
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"slices"
 	"strings"
 
+	"github.com/docker/sandbox-kit-spec/v3/spec"
 	"github.com/docker/sandbox-kit-spec/v3/tck/adapter"
 	"github.com/docker/sandbox-kit-spec/v3/tck/report"
 )
@@ -47,8 +49,20 @@ func groupSelection(ctx context.Context, e *Env) []report.Finding {
 		if err != nil {
 			return []report.Finding{report.Failf("selection records: %v", err)}
 		}
-		if slices.Contains(state.Surface.StoragePaths, "/var/tmp/group-volume") == reject {
-			return []report.Finding{report.Failf("permission surface includes skipped or omits selected volume")}
+		wantSurface := spec.Surface{}
+		if !reject {
+			wantSurface.StoragePaths = []string{"/var/tmp/group-volume"}
+		}
+		actualSurface, err := json.Marshal(state.Surface)
+		if err != nil {
+			return []report.Finding{report.Failf("encode observed surface: %v", err)}
+		}
+		expectedSurface, err := json.Marshal(wantSurface)
+		if err != nil {
+			return []report.Finding{report.Failf("encode expected surface: %v", err)}
+		}
+		if string(actualSurface) != string(expectedSurface) {
+			return []report.Finding{report.Failf("selected permission surface: got %s, want %s", actualSurface, expectedSurface)}
 		}
 		records := state.Selection.Selected
 		if reject {
@@ -100,6 +114,53 @@ func groupSelection(ctx context.Context, e *Env) []report.Finding {
 	if !errors.As(err, &refused) || !strings.Contains(refused.Detail, "capabilities[0].group.capabilities[0]") {
 		return []report.Finding{report.Failf("required group must refuse and identify rejected member: %v", err)}
 	}
+	return ordinarySelection(ctx, e)
+}
+
+func ordinarySelection(ctx context.Context, e *Env) []report.Finding {
+	for _, reject := range []bool{false, true} {
+		opts := adapter.CreateOptions{}
+		if reject {
+			opts.RejectCapabilities = []string{capLifecycle}
+		}
+		id, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, "ordinary-optional"}, opts)
+		defer cleanup()
+		if err != nil {
+			return []report.Finding{report.Failf("ordinary optional create: %v", err)}
+		}
+		file, err := e.Adapter.Exec(ctx, id, "cat", "/var/tmp/ordinary-feature")
+		if err != nil || (file.ExitCode == 0) == reject {
+			return []report.Finding{report.Failf("ordinary optional lifecycle file presence is wrong: %v", err)}
+		}
+		state, err := e.Adapter.Selection(ctx, id)
+		if err != nil {
+			return []report.Finding{report.Failf("ordinary selection records: %v", err)}
+		}
+		records := state.Selection.Selected
+		if reject {
+			records = state.Selection.Skipped
+		}
+		found := false
+		for _, record := range records {
+			if record.Path == "capabilities[0]" && record.Source != nil && strings.Contains(record.Source.Kit, "ordinary-optional") {
+				found = record.Source.Path == "capabilities[0]" && slices.Equal(record.Members, []string{"capabilities[0]"})
+				if reject {
+					found = found && slices.Equal(record.Rejected, []string{"capabilities[0]"})
+				} else {
+					found = found && len(record.Rejected) == 0
+				}
+			}
+		}
+		if !found {
+			return []report.Finding{report.Failf("ordinary optional selection/skip record missing or incomplete")}
+		}
+	}
+	_, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, "ordinary-required"}, adapter.CreateOptions{RejectCapabilities: []string{capLifecycle}})
+	defer cleanup()
+	var refused *adapter.RefusedError
+	if !errors.As(err, &refused) || !strings.Contains(refused.Detail, "ordinary-required") || !strings.Contains(refused.Detail, "capabilities[0]") {
+		return []report.Finding{report.Failf("required ordinary rejection must refuse and identify its source: %v", err)}
+	}
 	return nil
 }
 
@@ -111,7 +172,7 @@ func groupConflicts(ctx context.Context, e *Env) []report.Finding {
 		if !errors.As(err, &refused) {
 			return []report.Finding{report.Failf("%s: selected conflicting groups must refuse: %v", fixture, err)}
 		}
-		if !strings.Contains(refused.Detail, "capabilities[0]") || !strings.Contains(refused.Detail, "capabilities[1]") {
+		if !strings.Contains(refused.Detail, fixture) || !strings.Contains(refused.Detail, "capabilities[0]") || !strings.Contains(refused.Detail, "capabilities[1]") {
 			return []report.Finding{report.Failf("%s: composition conflict must identify both sources: %s", fixture, refused.Detail)}
 		}
 	}
