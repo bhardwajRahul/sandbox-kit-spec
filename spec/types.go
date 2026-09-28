@@ -313,6 +313,9 @@ func (c *Capability) UnmarshalYAML(unmarshal func(any) error) error {
 	_, c.configSet = keys["config"]
 	_, c.optionalSet = keys["optional"]
 	_, c.groupSet = keys["group"]
+	if _, stated := keys["source"]; stated && c.Source == nil {
+		return fmt.Errorf("capability source must be an object")
+	}
 	if c.groupSet {
 		for _, key := range []string{"type", "name", "description", "optional", "config"} {
 			if _, ok := keys[key]; ok {
@@ -343,6 +346,9 @@ func (c *Capability) UnmarshalJSON(data []byte) error {
 	_, c.configSet = keys["config"]
 	_, c.optionalSet = keys["optional"]
 	_, c.groupSet = keys["group"]
+	if _, stated := keys["source"]; stated && c.Source == nil {
+		return fmt.Errorf("capability source must be an object")
+	}
 	if c.groupSet {
 		for _, key := range []string{"type", "name", "description", "optional", "config"} {
 			if _, ok := keys[key]; ok {
