@@ -644,7 +644,15 @@ selection-policy)
 
 recreate)
   if [ -f "$state/$1/group-rejected" ] && [ "$broken" != group-no-recreate ]; then
+    cp "$state/$1/selection.json" "$state/$1/previous-selection.json"
+    cp "$state/$1/group-order" "$state/$1/previous-group-order"
     write_group_state "$state/$1" "$(cat "$state/$1/group-future-rejected")"
+    if [ "$broken" = group-stale-recreate-records ]; then
+      sed 's/"storagePaths":\["[^"]*"\]/"storagePaths":[]/' "$state/$1/previous-selection.json" >"$state/$1/selection.json"
+    fi
+    if [ "$broken" = group-stale-recreate-hooks ]; then
+      cp "$state/$1/previous-group-order" "$state/$1/group-order"
+    fi
   fi
   # A fresh container: the writable layer goes, declared volumes stay.
   dir="$state/$1"

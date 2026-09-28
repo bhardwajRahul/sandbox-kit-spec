@@ -126,6 +126,8 @@ var mutations = map[string][]string{
 	"group-drop-interactive-conflict": {"SPEC-v3 §7.1.1/conflicts"},
 	"group-reselect-restart":          {"SPEC-v3 §7.1.1/lifetime"},
 	"group-no-recreate":               {"SPEC-v3 §7.1.1/lifetime"},
+	"group-stale-recreate-records":    {"SPEC-v3 §7.1.1/lifetime"},
+	"group-stale-recreate-hooks":      {"SPEC-v3 §7.1.1/lifetime"},
 	"group-skip-failure":              {"SPEC-v3 §7.1.1/execution"},
 
 	"ignores-long-running-mixin":        {"long-running@1/survives-session-disconnect"},

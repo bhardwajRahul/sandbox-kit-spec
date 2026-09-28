@@ -135,6 +135,27 @@ func groupLifetime(ctx context.Context, e *Env) []report.Finding {
 	if err != nil || slices.Contains(fresh.Surface.StoragePaths, "/var/tmp/group-volume") {
 		return []report.Finding{report.Failf("recreate did not select afresh: %v", err)}
 	}
+	for _, record := range fresh.Selection.Selected {
+		if record.Path == "capabilities[1]" {
+			return []report.Finding{report.Failf("recreate retained the previously selected group record")}
+		}
+	}
+	found := false
+	for _, record := range fresh.Selection.Skipped {
+		if record.Path == "capabilities[1]" {
+			found = slices.Contains(record.Rejected, "capabilities[1].group.capabilities[0]")
+		}
+	}
+	if !found {
+		return []report.Finding{report.Failf("recreate did not record the newly skipped group and rejected member")}
+	}
+	order, f = execOutput(ctx, e, id, "cat", "/var/tmp/group-order")
+	if f != nil {
+		return []report.Finding{*f}
+	}
+	if strings.TrimSpace(order) != "base,independent" {
+		return []report.Finding{report.Failf("recreate applied stale group hooks: %q", order)}
+	}
 	return nil
 }
 
