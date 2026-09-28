@@ -31,8 +31,10 @@ func (g *CapabilityGroup) UnmarshalYAML(unmarshal func(any) error) error {
 	if err := unmarshal(&keys); err != nil {
 		return err
 	}
-	if n, ok := keys["name"]; ok && n.ShortTag() != "!!str" {
-		return fmt.Errorf("group name must be a string")
+	for _, field := range []string{"name", "description"} {
+		if n, ok := keys[field]; ok && n.ShortTag() != "!!str" {
+			return fmt.Errorf("group %s must be a string", field)
+		}
 	}
 	if n, ok := keys["optional"]; ok && n.ShortTag() != "!!bool" {
 		return fmt.Errorf("group optional must be a boolean")
@@ -51,8 +53,10 @@ func (g *CapabilityGroup) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &keys); err != nil {
 		return err
 	}
-	if n, ok := keys["name"]; ok && bytes.Equal(bytes.TrimSpace(n), []byte("null")) {
-		return fmt.Errorf("group name must be a string")
+	for _, field := range []string{"name", "description"} {
+		if n, ok := keys[field]; ok && bytes.Equal(bytes.TrimSpace(n), []byte("null")) {
+			return fmt.Errorf("group %s must be a string", field)
+		}
 	}
 	if n, ok := keys["optional"]; ok && bytes.Equal(bytes.TrimSpace(n), []byte("null")) {
 		return fmt.Errorf("group optional must be a boolean")
@@ -64,6 +68,42 @@ func (g *CapabilityGroup) UnmarshalJSON(data []byte) error {
 type CapabilitySource struct {
 	Kit  string `json:"kit" yaml:"kit"`
 	Path string `json:"path" yaml:"path"`
+}
+
+func (s *CapabilitySource) UnmarshalYAML(unmarshal func(any) error) error {
+	type plain CapabilitySource
+	if err := unmarshal((*plain)(s)); err != nil {
+		return err
+	}
+	var keys map[string]yaml.Node
+	if err := unmarshal(&keys); err != nil {
+		return err
+	}
+	for _, field := range []string{"kit", "path"} {
+		if n, ok := keys[field]; ok && n.ShortTag() != "!!str" {
+			return fmt.Errorf("source %s must be a string", field)
+		}
+	}
+	return nil
+}
+
+func (s *CapabilitySource) UnmarshalJSON(data []byte) error {
+	type plain CapabilitySource
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode((*plain)(s)); err != nil {
+		return err
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(data, &keys); err != nil {
+		return err
+	}
+	for _, field := range []string{"kit", "path"} {
+		if n, ok := keys[field]; ok && bytes.Equal(bytes.TrimSpace(n), []byte("null")) {
+			return fmt.Errorf("source %s must be a string", field)
+		}
+	}
+	return nil
 }
 
 // SelectCapability answers whether the runtime will provide one expanded entry.
