@@ -2,6 +2,7 @@ package fetch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -102,10 +103,10 @@ func WithPlainHTTP() Option {
 	}
 }
 
-// WithPlatform selects which platform manifest to read when an index
-// carries no descriptor annotation. The default is linux on this
-// process's architecture: a kit is a Linux image whichever OS the
-// caller is running.
+// WithPlatform selects the platform for descriptor and image reads.
+// Descriptor resolution may use an index annotation without opening its
+// platform manifest; LoadImage always reads the selected image and config.
+// The default is linux on this process's architecture.
 func WithPlatform(p ocispec.Platform) Option {
 	return func(c *config) error {
 		c.platform = p
@@ -113,7 +114,7 @@ func WithPlatform(p ocispec.Platform) Option {
 	}
 }
 
-// Client fetches kit descriptors. It is safe for concurrent use.
+// Client fetches Kit descriptors and image metadata. It is safe for concurrent use.
 type Client struct {
 	credential auth.CredentialFunc
 	transport  http.RoundTripper
@@ -122,7 +123,7 @@ type Client struct {
 	cache      auth.Cache
 }
 
-// New returns a client. With no options it pulls public kits anonymously,
+// New returns a client. With no options it reads public registries anonymously,
 // over HTTPS except for a loopback registry.
 func New(opts ...Option) (*Client, error) {
 	cfg := config{platform: defaultPlatform()}
@@ -152,7 +153,7 @@ func (c *Client) Fetch(ctx context.Context, ref string) (*Kit, error) {
 	return k, nil
 }
 
-// Request is one kit to assemble. Args are that kit's create-phase
+// Request is one kit to resolve. Args are that kit's create-phase
 // values, keyed by its own arg names, so two kits that declare the
 // same name still receive their own values.
 type Request struct {
@@ -160,44 +161,61 @@ type Request struct {
 	Args      map[string]string
 }
 
-// Result is an assembled set of descriptors.
-type Result struct {
-	*spec.MergeResult
+// Resolved is a runtime composition. Keep Kits alongside Descriptor so
+// capability handlers can inspect each contributor's declarations.
+type Resolved struct {
+	// Descriptor is the reconciled declaration set. It does not retain
+	// per-Kit provenance; use Kits where a capability requires attribution.
+	Descriptor *spec.Descriptor
 
-	// Env is the create-phase exports the merged descriptor no longer
-	// carries. An arg declared with env: stores its effect only in
-	// that declaration, and the declaration is cleared once the value
-	// is resolved. The caller applies these to the image config;
-	// assemble.Merge does not see them. Nil when no kit exported any.
-	Env map[string]string
+	// Kits are the expanded inputs in dependency order, providers before
+	// requirers (including the workload wherever its dependencies put it).
+	// Each retains its consumption reference, pinned image identity, and
+	// resolved create arguments, including defaults. Descriptor.Args is
+	// cleared because the values have already been applied.
+	// This is declaration order; image layers start with the workload.
+	Kits []*resolve.Unit
+
+	// ContainerEnv contains resolved env: argument exports. Apply them as
+	// environment overrides when creating the container, after the image's
+	// environment defaults. They are not baked into the assembled image.
+	// Two Kits exporting different values for the same name is an error.
+	ContainerEnv map[string]string
+
+	// Warnings contains advisory findings from validating the merged
+	// descriptor.
+	Warnings []string
 }
 
-// Assemble fetches the requests, resolves them as a runnable set —
-// exactly one workload — and merges their descriptors.
+// Resolve fetches the requests, resolves them as a runnable set —
+// exactly one workload — and merges their descriptors. The result is
+// always validated in effective form before returning.
 //
 // Each kit's create-phase args are resolved and expanded before the
-// merge, which is what spec.Merge requires of a contribution. A
+// composition, which is what spec.Compose requires of a contribution. A
 // required arg with no value is an error, and a value that is still a
 // ${{ kit.args.* }} reference is refused: an assembled spec has no
 // set declaration left to bound a re-export. Build-phase args are
 // already baked into the annotation. An env: export is returned on
-// Result.Env, because clearing the declaration would otherwise drop it.
+// Resolved.ContainerEnv, because clearing the declaration would otherwise drop it.
 //
 // Contributions are ordered by the dependency graph, providers before
 // the kits that require them, which is the order declaration merge
 // means by "first".
-func (c *Client) Assemble(ctx context.Context, reqs []Request, opts spec.MergeOptions) (*Result, error) {
-	return c.assemble(ctx, reqs, opts, false)
+func (c *Client) Resolve(ctx context.Context, reqs []Request) (*Resolved, error) {
+	return c.resolve(ctx, reqs, false)
 }
 
-// AssemblePartial is Assemble for a set that does not have to be
-// runnable. A set of mixins merges to a mixin and composes onto a
-// workload later. More than one workload is still an error.
-func (c *Client) AssemblePartial(ctx context.Context, reqs []Request, opts spec.MergeOptions) (*Result, error) {
-	return c.assemble(ctx, reqs, opts, true)
+// ResolvePartial is Resolve for a set that does not have to be
+// runnable. A set of mixins yields a mixin descriptor and the expanded Kits.
+// To add a workload later, resolve the original requests with that workload;
+// the result's descriptor alone does not retain per-Kit declarations.
+// More than one workload is still an error.
+func (c *Client) ResolvePartial(ctx context.Context, reqs []Request) (*Resolved, error) {
+	return c.resolve(ctx, reqs, true)
 }
 
-func (c *Client) assemble(ctx context.Context, reqs []Request, opts spec.MergeOptions, partial bool) (*Result, error) {
+func (c *Client) resolve(ctx context.Context, reqs []Request, partial bool) (*Resolved, error) {
 	if len(reqs) == 0 {
 		return nil, fmt.Errorf("fetch: empty kit set")
 	}
@@ -211,7 +229,7 @@ func (c *Client) assemble(ctx context.Context, reqs []Request, opts spec.MergeOp
 		kits = append(kits, k)
 		args = append(args, req.Args)
 	}
-	return mergeKits(kits, args, opts, partial)
+	return mergeKits(kits, args, partial)
 }
 
 // Units builds the resolver's input from fetched kits.
@@ -241,23 +259,28 @@ func Units(kits []*Kit) ([]*resolve.Unit, error) {
 	return units, nil
 }
 
-func mergeKits(kits []*Kit, args []map[string]string, opts spec.MergeOptions, partial bool) (*Result, error) {
+func mergeKits(kits []*Kit, args []map[string]string, partial bool) (*Resolved, error) {
 	prepared := make([]*Kit, len(kits))
 	exports := make([]map[string]string, len(kits))
+	values := make([]map[string]string, len(kits))
 	for i, k := range kits {
-		d, raw, env, err := expandKit(k, args[i])
+		expanded, err := expandKit(k, args[i])
 		if err != nil {
 			return nil, err
 		}
 		cp := *k
-		cp.Descriptor = d
-		cp.Raw = raw
+		cp.Descriptor = expanded.descriptor
+		cp.Raw = expanded.raw
 		prepared[i] = &cp
-		exports[i] = env
+		exports[i] = expanded.env
+		values[i] = expanded.args
 	}
 	units, err := Units(prepared)
 	if err != nil {
 		return nil, err
+	}
+	for i, unit := range units {
+		unit.Args = values[i]
 	}
 	var resolution *resolve.Resolution
 	if partial {
@@ -269,14 +292,15 @@ func mergeKits(kits []*Kit, args []map[string]string, opts spec.MergeOptions, pa
 		return nil, err
 	}
 
-	contributions := make([]spec.Contribution, 0, len(units))
-	for _, u := range resolution.Topological() {
+	ordered := resolution.Topological()
+	contributions := make([]spec.Contribution, 0, len(ordered))
+	for _, u := range ordered {
 		contributions = append(contributions, spec.Contribution{
 			Reference:  u.Reference,
 			Descriptor: u.Descriptor,
 		})
 	}
-	merged, err := spec.Merge(contributions, opts)
+	merged, err := spec.Compose(contributions)
 	if err != nil {
 		return nil, err
 	}
@@ -284,46 +308,64 @@ func mergeKits(kits []*Kit, args []map[string]string, opts spec.MergeOptions, pa
 	if err != nil {
 		return nil, err
 	}
-	return &Result{MergeResult: merged, Env: env}, nil
+	result := &Resolved{Descriptor: merged, Kits: ordered, ContainerEnv: env}
+	// Validate the bytes the descriptor serializes to: independently valid
+	// inputs can exceed the document budget once combined.
+	raw, err := json.Marshal(merged)
+	if err != nil {
+		return nil, fmt.Errorf("encode merged descriptor: %w", err)
+	}
+	result.Warnings, err = spec.ValidateEffective(raw, merged)
+	if err != nil {
+		return nil, spec.WithSource(err, "merged descriptor", raw)
+	}
+	return result, nil
+}
+
+type expandedKit struct {
+	descriptor *spec.Descriptor
+	raw        []byte
+	args       map[string]string
+	env        map[string]string
 }
 
 // expandKit resolves one kit's create-phase args into its published
 // descriptor. env is the variables its env: args bound; the declaration
 // those lived on is cleared, so the map is the only copy. The fetched
 // Kit is left as the registry served it.
-func expandKit(k *Kit, args map[string]string) (*spec.Descriptor, []byte, map[string]string, error) {
+func expandKit(k *Kit, args map[string]string) (*expandedKit, error) {
 	if k == nil || k.Descriptor == nil {
-		return nil, nil, nil, fmt.Errorf("fetch: kit %s has no descriptor", refOf(k))
+		return nil, fmt.Errorf("fetch: kit %s has no descriptor", refOf(k))
 	}
 	if _, err := spec.ValidatePublished(k.Raw, k.Descriptor); err != nil {
-		return nil, nil, nil, fmt.Errorf("%s: %w", k.Reference, err)
+		return nil, spec.WithSource(err, k.Reference+" (published descriptor)", k.Raw)
 	}
 	values, err := spec.KitArgValues(k.Descriptor.Args, args)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("%s: %w", k.Reference, err)
+		return nil, fmt.Errorf("%s: %w", k.Reference, err)
 	}
 	for name, value := range values {
 		if spec.ContainsArgRef(value) {
-			return nil, nil, nil, fmt.Errorf("%s: arg %q must be a literal value, got %q", k.Reference, name, value)
+			return nil, fmt.Errorf("%s: arg %q must be a literal value, got %q", k.Reference, name, value)
 		}
 	}
 	env, err := argExports(k.Descriptor.Args, values)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("%s: %w", k.Reference, err)
+		return nil, fmt.Errorf("%s: %w", k.Reference, err)
 	}
 	expanded, err := spec.ExpandCreateArgs(k.Raw, k.Descriptor.Args, values)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("%s: %w", k.Reference, err)
+		return nil, fmt.Errorf("%s: %w", k.Reference, err)
 	}
 	d, err := spec.Decode(expanded)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("%s: %w", k.Reference, err)
+		return nil, spec.WithSource(err, k.Reference+" (expanded descriptor)", expanded)
 	}
 	if _, err := spec.ValidateEffective(expanded, d); err != nil {
-		return nil, nil, nil, fmt.Errorf("%s: %w", k.Reference, err)
+		return nil, spec.WithSource(err, k.Reference+" (expanded descriptor)", expanded)
 	}
 	d.Args = nil
-	return d, expanded, env, nil
+	return &expandedKit{descriptor: d, raw: expanded, args: values, env: env}, nil
 }
 
 // argExports collects the variables one kit's create-phase args bind.
