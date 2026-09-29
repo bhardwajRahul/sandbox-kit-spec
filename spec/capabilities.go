@@ -270,13 +270,15 @@ func SSHAgentsOfPhase(needs []Capability, phase string) ([]SSHAgentCapability, e
 	return out, nil
 }
 
-// AgentSkillsOf returns every skills request, in declaration order,
-// carrying each entry's optional flag: the store may be absent or the
-// host may have skills off, and a runtime has to refuse a required entry
-// it cannot satisfy while skipping an optional one.
+// AgentSkillsOf returns selected discovery destinations in declaration order.
+// Every destination receives selected AgentSkill bundles. Optional governs
+// capability support, not whether the host has skills available to share.
 func AgentSkillsOf(needs []Capability) ([]AgentSkillsCapability, error) {
 	var out []AgentSkillsCapability
 	for _, n := range needs {
+		if n.Group != nil {
+			return nil, fmt.Errorf("agent skills: select groups first")
+		}
 		if n.Type != CapabilityAgentSkills {
 			continue
 		}

@@ -12,7 +12,7 @@ broken="${KIT_TCK_FAKE_BROKEN:-}"
 # suite narrows it, nothing when broken that way. The refusal duty below
 # is always keyed off this same list, because claiming and refusing are
 # two sides of one statement.
-default_claims="com.docker.sandbox/agent-skill@1,com.docker.sandbox/agent-skills-directory@1,com.docker.sandbox/git-identity@1,com.docker.sandbox/long-running@1,com.docker.sandbox/sbx@1,com.docker.sandbox/lifecycle@1,com.docker.sandbox/network-policy@1,com.docker.sandbox/network-policy@2,com.docker.sandbox/credential@1,com.docker.sandbox/agent-context@1,com.docker.sandbox/volume@1,com.docker.sandbox/resources@1,com.docker.sandbox/privileged@1,com.docker.sandbox/agent-skills@1,com.docker.sandbox/ssh-agent@1"
+default_claims="com.docker.sandbox/agent-skill@1,com.docker.sandbox/git-identity@1,com.docker.sandbox/long-running@1,com.docker.sandbox/sbx@1,com.docker.sandbox/lifecycle@1,com.docker.sandbox/network-policy@1,com.docker.sandbox/network-policy@2,com.docker.sandbox/credential@1,com.docker.sandbox/agent-context@1,com.docker.sandbox/volume@1,com.docker.sandbox/resources@1,com.docker.sandbox/privileged@1,com.docker.sandbox/agent-skills@1,com.docker.sandbox/ssh-agent@1"
 claims="${KIT_TCK_FAKE_CLAIMS:-$default_claims}"
 if [ "$broken" = "claims-nothing" ]; then claims=""; fi
 verb="${1:-}"
@@ -159,6 +159,7 @@ create)
   group_path=/var/tmp/group-expanded
   env_group_path=/var/tmp/env-group-expanded
   hostmode="readwrite"
+  hoststore=""
   # The backing SSH agent available to this sandbox; empty when none is.
   offered_agent=""
   known_hosts=""
@@ -184,6 +185,10 @@ create)
       identity_config="$2"
       shift 2
       ;;
+    --skills-host-store)
+      hoststore="$2"
+      shift 2
+      ;;
     --skills-host-mode)
       hostmode="$2"
       shift 2
@@ -202,6 +207,14 @@ create)
       ;;
     esac
   done
+
+  store="$state/store"
+  case "$hoststore" in
+  "") ;;
+  missing) store="$state/host-missing" ;;
+  empty) store="$state/host-empty"; mkdir -p "$store" ;;
+  *) echo "invalid host store scenario: $hoststore" >&2; exit 1 ;;
+  esac
 
   bundle_source="" bundle_reader="" bundle_optional="" bundle_existing="" bundle_host=""
   for kit in "${kits[@]}"; do
@@ -229,9 +242,7 @@ create)
     exit 2
   fi
 
-  # Required and optional skills entries part ways when the host's store
-  # is off: a required one cannot be satisfied and forces a refusal, an
-  # optional one is skipped and the sandbox starts without the mount.
+  # Host sharing does not decide whether a discovery destination is selected.
   required_skills=""
   optional_skills=""
   for kit in "${kits[@]}"; do
@@ -240,13 +251,21 @@ create)
     *skills*) required_skills=1 ;;
     esac
   done
-  if [ "$hostmode" = "off" ] && [ -n "$required_skills" ] && [ "$broken" != "ignores-host-off" ]; then
+  if [ "$hostmode" = "off" ] && [ -n "$required_skills" ] && [ "$broken" = "refuses-required-skills" ]; then
     echo "refusing: the host's skills setting is off and the kit requires the store" >&2
     exit 2
   fi
   if [ "$hostmode" = "off" ] && [ -n "$optional_skills" ] && [ "$broken" = "refuses-optional-skills" ]; then
     echo "refusing: skills are off" >&2
     exit 2
+  fi
+
+  if [ -n "$hoststore" ]; then
+    if { [ -n "$required_skills" ] && [ "$broken" = "refuses-$hoststore-required-skills" ]; } ||
+      { [ -n "$optional_skills" ] && [ "$broken" = "refuses-$hoststore-optional-skills" ]; }; then
+      echo "refusing: host store is $hoststore" >&2
+      exit 2
+    fi
   fi
 
   # A required capability this runtime does not implement is refused,
@@ -271,7 +290,7 @@ create)
       # contain a capability name (for example, git-identity).
       case "${kit##*/}" in
       bundled-optional | bundled-existing) ;;
-      bundled-reader) need="com.docker.sandbox/agent-skills-directory@1" ;;
+      bundled-reader) need="com.docker.sandbox/agent-skills@1" ;;
       bundled-skill | bundled-host-conflict) need="com.docker.sandbox/agent-skill@1" ;;
       *git-identity-optional*) ;;
       *git-identity-hooks*) need="com.docker.sandbox/lifecycle@1" ;;
@@ -663,23 +682,23 @@ create)
   # per-sandbox copy would satisfy every listing while violating "every
   # declared path receives the same store", which is exactly what the
   # cross-path write check exists to catch.
-  store="$state/store"
-  mkdir -p "$store"
-  if [ "$broken" != "empty-skills" ] && [ "$broken" != "wrong-skill" ]; then
-    : >"$store/${KIT_TCK_SKILL_NAME:-unset}"
+  if [ -z "$hoststore" ]; then
+    mkdir -p "$store"
+    if [ "$broken" != "empty-skills" ] && [ "$broken" != "wrong-skill" ]; then
+      : >"$store/${KIT_TCK_SKILL_NAME:-unset}"
+    fi
+    # A neighbour of the marker, to catch a substring match.
+    if [ "$broken" = "wrong-skill" ]; then : >"$store/${KIT_TCK_SKILL_NAME:-unset}-old"; fi
   fi
-  # A neighbour of the marker, to catch a substring match.
-  if [ "$broken" = "wrong-skill" ]; then : >"$store/${KIT_TCK_SKILL_NAME:-unset}-old"; fi
 
-  # A skipped optional entry gets no mount; only a broken runtime mounts
-  # something at its path anyway.
-  if [ -n "$optional_skills" ]; then
+  # A disabled host store stays hidden for optional destinations too.
+  if [ -n "$optional_skills" ] && [ -z "$hoststore" ]; then
     if [ "$hostmode" != "off" ] || [ "$broken" = "mounts-optional-despite-off" ]; then
       ln -s "$store" "$dir/skills-opt"
     fi
   fi
   # The shared store, mounted where the kit asked for it.
-  if [ "$broken" != "ignores-skills" ] && [ "$hostmode" != "off" ]; then
+  if [ -z "$hoststore" ] && [ "$broken" != "ignores-skills" ] && { [ "$hostmode" != "off" ] || [ "$broken" = "ignores-host-off" ]; }; then
     ln -s "$store" "$dir/skills"
     case "$broken" in
     first-skills-only)
@@ -724,6 +743,19 @@ create)
     # and surfaces nothing into it.
     printf '%s\n' "Conformance workload." >"$dir/profile"
   fi
+  if { [ "$hostmode" = off ] || [ -n "$hoststore" ]; } && { [ -n "$required_skills" ] || [ -n "$optional_skills" ]; }; then
+    skill_fixture=skills
+    if [ -n "$optional_skills" ]; then skill_fixture=skills-optional; fi
+    record="{\"path\":\"capabilities[0]\",\"source\":{\"kit\":\"$skill_fixture\",\"path\":\"capabilities[0]\"},\"members\":[\"capabilities[0]\"]}"
+    selected="$record" skipped=""
+    if [ "$broken" = skips-required-skills ] || [ "$broken" = skips-optional-skills ]; then selected=""; skipped="$record"; fi
+    if [ -n "$hoststore" ] && { [ "$broken" = "skips-$hoststore-required-skills" ] || [ "$broken" = "skips-$hoststore-optional-skills" ]; }; then
+      case "$broken:$skill_fixture" in
+      *-required-skills:skills | *-optional-skills:skills-optional) selected=""; skipped="$record" ;;
+      esac
+    fi
+    printf '{"selection":{"selected":[%s],"skipped":[%s]},"surface":{}}\n' "$selected" "$skipped" >"$dir/selection.json"
+  fi
   if [ -n "$bundle_optional" ] && [ -z "$bundle_reader" ]; then
     record='{"path":"capabilities[0]","source":{"kit":"bundled-optional","path":"capabilities[0]"},"members":["capabilities[0]"],"memberSources":[{"kit":"bundled-optional","path":"capabilities[0]"}],"rejected":["capabilities[0]"]}'
     if [ "$broken" = bundle-drops-skip ]; then record=""; fi
@@ -744,6 +776,10 @@ create)
         dest="$dir/home/agent/.kit-tck/$target"
         mkdir -p "$dest"
         if [ "$broken" = bundle-ignores ] || { [ "$broken" = bundle-first-only ] && [ "$target" = skills-rw ]; }; then continue; fi
+        if [ -n "$hoststore" ]; then
+          if { [ "$broken" = "bundle-$hoststore-drops-required" ] && [ "$target" = skills ]; } ||
+            { [ "$broken" = "bundle-$hoststore-drops-optional" ] && [ "$target" = skills-rw ]; }; then continue; fi
+        fi
         cp -R "$source/review" "$dest/review"
         name=renamed
         if [ "$broken" = bundle-ignores-name ]; then name=source-name; fi
@@ -764,7 +800,7 @@ create)
         esac
       done
       KIT_TCK_BUNDLE_ROOT="$dir" sh "$dir/bundle-probe" exposed >"$dir/var/tmp/bundled-at-launch" 2>&1 || true
-      if [ "$broken" = bundle-after-launch ]; then echo missing >"$dir/var/tmp/bundled-at-launch"; fi
+      if [ "$broken" = bundle-after-launch ] || { [ -n "$hoststore" ] && [ "$broken" = "bundle-$hoststore-late" ]; }; then echo missing >"$dir/var/tmp/bundled-at-launch"; fi
       if [ "$broken" = bundle-executes ]; then touch "$dir/var/tmp/bundled-script-executed"; fi
     fi
   fi
