@@ -33,6 +33,7 @@ the host or apply capabilities.
 
 ```go
 result, err := fetch.Assemble(ctx, requests, fetch.Options{
+    LayerValidator: fetch.DefaultLayerValidator,
     CapabilitySelector: spec.Supported(claimedTypes...),
     Overrides: fetch.Overrides{
         Env: map[string]string{"WORKSPACE_DIR": "/workspace"},
@@ -50,10 +51,11 @@ if err != nil {
 }
 ```
 
-`fetch.Options{}` is sufficient for registry loading and acceptance of
-all capability types the library knows. That default is not a claim that
-a runtime implements every type: supply its actual supported types or a
-policy callback. Selection sees expanded configurations and must not
+`fetch.Options{}` loads registry metadata and accepts all capability
+types the library knows, without reading or validating layers. That
+default is not a claim that a runtime implements every type: supply its
+actual supported types or a policy callback. Selection sees expanded
+configurations and must not
 apply effects. The library validates even skipped declarations, selects
 groups atomically, and validates the selected composition. Conflicts
 fail; optional groups are not dropped to repair them.
@@ -61,7 +63,8 @@ fail; optional groups are not dropped to repair them.
 Supply the complete dependency set, containing exactly one workload.
 `Assemble` does not discover missing dependencies or publish an image.
 It loads verified metadata, resolves arguments and capability decisions,
-composes image defaults, reads layer inventories, and rejects files
+composes image defaults, and invokes `LayerValidator` when supplied.
+`fetch.DefaultLayerValidator` reads layer inventories and rejects files
 contributed by multiple Kits. Collision checks resolve each Kit's layers
 with the shared overlay filesystem model before comparing them in image
 order: cleaned paths, symlink aliases, whiteouts, opaque directories,
@@ -72,7 +75,16 @@ multiple inputs with the same expected diff ID is read once, but each
 Kit retains its file ownership for the collision check. Skipping
 capabilities removes neither layers nor argument environment exports.
 
-The entire assembly is limited to 4,096 layer occurrences, 250,000
+Leave `Options.LayerValidator` nil for metadata-only assembly before
+consent, including with a custom loader, or when the caller has already
+checked the image. It preserves metadata and descriptor validation,
+argument and `kit.env` expansion, atomic group selection, and the same
+`Result`. It never calls `LayerLoader` and emits no `inventory` or
+`collisions` progress events; `LayerLoader` may also be nil. The caller
+remains responsible for layer integrity, safe extraction, resource
+limits, and cross-Kit file collision checks before using the image.
+
+`fetch.DefaultLayerValidator` limits assembly to 4,096 layer occurrences, 250,000
 archive entries, 250,000 path components, and 32 MiB of combined path
 and link-name bytes across all Kits. Components in both entry names and
 link targets count before path cleaning, limiting implied directory
@@ -125,12 +137,13 @@ APIs to judge permissions before applying the result.
 ## Loading and progress
 
 `Options.Loader` accepts a `fetch.KitLoader`. Its `LoadedKit` contains
-verified digest identity, manifest, config, and a lazy `OpenLayer`
+verified digest identity, manifest, config, and a lazy `LayerLoader`
 function. `Descriptor` optionally carries the original annotation from
 an index; otherwise the platform manifest's annotation is used. A loader
 must resolve metadata consistently to the returned digest and select a
-platform. Assembly validates the metadata and declarations; it streams,
-verifies, and closes layer blobs without buffering their bodies.
+platform. Assembly validates the metadata and declarations. When selected,
+`fetch.DefaultLayerValidator` streams, verifies, and closes layer blobs without
+buffering their bodies.
 
 The default loader uses Docker credentials and Linux on the caller's
 architecture. Customize registry behavior with the existing client:
@@ -144,15 +157,17 @@ if err != nil {
     return err
 }
 result, err := fetch.Assemble(ctx, requests, fetch.Options{
+    LayerValidator: fetch.DefaultLayerValidator,
     Loader: client.LoadKit,
 })
 ```
 
 For anonymous registries use `fetch.New()`. For a local content store,
-supply a loader that opens blobs from that store. `OpenLayer` returns
+supply a loader that opens blobs from that store. `LayerLoader` returns
 fresh streams in the manifest's original compression and honors the
-provided context. Assembly accepts tar, gzip, and zstd. It verifies both
-the manifest's stored-blob digest and the config's uncompressed diff ID,
+provided context. `fetch.DefaultLayerValidator` accepts tar, gzip, and zstd. It
+verifies both the manifest's stored-blob digest and the config's
+uncompressed diff ID,
 including archive padding and compression trailers. Every opened stream
 is closed on success or failure; read and close errors fail the operation.
 An archive entry the shared extractor model refuses fails assembly.
@@ -166,6 +181,22 @@ layer replays, which consume the operation budget without reopening
 blobs. Callbacks should return promptly; use the context to cancel. The
 returned error remains authoritative, and events never contain
 configuration values or file contents.
+
+A custom `LayerValidator` receives the complete selected Kit set, a map
+from consumption references to `LoadedKit` metadata, and the progress
+callback. It runs once after composition and resolution so it can check
+cross-Kit effects or consult the runtime's verified store. It treats the
+inputs as read-only, honors cancellation, and returns errors to fail
+assembly. Progress callbacks, when supplied, run synchronously.
+
+## Migrating existing callers
+
+`LoadedKit.OpenLayer` is now `LoadedKit.LayerLoader`, with the same stream
+contract. Rename the field in custom loaders. Layer validation is now
+opt-in: callers that previously used `Options{}` or supplied only a loader
+add `LayerValidator: fetch.DefaultLayerValidator` to retain the previous checks.
+Leaving it nil deliberately skips them. These are Go API changes; the
+Kit descriptor grammar is unchanged.
 
 ## Storage and lower-level APIs
 
@@ -188,8 +219,8 @@ never reads the host environment or image configs. `Resolved.ContainerEnv`
 still reports only argument exports, so apply the same precedence when
 creating the container.
 
-The one-call API also checks layer inventories, so it reads more data
-than metadata-only assembly.
+With `LayerValidator: fetch.DefaultLayerValidator`, the one-call API also reads
+and checks layer inventories. With a nil validator it reads metadata only.
 
 Descriptor errors include original locations and source excerpts where
 safe. Errors after environment expansion omit expanded values and source

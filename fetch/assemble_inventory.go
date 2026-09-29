@@ -111,6 +111,15 @@ func inventoryKits(ctx context.Context, kits []*resolve.Unit, loaded map[string]
 	inventories := make([]kitInventory, 0, len(kits))
 	for _, kit := range resolution.Ordered() {
 		input := loaded[kit.Reference]
+		if input == nil {
+			return nil, fmt.Errorf("inventory %s: missing loaded kit", kit.Reference)
+		}
+		if input.LayerLoader == nil {
+			return nil, fmt.Errorf("inventory %s: missing LayerLoader", kit.Reference)
+		}
+		if len(input.Config.RootFS.DiffIDs) != len(input.Manifest.Layers) {
+			return nil, fmt.Errorf("inventory %s: image config rootfs does not match manifest layers", kit.Reference)
+		}
 		inventory := kitInventory{reference: kit.Reference}
 		for index, layer := range input.Manifest.Layers {
 			if err := ctx.Err(); err != nil {
@@ -154,12 +163,12 @@ func readLayerInventory(ctx context.Context, input *LoadedKit, layer ocispec.Des
 	if layer.Size == math.MaxInt64 {
 		return nil, fmt.Errorf("layer size is too large")
 	}
-	reader, err := input.OpenLayer(ctx, layer)
+	reader, err := input.LayerLoader(ctx, layer)
 	if err != nil {
 		return nil, err
 	}
 	if reader == nil {
-		return nil, fmt.Errorf("OpenLayer returned no stream")
+		return nil, fmt.Errorf("LayerLoader returned no stream")
 	}
 	defer func() { retErr = errors.Join(retErr, reader.Close()) }()
 	// The tar reader can finish before the compressed blob does. Drain through

@@ -48,7 +48,7 @@ func assemblyFixture(t *testing.T, kind, name, file string) (*LoadedKit, []byte)
 		Annotations: map[string]string{spec.AnnotationDescriptor: string(kitJSON(t, descriptor))},
 	}
 	return &LoadedKit{Digest: digest.FromString(name), Manifest: manifest, Config: config,
-		OpenLayer: func(context.Context, ocispec.Descriptor) (io.ReadCloser, error) {
+		LayerLoader: func(context.Context, ocispec.Descriptor) (io.ReadCloser, error) {
 			return io.NopCloser(bytes.NewReader(blob)), nil
 		},
 	}, blob
@@ -94,7 +94,7 @@ func TestAssembleGroupsEnvironmentAndImage(t *testing.T) {
 	overrides := map[string]string{"TEAM": "caller", "EMPTY": ""}
 	var events []Progress
 	var decisions []string
-	result, err := Assemble(t.Context(), fixtureRequests(2), Options{Loader: fixtureLoader(base, mixin), Overrides: Overrides{Env: overrides, WorkingDir: &workdir},
+	result, err := Assemble(t.Context(), fixtureRequests(2), Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(base, mixin), Overrides: Overrides{Env: overrides, WorkingDir: &workdir},
 		CapabilitySelector: func(c spec.Capability) bool {
 			decisions = append(decisions, c.Type)
 			return c.Type != spec.CapabilityVolume
@@ -148,7 +148,7 @@ func TestAssembleDefaultSelectionAndValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			input, _ := assemblyFixture(t, spec.KindWorkload, "base", "base")
 			input.Descriptor = kitJSON(t, &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindWorkload, Capabilities: []spec.Capability{tc.capability}})
-			result, err := Assemble(t.Context(), fixtureRequests(1), Options{Loader: fixtureLoader(input)})
+			result, err := Assemble(t.Context(), fixtureRequests(1), Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(input)})
 			if tc.message != "" {
 				require.ErrorContains(t, err, tc.message)
 				require.Nil(t, result)
@@ -165,7 +165,7 @@ func TestAssembleRejectsCollisionsEvenForSkippedGroups(t *testing.T) {
 	mixin, _ := assemblyFixture(t, spec.KindMixin, "tool", "usr/local/bin/shared")
 	mixin.Descriptor = kitJSON(t, &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindMixin, Capabilities: []spec.Capability{{Type: "com.example/missing@1", Optional: true}}})
 	var events []Progress
-	result, err := Assemble(t.Context(), fixtureRequests(2), Options{Loader: fixtureLoader(base, mixin), OnProgress: func(p Progress) { events = append(events, p) }})
+	result, err := Assemble(t.Context(), fixtureRequests(2), Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(base, mixin), OnProgress: func(p Progress) { events = append(events, p) }})
 	require.Nil(t, result)
 	require.ErrorContains(t, err, "/usr/local/bin/shared")
 	require.ErrorContains(t, err, fixtureRequests(2)[0].Reference)
@@ -197,7 +197,7 @@ func TestAssembleLayerVerificationAndCleanup(t *testing.T) {
 			case "close":
 				reader.closeErr = errors.New("close failed")
 			}
-			input.OpenLayer = func(context.Context, ocispec.Descriptor) (io.ReadCloser, error) {
+			input.LayerLoader = func(context.Context, ocispec.Descriptor) (io.ReadCloser, error) {
 				if problem == "nil stream" {
 					return nil, nil
 				}
@@ -209,7 +209,7 @@ func TestAssembleLayerVerificationAndCleanup(t *testing.T) {
 				}
 				return reader, nil
 			}
-			result, err := Assemble(ctx, fixtureRequests(1), Options{Loader: fixtureLoader(input)})
+			result, err := Assemble(ctx, fixtureRequests(1), Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(input)})
 			require.Error(t, err)
 			require.Nil(t, result)
 			if problem != "nil stream" && problem != "open" {
@@ -229,7 +229,7 @@ func TestAssembleCancellationFromProgress(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var events []Progress
-	_, err := Assemble(ctx, fixtureRequests(1), Options{
+	_, err := Assemble(ctx, fixtureRequests(1), Options{LayerValidator: DefaultLayerValidator,
 		Loader: func(context.Context, string) (*LoadedKit, error) {
 			t.Fatal("loader ran after cancellation")
 			return nil, nil
@@ -246,16 +246,16 @@ func TestAssembleCachesInventoriesWithoutHidingCollisions(t *testing.T) {
 	mixin.Manifest.Layers = base.Manifest.Layers
 	mixin.Config.RootFS = base.Config.RootFS
 	calls := 0
-	open := base.OpenLayer
-	base.OpenLayer = func(ctx context.Context, layer ocispec.Descriptor) (io.ReadCloser, error) {
+	open := base.LayerLoader
+	base.LayerLoader = func(ctx context.Context, layer ocispec.Descriptor) (io.ReadCloser, error) {
 		calls++
 		return open(ctx, layer)
 	}
-	mixin.OpenLayer = func(context.Context, ocispec.Descriptor) (io.ReadCloser, error) {
+	mixin.LayerLoader = func(context.Context, ocispec.Descriptor) (io.ReadCloser, error) {
 		t.Fatal("cached blob opened twice")
 		return nil, nil
 	}
-	_, err := Assemble(t.Context(), fixtureRequests(2), Options{Loader: fixtureLoader(base, mixin)})
+	_, err := Assemble(t.Context(), fixtureRequests(2), Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(base, mixin)})
 	require.ErrorContains(t, err, "file collisions")
 	require.Equal(t, 1, calls)
 }
@@ -280,10 +280,14 @@ func TestAssembleDefaultRegistryLoader(t *testing.T) {
 			manifestRaw, err := json.Marshal(input.Manifest)
 			require.NoError(t, err)
 			reg.tag("kit", "1.0.0", manifestRaw)
-			result, err := Assemble(t.Context(), reqs(reg.ref("kit", "1.0.0")), Options{})
+			result, err := Assemble(t.Context(), reqs(reg.ref("kit", "1.0.0")), Options{LayerValidator: DefaultLayerValidator})
 			require.NoError(t, err)
 			require.Equal(t, digest.FromBytes(manifestRaw).String(), result.Resolved.Kits[0].Digest)
 			require.Equal(t, 2, reg.blobReads, "config and layer are read")
+			metadataOnly, err := Assemble(t.Context(), reqs(reg.ref("kit", "1.0.0")), Options{})
+			require.NoError(t, err)
+			require.Equal(t, result, metadataOnly)
+			require.Equal(t, 3, reg.blobReads, "nil validator reads only the config blob")
 		})
 	}
 }
@@ -296,7 +300,7 @@ func TestAssembleRejectsBadLoaderInputsAndOverrides(t *testing.T) {
 		overrides Overrides
 	}{
 		{name: "rootfs", mutate: func(k *LoadedKit) { k.Config.RootFS.DiffIDs = nil }},
-		{name: "missing layer reader", mutate: func(k *LoadedKit) { k.OpenLayer = nil }},
+		{name: "missing layer reader", mutate: func(k *LoadedKit) { k.LayerLoader = nil }},
 		{name: "invalid digest", mutate: func(k *LoadedKit) { k.Digest = "invalid" }},
 		{name: "negative layer size", mutate: func(k *LoadedKit) { k.Manifest.Layers[0].Size = -1 }},
 		{name: "relative workdir", overrides: Overrides{WorkingDir: &relative}},
@@ -308,7 +312,7 @@ func TestAssembleRejectsBadLoaderInputsAndOverrides(t *testing.T) {
 			if tc.mutate != nil {
 				tc.mutate(input)
 			}
-			result, err := Assemble(t.Context(), fixtureRequests(1), Options{Loader: fixtureLoader(input), Overrides: tc.overrides})
+			result, err := Assemble(t.Context(), fixtureRequests(1), Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(input), Overrides: tc.overrides})
 			require.Error(t, err)
 			require.Nil(t, result)
 		})
@@ -344,7 +348,7 @@ func TestLoadKitKeepsIndexDescriptorAndPinnedImage(t *testing.T) {
 	require.Equal(t, 1, reg.blobReads, "loading leaves layer blobs unopened")
 	// Subsequent tag movement cannot change the retained metadata or layer refs.
 	reg.tag("kit", "1.0.0", reg.image(t, nil))
-	result, err := Assemble(t.Context(), reqs(reg.ref("kit", "1.0.0")), Options{Loader: func(context.Context, string) (*LoadedKit, error) { return loaded, nil }})
+	result, err := Assemble(t.Context(), reqs(reg.ref("kit", "1.0.0")), Options{LayerValidator: DefaultLayerValidator, Loader: func(context.Context, string) (*LoadedKit, error) { return loaded, nil }})
 	require.NoError(t, err)
 	require.Equal(t, digest.FromBytes(index).String(), result.Resolved.Kits[0].Digest)
 	require.Equal(t, input.Manifest.Layers, result.Image.Layers)
@@ -355,7 +359,7 @@ func TestAssembleRejectsCrossPlatformImages(t *testing.T) {
 	base, _ := assemblyFixture(t, spec.KindWorkload, "base", "base")
 	mixin, _ := assemblyFixture(t, spec.KindMixin, "tool", "tool")
 	mixin.Config.Architecture = "other-architecture"
-	_, err := Assemble(t.Context(), fixtureRequests(2), Options{Loader: fixtureLoader(base, mixin)})
+	_, err := Assemble(t.Context(), fixtureRequests(2), Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(base, mixin)})
 	require.ErrorContains(t, err, "other-architecture")
 }
 
@@ -369,7 +373,7 @@ func TestAssembleValidatesExpandedGroupBeforeSelector(t *testing.T) {
 	})
 	requests := fixtureRequests(1)
 	requests[0].Args = map[string]string{"port": "70000"}
-	_, err := Assemble(t.Context(), requests, Options{Loader: fixtureLoader(input), CapabilitySelector: func(spec.Capability) bool {
+	_, err := Assemble(t.Context(), requests, Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(input), CapabilitySelector: func(spec.Capability) bool {
 		t.Fatal("invalid expanded declaration reached selector")
 		return false
 	}})
@@ -384,7 +388,7 @@ func TestAssembleRejectsWrongDiffIDEvenForCachedBlob(t *testing.T) {
 	// cannot stand in for checking the second occurrence's claimed diff ID.
 	input.Manifest.Layers = append(input.Manifest.Layers, input.Manifest.Layers[0])
 	input.Config.RootFS.DiffIDs = append(input.Config.RootFS.DiffIDs, digest.FromString("wrong"))
-	result, err := Assemble(t.Context(), fixtureRequests(1), Options{Loader: fixtureLoader(input)})
+	result, err := Assemble(t.Context(), fixtureRequests(1), Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(input)})
 	require.Nil(t, result)
 	require.ErrorContains(t, err, "diff ID mismatch")
 }
@@ -419,7 +423,7 @@ func TestAssembleExpandsFinalEnvironment(t *testing.T) {
 				overrides["HOME"] = tc.override
 			}
 			calls := 0
-			result, err := Assemble(t.Context(), fixtureRequests(2), Options{Loader: fixtureLoader(base, mixin), Overrides: Overrides{Env: overrides},
+			result, err := Assemble(t.Context(), fixtureRequests(2), Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(base, mixin), Overrides: Overrides{Env: overrides},
 				CapabilitySelector: func(c spec.Capability) bool {
 					calls++
 					lc, err := spec.LifecycleOf([]spec.Capability{c})
@@ -457,7 +461,7 @@ func TestAssembleEnvironmentErrorsBeforeSelection(t *testing.T) {
 			base.Descriptor = kitJSON(t, &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindWorkload,
 				Capabilities: []spec.Capability{{Type: spec.CapabilityVolume, Optional: true, Config: tc.config}},
 			})
-			result, err := Assemble(t.Context(), fixtureRequests(1), Options{Loader: fixtureLoader(base), Overrides: Overrides{Env: tc.env},
+			result, err := Assemble(t.Context(), fixtureRequests(1), Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(base), Overrides: Overrides{Env: tc.env},
 				CapabilitySelector: func(spec.Capability) bool { t.Fatal("selector called before validation"); return false },
 			})
 			require.Error(t, err)
@@ -479,7 +483,7 @@ func TestAssembleEnvironmentExpansionDetectsFileConflict(t *testing.T) {
 			Capabilities: []spec.Capability{{Type: spec.CapabilityLifecycle, Config: map[string]any{"files": []any{map[string]any{"path": "${{kit.env.HOME}}/config", "content": "data"}}}}},
 		})
 	}
-	_, err := Assemble(t.Context(), fixtureRequests(2), Options{Loader: fixtureLoader(base, mixin), Overrides: Overrides{Env: map[string]string{"HOME": "/private-value"}}})
+	_, err := Assemble(t.Context(), fixtureRequests(2), Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(base, mixin), Overrides: Overrides{Env: map[string]string{"HOME": "/private-value"}}})
 	require.ErrorContains(t, err, "incompatible declarations")
 	require.NotContains(t, err.Error(), "/private-value")
 }

@@ -41,7 +41,7 @@ func layerFixture(t *testing.T, kind, name string, layers ...[]tar.Header) *Load
 	manifestRaw, err := json.Marshal(input.Manifest)
 	require.NoError(t, err)
 	input.Digest = digest.FromBytes(manifestRaw)
-	input.OpenLayer = func(_ context.Context, layer ocispec.Descriptor) (io.ReadCloser, error) {
+	input.LayerLoader = func(_ context.Context, layer ocispec.Descriptor) (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(blobs[layer.Digest])), nil
 	}
 	return input
@@ -85,7 +85,7 @@ func TestAssembleChecksFilesystemEffects(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			base := layerFixture(t, spec.KindWorkload, "base", tc.lower...)
 			mixin := layerFixture(t, spec.KindMixin, "tool", tc.upper...)
-			result, err := Assemble(t.Context(), fixtureRequests(2), Options{Loader: fixtureLoader(base, mixin)})
+			result, err := Assemble(t.Context(), fixtureRequests(2), Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(base, mixin)})
 			if tc.collision == "" {
 				require.NoError(t, err)
 				require.NotNil(t, result)
@@ -104,7 +104,7 @@ func TestAssembleCollisionsRetainOwnersAcrossKits(t *testing.T) {
 	base := layerFixture(t, spec.KindWorkload, "base", []tar.Header{file("dir/z")})
 	first := layerFixture(t, spec.KindMixin, "first", []tar.Header{file("dir/a")})
 	second := layerFixture(t, spec.KindMixin, "second", []tar.Header{file("dir/.wh..wh..opq")})
-	result, err := Assemble(t.Context(), fixtureRequests(3), Options{Loader: fixtureLoader(base, first, second)})
+	result, err := Assemble(t.Context(), fixtureRequests(3), Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(base, first, second)})
 	require.Nil(t, result)
 	require.ErrorContains(t, err, "/dir/z")
 	require.ErrorContains(t, err, fixtureRequests(3)[0].Reference)
@@ -157,14 +157,14 @@ func TestAssembleFilesystemOrderIsWorkloadFirst(t *testing.T) {
 	mixin := layerFixture(t, spec.KindMixin, "tool", []tar.Header{file("dir/.wh.foo")})
 	// The mixin comes first in dependency order, but its whiteout is applied
 	// over the workload. Checking in dependency order would miss the deletion.
-	_, err := Assemble(t.Context(), fixtureRequests(2), Options{Loader: fixtureLoader(base, mixin)})
+	_, err := Assemble(t.Context(), fixtureRequests(2), Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(base, mixin)})
 	require.ErrorContains(t, err, "kit file collisions")
 	require.ErrorContains(t, err, "/dir/foo")
 }
 
 func TestAssembleRejectsUnextractableLayerEntry(t *testing.T) {
 	input := layerFixture(t, spec.KindWorkload, "base", []tar.Header{file("blocked"), file("blocked/child")})
-	result, err := Assemble(t.Context(), fixtureRequests(1), Options{Loader: fixtureLoader(input)})
+	result, err := Assemble(t.Context(), fixtureRequests(1), Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(input)})
 	require.Nil(t, result)
 	require.ErrorContains(t, err, "cannot be extracted")
 }

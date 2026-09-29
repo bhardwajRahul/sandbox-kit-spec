@@ -30,7 +30,7 @@ func TestAssembleEnvironmentConflictsDoNotExposeValues(t *testing.T) {
 				base.Descriptor = kitJSON(t, baseDescriptor)
 			}
 			var events []Progress
-			result, err := Assemble(t.Context(), fixtureRequests(2), Options{
+			result, err := Assemble(t.Context(), fixtureRequests(2), Options{LayerValidator: DefaultLayerValidator,
 				Loader: fixtureLoader(base, mixin), OnProgress: func(p Progress) { events = append(events, p) },
 			})
 			require.Nil(t, result)
@@ -56,10 +56,10 @@ func TestAssembleRejectsZeroLayerKits(t *testing.T) {
 				inputs[index].Manifest.Layers = nil
 				inputs[index].Config.RootFS.DiffIDs = nil
 				if reader == "nil reader" {
-					inputs[index].OpenLayer = nil
+					inputs[index].LayerLoader = nil
 				}
 				var events []Progress
-				result, err := Assemble(t.Context(), fixtureRequests(2), Options{
+				result, err := Assemble(t.Context(), fixtureRequests(2), Options{LayerValidator: DefaultLayerValidator,
 					Loader:     fixtureLoader(inputs...),
 					OnProgress: func(p Progress) { events = append(events, p) },
 				})
@@ -91,7 +91,7 @@ func TestAssembleValidatesEveryInputEnvironment(t *testing.T) {
 				// Even a later valid value must not hide an invalid earlier one.
 				inputs[index].Config.Config.Env = []string{tc.entry, "SECRET=valid"}
 				var events []Progress
-				result, err := Assemble(t.Context(), fixtureRequests(2), Options{
+				result, err := Assemble(t.Context(), fixtureRequests(2), Options{LayerValidator: DefaultLayerValidator,
 					Loader:     fixtureLoader(inputs...),
 					OnProgress: func(p Progress) { events = append(events, p) },
 				})
@@ -109,7 +109,7 @@ func TestAssemblePreservesValidEnvironmentValues(t *testing.T) {
 	mixin, _ := assemblyFixture(t, spec.KindMixin, "tool", "tool")
 	base.Config.Config.Env = []string{"EMPTY=", "EQUALS=a=b", "DUP=first", "DUP=last"}
 	mixin.Config.Config.Env = []string{"MIXIN_EMPTY=", "MIXIN_EQUALS=c=d"}
-	result, err := Assemble(t.Context(), fixtureRequests(2), Options{Loader: fixtureLoader(base, mixin)})
+	result, err := Assemble(t.Context(), fixtureRequests(2), Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(base, mixin)})
 	require.NoError(t, err)
 	require.Equal(t, map[string]string{"EMPTY": "", "EQUALS": "a=b", "DUP": "last", "MIXIN_EMPTY": "", "MIXIN_EQUALS": "c=d"}, result.Environment)
 }
@@ -129,7 +129,7 @@ func TestAssembleManifestWithoutEmbeddedMediaType(t *testing.T) {
 			case "explicit manifest type":
 				input.Manifest.MediaType = "application/example"
 			}
-			result, err := Assemble(t.Context(), fixtureRequests(1), Options{Loader: fixtureLoader(input)})
+			result, err := Assemble(t.Context(), fixtureRequests(1), Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(input)})
 			if problem != "none" {
 				require.Error(t, err)
 				require.Nil(t, result)

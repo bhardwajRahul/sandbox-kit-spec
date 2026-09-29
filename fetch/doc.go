@@ -2,11 +2,20 @@
 // registries. Credentials, transport, and platform selection belong to Client.
 //
 // Assemble is the single-call runtime API: OCI requests and Options produce
-// selected declarations, image metadata, final container settings, and checked
-// layer inventories. It defaults to Docker credentials and known capabilities;
-// supply Options.Loader for another store or Options.CapabilitySelector for
-// the runtime's actual claims and policy. Options.OnProgress reports stages.
-// Client.LoadKit supplies a loader with custom credentials and platform.
+// selected declarations, image metadata, and final container settings. It
+// defaults to Docker credentials and known capabilities; supply Options.Loader
+// for another store or Options.CapabilitySelector for the runtime's actual
+// claims and policy. Options.OnProgress reports stages. Client.LoadKit supplies
+// a loader with custom credentials and platform.
+//
+// Layer validation is opt-in: set Options.LayerValidator to DefaultLayerValidator for
+// the built-in integrity, safe-extraction, inventory-limit, and cross-Kit file
+// collision checks. A custom LayerValidator can use a runtime's verified store.
+// Nil enables metadata-only assembly for consent-time resolution or images
+// already checked by the caller. It never calls LayerLoader and preserves
+// metadata and descriptor validation and the same Result. The caller remains
+// responsible for layer integrity, safe extraction, resource limits, and
+// cross-Kit collisions before using the image.
 //
 // Resolve fetches a closed set of requests, resolves create arguments, validates
 // every input, orders the dependency graph, selects capability groups,

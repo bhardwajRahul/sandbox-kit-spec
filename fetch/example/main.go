@@ -63,6 +63,7 @@ func run(ctx context.Context, selectCapability spec.SelectCapability) error {
 	}
 	// The API owns loading, atomic selection, composition, and layer checks.
 	result, err := fetch.Assemble(ctx, requests, fetch.Options{
+		LayerValidator:     fetch.DefaultLayerValidator,
 		CapabilitySelector: selectCapability,
 	})
 	if err != nil {

@@ -45,9 +45,9 @@ func TestAssembleRejectsDeepPathsBeforeBuildingFilesystem(t *testing.T) {
 	input.Manifest.Layers = []ocispec.Descriptor{layer}
 	input.Config.RootFS.DiffIDs = []digest.Digest{diffID.Digest()}
 	reader := &assemblyStream{Reader: bytes.NewReader(blob.Bytes())}
-	input.OpenLayer = func(context.Context, ocispec.Descriptor) (io.ReadCloser, error) { return reader, nil }
+	input.LayerLoader = func(context.Context, ocispec.Descriptor) (io.ReadCloser, error) { return reader, nil }
 	var events []Progress
-	result, err := Assemble(t.Context(), fixtureRequests(1), Options{
+	result, err := Assemble(t.Context(), fixtureRequests(1), Options{LayerValidator: DefaultLayerValidator,
 		Loader: fixtureLoader(input), OnProgress: func(p Progress) { events = append(events, p) },
 	})
 	require.Nil(t, result)
@@ -101,17 +101,17 @@ func TestAssembleInventoryBudgetSpansLayersKitsAndCacheReplays(t *testing.T) {
 						return r, nil
 					}
 					base, _ := assemblyFixture(t, spec.KindWorkload, "base", "base")
-					base.Manifest.Layers, base.Config.RootFS.DiffIDs, base.OpenLayer = layers, diffIDs, open
+					base.Manifest.Layers, base.Config.RootFS.DiffIDs, base.LayerLoader = layers, diffIDs, open
 					inputs := []*LoadedKit{base}
 					if strings.HasSuffix(arrangement, "kits") {
 						mixin, _ := assemblyFixture(t, spec.KindMixin, "tool", "tool")
 						base.Manifest.Layers, base.Config.RootFS.DiffIDs = layers[:1], diffIDs[:1]
-						mixin.Manifest.Layers, mixin.Config.RootFS.DiffIDs, mixin.OpenLayer = layers[1:], diffIDs[1:], open
+						mixin.Manifest.Layers, mixin.Config.RootFS.DiffIDs, mixin.LayerLoader = layers[1:], diffIDs[1:], open
 						inputs = append(inputs, mixin)
 					}
 					var events []Progress
 					requests := fixtureRequests(len(inputs))
-					result, err := Assemble(t.Context(), requests, Options{
+					result, err := Assemble(t.Context(), requests, Options{LayerValidator: DefaultLayerValidator,
 						Loader: fixtureLoader(inputs...), OnProgress: func(p Progress) { events = append(events, p) },
 					})
 					require.Nil(t, result)
@@ -133,12 +133,12 @@ func TestAssembleInventoryBudgetCountsEmptyLayers(t *testing.T) {
 		input := layerFixture(t, spec.KindWorkload, "base", []tar.Header{})
 		input.Manifest.Layers = slices.Repeat(input.Manifest.Layers, count)
 		input.Config.RootFS.DiffIDs = slices.Repeat(input.Config.RootFS.DiffIDs, count)
-		open, reads := input.OpenLayer, 0
-		input.OpenLayer = func(ctx context.Context, layer ocispec.Descriptor) (io.ReadCloser, error) {
+		open, reads := input.LayerLoader, 0
+		input.LayerLoader = func(ctx context.Context, layer ocispec.Descriptor) (io.ReadCloser, error) {
 			reads++
 			return open(ctx, layer)
 		}
-		result, err := Assemble(t.Context(), fixtureRequests(1), Options{Loader: fixtureLoader(input)})
+		result, err := Assemble(t.Context(), fixtureRequests(1), Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(input)})
 		if count == maxInventoryLayers {
 			require.NoError(t, err)
 			require.NotNil(t, result)
@@ -199,9 +199,9 @@ func TestAssembleRejectsOversizedInventoryAndClosesStream(t *testing.T) {
 	input.Manifest.Layers = []ocispec.Descriptor{layer}
 	input.Config.RootFS.DiffIDs = []digest.Digest{diffID.Digest()}
 	reader := &assemblyStream{Reader: bytes.NewReader(blob.Bytes())}
-	input.OpenLayer = func(context.Context, ocispec.Descriptor) (io.ReadCloser, error) { return reader, nil }
+	input.LayerLoader = func(context.Context, ocispec.Descriptor) (io.ReadCloser, error) { return reader, nil }
 	var events []Progress
-	result, err := Assemble(t.Context(), fixtureRequests(1), Options{
+	result, err := Assemble(t.Context(), fixtureRequests(1), Options{LayerValidator: DefaultLayerValidator,
 		Loader: fixtureLoader(input), OnProgress: func(p Progress) { events = append(events, p) },
 	})
 	require.Nil(t, result)
