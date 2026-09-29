@@ -15,6 +15,8 @@ import (
 
 // Options configures Assemble. Its zero value loads from registries using
 // Docker credentials and accepts the library's known capability types.
+// Layer validation is opt-in; set LayerValidator to ValidateLayers to run
+// the built-in layer integrity, extraction, and collision checks.
 type Options struct {
 	Loader KitLoader
 	// CapabilitySelector decides availability and policy without applying effects.
@@ -22,6 +24,12 @@ type Options struct {
 	// spec.Supported with its actual claims. Groups remain atomic.
 	CapabilitySelector spec.SelectCapability
 	Overrides          Overrides
+	// LayerValidator checks the complete set after metadata composition and
+	// descriptor resolution. Nil skips layer checks without calling LayerLoader;
+	// the caller is responsible for integrity, safe extraction, resource limits,
+	// and cross-Kit collisions before using the image. Use ValidateLayers for
+	// the built-in checks or supply a validator backed by the runtime's store.
+	LayerValidator LayerValidator
 	// OnProgress receives serialized callbacks on the calling goroutine. It must
 	// return promptly; cancellation uses Assemble's context. Nil disables events.
 	OnProgress func(Progress)
@@ -51,7 +59,7 @@ type Result struct {
 
 // Assemble loads a closed set of OCI Kit references, composes image defaults,
 // expands and selects declarations using the final container environment, and
-// checks resolved filesystem collisions.
+// invokes Options.LayerValidator when non-nil.
 // It does not publish blobs, create a container, or apply capabilities.
 // Image.Manifest and Image.WriteMetadata serialize consistent image metadata;
 // Environment and WorkingDir are applied separately at container creation.
@@ -157,15 +165,13 @@ func Assemble(ctx context.Context, requests []Request, options Options) (*Result
 	if err != nil {
 		return nil, err
 	}
-	inventories, err := inventoryKits(ctx, resolved.Kits, loaded, options.OnProgress)
-	if err != nil {
-		return nil, err
-	}
-	err = progressStep(ctx, options.OnProgress, Progress{Stage: StageCollisions}, func() error {
-		return checkFileCollisions(ctx, inventories)
-	})
-	if err != nil {
-		return nil, err
+	if options.LayerValidator != nil {
+		if err := options.LayerValidator(ctx, resolved.Kits, loaded, options.OnProgress); err != nil {
+			return nil, err
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 	}
 	maps.Copy(environment, resolved.ContainerEnv)
 	maps.Copy(environment, options.Overrides.Env)
@@ -241,9 +247,6 @@ func validateLoadedKit(ref string, input *LoadedKit) (*Kit, error) {
 		if layer.Size < 0 {
 			return nil, fmt.Errorf("layer %s has negative size", layer.Digest)
 		}
-	}
-	if input.OpenLayer == nil {
-		return nil, fmt.Errorf("loader returned layers without OpenLayer")
 	}
 	raw := input.Descriptor
 	if len(raw) == 0 {

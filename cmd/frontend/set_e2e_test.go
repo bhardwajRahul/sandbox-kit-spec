@@ -470,8 +470,9 @@ kits:
 	client, err := fetch.New(fetch.WithPlainHTTP())
 	require.NoError(t, err)
 	result, err := fetch.Assemble(t.Context(), []fetch.Request{{Reference: registry + "/sbx-kit-environment-set:1.0.0"}}, fetch.Options{
-		Loader:    client.LoadKit,
-		Overrides: fetch.Overrides{Env: map[string]string{"HOME": "/home/runtime", "MESSAGE": "configured"}},
+		LayerValidator: fetch.ValidateLayers,
+		Loader:         client.LoadKit,
+		Overrides:      fetch.Overrides{Env: map[string]string{"HOME": "/home/runtime", "MESSAGE": "configured"}},
 	})
 	require.NoError(t, err)
 	lc, err := spec.LifecycleOf(result.Resolved.Descriptor.Capabilities)
