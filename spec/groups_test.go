@@ -2,6 +2,7 @@ package spec
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -73,6 +74,35 @@ func TestGroupValidationPathsAndBlocks(t *testing.T) {
 	d.Capabilities[1].Group.Capabilities = append(d.Capabilities[1].Group.Capabilities, groupHook("duplicate"))
 	_, err = Validate(d)
 	require.ErrorContains(t, err, "capabilities[1].group.capabilities[1].type")
+}
+
+func TestDuplicateDiagnosticsRetainOriginalPaths(t *testing.T) {
+	for _, duplicate := range []Capability{
+		groupHook("same"),
+		{Type: CapabilityVolume, Config: map[string]any{"path": "/cache"}},
+	} {
+		group := Capability{Group: &CapabilityGroup{Capabilities: []Capability{{Type: "com.example/feature@1"}}}}
+		d := &Descriptor{Kind: KindMixin, Capabilities: []Capability{group, duplicate, group, duplicate}}
+		_, err := Validate(d)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "capabilities[3]")
+		require.Contains(t, err.Error(), "capabilities[1]")
+		require.NotContains(t, err.Error(), "capabilities[0]")
+		var field *FieldError
+		require.ErrorAs(t, err, &field)
+		require.Contains(t, field.Path, "capabilities[3]")
+
+		d.Capabilities = []Capability{group, {Group: &CapabilityGroup{Capabilities: []Capability{duplicate, duplicate}}}}
+		_, err = Validate(d)
+		require.ErrorContains(t, err, "capabilities[1].group.capabilities[0]")
+		require.ErrorContains(t, err, "capabilities[1].group.capabilities[1]")
+	}
+	sentinel := errors.New("typed cause")
+	original := &FieldError{Path: "capabilities[1].config", err: fmt.Errorf("capabilities[1] duplicates capabilities[0]: %w", sentinel)}
+	mapped := remapCapabilityErrors(original, []string{"capabilities[1]", "capabilities[3]"})
+	require.ErrorIs(t, mapped, sentinel)
+	require.ErrorContains(t, mapped, "capabilities[3] duplicates capabilities[1]")
+	require.Equal(t, "capabilities[1].config", original.Path)
 }
 
 func TestSelectCapabilitiesAtomicAndOrdered(t *testing.T) {

@@ -257,15 +257,31 @@ func remapCapabilityErrors(err error, paths []string) error {
 		return out
 	}
 	if field, ok := err.(*FieldError); ok {
+		replacements := make([]string, 0, 2*len(paths))
+		for i, to := range paths {
+			replacements = append(replacements, fmt.Sprintf("capabilities[%d]", i), to)
+		}
 		for i, to := range paths {
 			from := fmt.Sprintf("capabilities[%d]", i)
 			if field.Path == from || strings.HasPrefix(field.Path, from+".") {
-				return &FieldError{Path: to + strings.TrimPrefix(field.Path, from), err: field.err}
+				return &FieldError{Path: to + strings.TrimPrefix(field.Path, from), err: &capabilityPathError{
+					cause: field.err, paths: strings.NewReplacer(replacements...),
+				}}
 			}
 		}
 	}
 	return err
 }
+
+// Remap every referenced index in one pass, including the other side of a
+// duplicate, without losing typed causes used by errors.Is and errors.As.
+type capabilityPathError struct {
+	cause error
+	paths *strings.Replacer
+}
+
+func (e *capabilityPathError) Error() string { return e.paths.Replace(e.cause.Error()) }
+func (e *capabilityPathError) Unwrap() error { return e.cause }
 
 // ValidateDeclarations validates all structure and per-entry configurations,
 // leaving selection-dependent cross-entry checks to ValidateEffective.
