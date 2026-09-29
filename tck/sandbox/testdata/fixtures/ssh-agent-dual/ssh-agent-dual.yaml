@@ -1,0 +1,26 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+displayName: Dual-phase bounded SSH agent
+description: Grants the same signing bounds to install and runtime
+capabilities:
+  - type: com.docker.sandbox/ssh-agent@1
+    config:
+      phase: [install, runtime]
+      unrestricted: false
+      sign: [git]
+  - type: com.docker.sandbox/lifecycle@1
+    optional: true
+    config:
+      install:
+        - command: >-
+            sh -c 'printf "%s" "$SSH_AUTH_SOCK" > /var/tmp/ssh-agent-install-sock;
+            kit-tck-ssh-agent observe > /var/tmp/ssh-agent-at-install 2>&1 || true'
+          env: [SSH_AUTH_SOCK]
+          description: Records identities, an admitted signature, and refusal probes during install
+      startup:
+        - command: >-
+            sh -c 'printf "%s" "$SSH_AUTH_SOCK" > /var/tmp/kit-tck-startup-ssh-sock;
+            kit-tck-ssh-agent observe > /var/tmp/kit-tck-startup-ssh-sock-proof.tmp 2>&1 || true;
+            mv /var/tmp/kit-tck-startup-ssh-sock-proof.tmp /var/tmp/kit-tck-startup-ssh-sock-proof'
+          env: [SSH_AUTH_SOCK]

@@ -76,6 +76,23 @@ type CreateOptions struct {
 	// unobservable without this, because a suite that always arranges a
 	// permissive host can only ever see the kit's half narrow.
 	SkillsHostMode string
+
+	// SSHAgent, when set, is the socket of the backing SSH agent the
+	// runtime has available for this sandbox, passed as --ssh-agent: an
+	// adapter wires it however its runtime obtains agents (forwarded from
+	// a client, or managed). The suite runs its own agent with a key it
+	// generated, so what a sandbox can do to a user's agent is observable
+	// without touching the user's. Empty means no backing agent is
+	// available.
+	SSHAgent string
+
+	// SSHKnownHosts, when set, is a known_hosts file naming the host keys
+	// the runtime is to trust for ssh-agent@1 authenticate destinations,
+	// passed as --ssh-known-hosts. The suite generates the keys for a test
+	// server under a reserved name, so a relay matching session bindings
+	// to them is observable without a real server; the page requires those
+	// keys to come from outside the sandbox, which is where this is.
+	SSHKnownHosts string
 }
 
 // Create composes a kit set into a running sandbox and returns its id.
@@ -89,6 +106,12 @@ func (a *Adapter) Create(ctx context.Context, kits []string, opts CreateOptions)
 	}
 	if opts.SkillsHostMode != "" {
 		argv = append(argv, "--skills-host-mode", opts.SkillsHostMode)
+	}
+	if opts.SSHAgent != "" {
+		argv = append(argv, "--ssh-agent", opts.SSHAgent)
+	}
+	if opts.SSHKnownHosts != "" {
+		argv = append(argv, "--ssh-known-hosts", opts.SSHKnownHosts)
 	}
 	for _, name := range sortedKeys(opts.Args) {
 		argv = append(argv, "--arg", name+"="+opts.Args[name])

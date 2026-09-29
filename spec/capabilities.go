@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -223,6 +224,47 @@ func CredentialsOfPhase(needs []Capability, phase string) ([]CredentialCapabilit
 	for _, c := range all {
 		if c.Phase == phase {
 			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+// SSHAgentCapability is one SSH agent request with its entry-level
+// optionality and display metadata, which the runtime needs for preflight.
+type SSHAgentCapability struct {
+	SSHAgent
+	Optional    bool
+	Name        string
+	Description string
+}
+
+// SSHAgentsOf returns SSH agent requests in declaration order. One request
+// may name both phases; callers enforcing one phase use SSHAgentsOfPhase.
+func SSHAgentsOf(needs []Capability) ([]SSHAgentCapability, error) {
+	var out []SSHAgentCapability
+	for _, n := range needs {
+		if n.Type != CapabilitySSHAgent {
+			continue
+		}
+		var a SSHAgent
+		if err := DecodeCapabilityConfig(n, &a); err != nil {
+			return nil, err
+		}
+		out = append(out, SSHAgentCapability{SSHAgent: a, Optional: n.Optional, Name: n.Name, Description: n.Description})
+	}
+	return out, nil
+}
+
+// SSHAgentsOfPhase returns requests granting the agent in a given phase.
+func SSHAgentsOfPhase(needs []Capability, phase string) ([]SSHAgentCapability, error) {
+	all, err := SSHAgentsOf(needs)
+	if err != nil {
+		return nil, err
+	}
+	var out []SSHAgentCapability
+	for _, a := range all {
+		if slices.Contains(a.Phase, phase) {
+			out = append(out, a)
 		}
 	}
 	return out, nil

@@ -476,6 +476,12 @@ migrated kit only if the v2 kit declared the equivalent. A v2 Dockerfile's
 `LABEL com.docker.sandboxes.start-docker="true"` stays a label in the recipe —
 it is not a v3 capability.
 
+`ssh-agent@1` has no v2 counterpart to migrate: agent forwarding was a
+runtime setting (`ssh.agentForwardingEnabled`), not something a v2 kit
+declared, so a migration never adds it. Adding it is a new grant of every
+key the user's agent holds, which is a decision for the kit's author, not
+a translation.
+
 ## Mixin variants
 
 A workload kit's `-mixin` sibling declares the same credentials, network policy,

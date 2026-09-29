@@ -64,7 +64,7 @@ An adapter **MUST NOT** require interactive input.
 | Verb | Arguments | stdout | Purpose |
 |---|---|---|---|
 | `capabilities` | — | one capability type per line | What the runtime claims to implement |
-| `create` | `<kit-ref>…`, zero or more `--arg name=value`, at most one `--skills-host-mode readonly\|off`, at most one `--git-identity-config <absolute-path>\|off` | one sandbox id | Compose the Kit set and start it |
+| `create` | `<kit-ref>…`, zero or more `--arg name=value`, at most one `--skills-host-mode readonly\|off`, at most one `--ssh-agent <socket>`, at most one `--ssh-known-hosts <file>`, at most one `--git-identity-config <absolute-path>\|off` | one sandbox id | Compose the Kit set and start it |
 | `exec` | `<id> -- <argv>…` | the command's stdout | Run a command inside |
 | `stop` | `<id>` | — | Stop without discarding state |
 | `start` | `<id>` | — | Start a stopped sandbox |
@@ -208,6 +208,32 @@ path the suite can name.
 
 An adapter that cannot bind credentials **SHOULD NOT** claim
 `com.docker.sandbox/credential@1`, in which case its checks are skipped.
+
+When `create` carries `--ssh-agent <socket>`, the adapter **MUST** make
+the SSH agent listening on that Unix socket the backing agent available
+to that sandbox, and only to that sandbox. Without it, no backing agent is
+available: a Kit requiring `com.docker.sandbox/ssh-agent@1` is then
+refused, and an optional entry is skipped. How the adapter hands the
+socket to its runtime is its own business — as the agent a client
+forwards, or as the one a managed runtime would supply — so long as the
+sandbox relays to this agent and no other. The agent is the suite's,
+holding a key generated for the check, so the suite can inspect what
+reached it; an adapter **MUST NOT** substitute an agent of its own, or
+the user's. An adapter whose runtime cannot be pointed at a given agent
+**SHOULD NOT** claim the type.
+
+When `create` carries `--ssh-known-hosts <file>`, a file in OpenSSH's
+`known_hosts` format, the adapter **MUST** make those the host keys the
+runtime matches `authenticate` destinations against for that sandbox, and
+trust no other keys for the names it lists. The suite generates them for a
+test server under the reserved name `kit-tck.example`: nothing listens
+there, and none is needed, because a session binding is a host key's
+signature the suite can make itself. The page requires those keys to come
+from outside the sandbox, which is where this file is.
+
+The workload fixture's `kit-tck-ssh-agent` probe speaks the agent
+protocol itself and needs `python3` in the image, which the fixture's base
+provides.
 
 ### 2.4 What the suite guarantees
 

@@ -11,7 +11,8 @@ setup.
 - **Permission surface**: **no** — hooks and files run inside the sandbox
   on the entrypoint's trust plane; nothing crosses the boundary the gate
   guards. What hooks can *reach* is bounded by the other capabilities
-  ([network](network-policy@1.md), [credentials](credential@1.md)).
+  ([network](network-policy@1.md), [credentials](credential@1.md),
+  [SSH agent](ssh-agent@1.md)).
 
 Background hooks detach from boot; they do not by themselves prevent
 session-based sandbox auto-stop. A Kit that needs to survive its

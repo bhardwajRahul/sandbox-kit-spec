@@ -122,7 +122,7 @@ func Supported(types ...string) SelectCapability {
 // KnownCapabilities lists types understood by this version of the library.
 // Understanding a schema is not a claim that a runtime implements it.
 func KnownCapabilities() []string {
-	return []string{CapabilityNetworkPolicy, CapabilityNetworkPolicyV2, CapabilityCredential,
+	return []string{CapabilityNetworkPolicy, CapabilityNetworkPolicyV2, CapabilityCredential, CapabilitySSHAgent,
 		CapabilityVolume, CapabilityPort, CapabilityUSBDevice, CapabilityResources,
 		CapabilityPrivileged, CapabilityLifecycle, CapabilityAgentContext, CapabilityAgentSessions,
 		CapabilityAgentSkills, CapabilitySbx, CapabilityLongRunning, CapabilityGitIdentity, CapabilityKitRegistry}

@@ -12,7 +12,7 @@ broken="${KIT_TCK_FAKE_BROKEN:-}"
 # suite narrows it, nothing when broken that way. The refusal duty below
 # is always keyed off this same list, because claiming and refusing are
 # two sides of one statement.
-default_claims="com.docker.sandbox/git-identity@1,com.docker.sandbox/long-running@1,com.docker.sandbox/sbx@1,com.docker.sandbox/lifecycle@1,com.docker.sandbox/network-policy@1,com.docker.sandbox/network-policy@2,com.docker.sandbox/credential@1,com.docker.sandbox/agent-context@1,com.docker.sandbox/volume@1,com.docker.sandbox/resources@1,com.docker.sandbox/privileged@1,com.docker.sandbox/agent-skills@1"
+default_claims="com.docker.sandbox/git-identity@1,com.docker.sandbox/long-running@1,com.docker.sandbox/sbx@1,com.docker.sandbox/lifecycle@1,com.docker.sandbox/network-policy@1,com.docker.sandbox/network-policy@2,com.docker.sandbox/credential@1,com.docker.sandbox/agent-context@1,com.docker.sandbox/volume@1,com.docker.sandbox/resources@1,com.docker.sandbox/privileged@1,com.docker.sandbox/agent-skills@1,com.docker.sandbox/ssh-agent@1"
 claims="${KIT_TCK_FAKE_CLAIMS:-$default_claims}"
 if [ "$broken" = "claims-nothing" ]; then claims=""; fi
 verb="${1:-}"
@@ -99,6 +99,53 @@ write_republished_state() {
   printf '{"selection":{"selected":[%s],"skipped":[%s]},"surface":%s}\n' "$selected" "$skipped" "$surface" >"$dir/selection.json"
 }
 
+run_ssh_probe() (
+  local dir="$1" backing="$2" relay_broken="$3" relay_dir relay_pid status
+  shift 3
+  : "${KIT_TCK_FAKE_RELAY:?KIT_TCK_FAKE_RELAY names the built ssh-relay}"
+  # A Unix socket path is capped near 104 bytes on macOS, which the
+  # state directory can exceed.
+  relay_dir="$(mktemp -d /tmp/kit-tck-relay-XXXXXX)"
+  if [ "$relay_broken" = trusts-sandbox-known-hosts ] && [ -f "$dir/sandbox_known_hosts" ]; then
+    cat "$dir/known_hosts" "$dir/sandbox_known_hosts" >"$relay_dir/known_hosts"
+  else
+    if [ -f "$dir/known_hosts" ]; then cp "$dir/known_hosts" "$relay_dir/known_hosts"; fi
+  fi
+  "$KIT_TCK_FAKE_RELAY" -listen "$relay_dir/agent.sock" -backing "$backing" \
+    -config "$dir/ssh-agent.json" -known-hosts "$relay_dir/known_hosts" -broken "$relay_broken" 2>/dev/null &
+  relay_pid=$!
+  trap 'kill "$relay_pid" 2>/dev/null || true; wait "$relay_pid" 2>/dev/null || true; rm -rf "$relay_dir"' EXIT
+  for _ in $(seq 1 100); do [ -S "$relay_dir/agent.sock" ] && break; sleep 0.02; done
+  status=0
+  SSH_AUTH_SOCK="$relay_dir/agent.sock" python3 "$(cat "$dir/ssh-agent-probe")" "$@" || status=$?
+  exit "$status"
+)
+
+record_ssh_processes() {
+  local dir="$1" boot="$2" process process_agent process_socket process_broken
+  for process in workload startup; do
+    process_agent="$(cat "$dir/ssh-agent")"
+    process_socket=/run/kit-tck/ssh-agent.sock
+    if [ "$broken" = "ssh-agent-missing-$process-env" ] || { [ "$boot" = restart ] && [ "$broken" = "ssh-agent-restart-missing-$process-env" ]; }; then
+      process_agent=""
+      process_socket=""
+    elif [ "$broken" = "ssh-agent-bogus-$process-socket" ]; then
+      process_agent="$dir/nonexistent-agent.sock"
+      process_socket=/run/kit-tck/nonexistent-agent.sock
+    fi
+    printf '%s' "$process_socket" >"$dir/$process-ssh-sock"
+    process_broken="$broken"
+    if [ "$broken" = "ssh-agent-$boot-$process-unfiltered-sign" ]; then process_broken=ssh-agent-unfiltered-sign; fi
+    if [ "$broken" = "ssh-agent-$boot-$process-forward-refused-sign" ]; then process_broken=ssh-agent-sign-forwards-refused; fi
+    if [ "$broken" = "ssh-agent-$boot-$process-unfiltered-operations" ]; then process_broken=ssh-agent-forwards-constrained-rsa; fi
+    if [ -S "$process_agent" ]; then
+      run_ssh_probe "$dir" "$process_agent" "$process_broken" observe >"$dir/$process-ssh-sock-proof" 2>&1 || true
+    else
+      SSH_AUTH_SOCK="$process_agent" python3 "$(cat "$dir/ssh-agent-probe")" observe >"$dir/$process-ssh-sock-proof" 2>&1 || true
+    fi
+  done
+}
+
 case "$verb" in
 capabilities)
   if [ -n "$claims" ]; then echo "$claims" | tr ',' '\n'; fi
@@ -109,6 +156,9 @@ create)
   greeting=""
   group_path=/var/tmp/group-expanded
   hostmode="readwrite"
+  # The backing SSH agent available to this sandbox; empty when none is.
+  offered_agent=""
+  known_hosts=""
   identity_config=""
   group_rejected=no
   lifecycle_rejected=no
@@ -129,6 +179,14 @@ create)
       ;;
     --skills-host-mode)
       hostmode="$2"
+      shift 2
+      ;;
+    --ssh-agent)
+      offered_agent="$2"
+      shift 2
+      ;;
+    --ssh-known-hosts)
+      known_hosts="$2"
       shift 2
       ;;
     *)
@@ -187,6 +245,8 @@ create)
         ;;
       *long-running-workload*) ;;
       *long-running*) need="com.docker.sandbox/long-running@1" ;;
+      */ssh-agent-optional) ;;
+      */ssh-agent | */ssh-agent-install | */ssh-agent-bounded | */ssh-agent-dual) need="com.docker.sandbox/ssh-agent@1" ;;
       *skills-optional* | *scoped-egress*) ;;
       # Before the *context* arm, whose name this fixture also carries
       # through its own agent-context profile.
@@ -215,6 +275,36 @@ create)
 
   if [ "$broken" = "refuses-everything" ]; then
     echo "refusing: this runtime declines every composition" >&2
+    exit 2
+  fi
+
+  # Which phase, if any, asks for the SSH agent, and whether the ask can
+  # be dropped. A required ask the host cannot answer is refused before
+  # anything starts; an optional one is skipped.
+  agent_phase=""
+  agent_required=""
+  # The entry each fixture declares, as the relay reads it. A real runtime
+  # takes this from the descriptor; the fake knows its fixtures by name.
+  agent_config='{"phase":"runtime"}'
+  for kit in "${kits[@]}"; do
+    case "$kit" in
+    */ssh-agent-dual) agent_phase=dual agent_required=1 agent_config='{"phase":["install","runtime"],"unrestricted":false,"sign":["git"]}' ;;
+    */ssh-agent-install) agent_phase=install agent_required=1 agent_config='{"phase":"install"}' ;;
+    */ssh-agent-optional) agent_phase=runtime ;;
+    */ssh-agent-bounded)
+      agent_phase=runtime agent_required=1
+      agent_config='{"phase":"runtime","unrestricted":false,"sign":["git"],"authenticate":["git@kit-tck.example","any-user.kit-tck.example"]}'
+      ;;
+    */ssh-agent) agent_phase=runtime agent_required=1 ;;
+    esac
+  done
+  if [ -n "$agent_required" ] && [ -z "$offered_agent" ] && [ "$broken" != "ssh-agent-accepts-without-agent" ]; then
+    if [ "$broken" = ssh-agent-refusal-unnamed ]; then echo "refusing: unavailable" >&2; exit 2; fi
+    echo "refusing: the kit requires com.docker.sandbox/ssh-agent@1 and no backing agent is available" >&2
+    exit 2
+  fi
+  if [ -n "$agent_phase" ] && [ -z "$offered_agent" ] && [ "$broken" = "ssh-agent-refuses-optional" ]; then
+    echo "refusing: no SSH agent" >&2
     exit 2
   fi
 
@@ -311,6 +401,62 @@ create)
   dir="$state/$id"
   mkdir -p "$dir"
   echo running >"$dir/status"
+  # The probe the workload fixture ships, which the fake runs itself.
+  for kit in "${kits[@]}"; do
+    if [[ "$kit" == */workload ]]; then printf '%s' "$kit/kit-tck-ssh-agent.py" >"$dir/ssh-agent-probe"; fi
+  done
+  printf '%s' "$agent_config" >"$dir/ssh-agent.json"
+  if [ -n "$known_hosts" ]; then cp "$known_hosts" "$dir/known_hosts"; fi
+  # The agent a runtime grant reaches. Only the socket's presence matters
+  # inside the sandbox; every process probe reaches it through the relay.
+  if [ -n "$offered_agent" ]; then
+    if [ "$agent_phase" = install ] || [ "$agent_phase" = dual ]; then
+      # The install hook runs with the agent granted and records what it
+      # offered, through the workload probe and the relay.
+      if [ "$broken" = "ssh-agent-install-missing" ] || { [ "$agent_phase" = dual ] && [ "$broken" = ssh-agent-dual-runtime-only ]; }; then
+        echo "Could not open a connection to your authentication agent." >"$dir/ssh-agent-at-install"
+      else
+        install_broken="$broken"
+        if [ "$broken" = ssh-agent-install-unfiltered-operations ]; then install_broken=ssh-agent-forwards-constrained-rsa; fi
+        if [ "$broken" = ssh-agent-install-unfiltered-sign ]; then install_broken=ssh-agent-unfiltered-sign; fi
+        if [ "$broken" = ssh-agent-install-forward-refused-sign ]; then install_broken=ssh-agent-sign-forwards-refused; fi
+        run_ssh_probe "$dir" "$offered_agent" "$install_broken" observe >"$dir/ssh-agent-at-install" 2>&1 || true
+      fi
+      printf '%s' /run/kit-tck/install-agent.sock >"$dir/install-ssh-sock"
+      printf '%s' "$offered_agent" >"$dir/install-agent"
+      if [ "$broken" = "leaves-install-ssh-agent-open" ]; then printf '%s' "$offered_agent" >"$dir/ssh-agent"; fi
+      if [ "$broken" = "leaks-install-ssh-agent-to-entrypoint" ]; then
+        printf '%s' /run/kit-tck/ssh-agent.sock >"$dir/workload-ssh-sock"
+      fi
+    elif [ "$agent_phase" = runtime ] && [ "$broken" != "ignores-ssh-agent" ]; then
+      printf '%s' "$offered_agent" >"$dir/ssh-agent"
+    elif [ -z "$agent_phase" ] && [ "$broken" = "ssh-agent-without-grant" ]; then
+      printf '%s' "$offered_agent" >"$dir/ssh-agent"
+    fi
+  fi
+  if [ "$agent_phase" = dual ] && [ "$broken" != ssh-agent-dual-install-only ]; then
+    if [ "$broken" = ssh-agent-dual-unfiltered-runtime ]; then
+      printf '%s' '{"unrestricted":true}' >"$dir/ssh-agent.json"
+    fi
+    printf '%s' "$offered_agent" >"$dir/ssh-agent"
+  fi
+  if [ -f "$dir/ssh-agent" ]; then
+    record_ssh_processes "$dir" create
+  fi
+  if [ "$broken" = ssh-agent-initial-without-grant ] && [ -z "$agent_phase" ] && [ -n "$offered_agent" ]; then
+    printf '%s' "$offered_agent" >"$dir/ssh-agent"
+    record_ssh_processes "$dir" create
+    rm "$dir/ssh-agent"
+  fi
+  if [ "$broken" = ssh-agent-initial-optional-leak ] && [ "$agent_phase" = runtime ] && [ -z "$offered_agent" ]; then
+    printf '%s' /run/leaked-agent.sock >"$dir/workload-ssh-sock"
+  fi
+  if [ ! -f "$dir/workload-ssh-sock-proof" ]; then
+    echo 'no agent' >"$dir/workload-ssh-sock-proof"
+  fi
+  # The entrypoint records an empty value when no runtime-phase grant
+  # exists; only the leak mutation writes a non-empty value instead.
+  if [ ! -f "$dir/workload-ssh-sock" ]; then : >"$dir/workload-ssh-sock"; fi
   if [ -n "$identity_optional" ] && { [ -z "$identity_name" ] || [ -z "$identity_email" ]; }; then
     record='{"path":"capabilities[0]","source":{"kit":"git-identity-optional","path":"capabilities[0]"},"members":["capabilities[0]"],"memberSources":[{"kit":"git-identity-optional","path":"capabilities[0]"}],"rejected":["capabilities[0]"]}'
     case "$broken" in
@@ -581,6 +727,17 @@ exec)
       ;;
     /var/tmp/install-egress) cat "$dir/install-egress" ;;
     /var/tmp/hook.env) cat "$dir/hook.env" ;;
+    /var/tmp/kit-tck-workload-ssh-sock) cat "$dir/workload-ssh-sock" ;;
+    /var/tmp/kit-tck-startup-ssh-sock) cat "$dir/startup-ssh-sock" ;;
+    /var/tmp/kit-tck-workload-ssh-sock-proof) cat "$dir/workload-ssh-sock-proof" ;;
+    /var/tmp/kit-tck-startup-ssh-sock-proof) cat "$dir/startup-ssh-sock-proof" ;;
+    /var/tmp/ssh-agent-install-sock) cat "$dir/install-ssh-sock" ;;
+    /var/tmp/ssh-agent-at-install)
+      if [ -f "$dir/ssh-agent-at-install" ]; then cat "$dir/ssh-agent-at-install"; else
+        echo "no such file: $2" >&2
+        exit 1
+      fi
+      ;;
     /var/tmp/skills-at-install) cat "$dir/skills-at-install" ;;
     /var/tmp/skills-rw-at-install) cat "$dir/skills-rw-at-install" ;;
     /home/agent/.config/kit-written) cat "$dir/kit-written" ;;
@@ -828,6 +985,33 @@ exec)
   kit-tck-memory-limit)
     if [ "$broken" = "ignores-resources" ]; then echo "max"; else echo "2147483648"; fi
     ;;
+  kit-tck-ssh-agent)
+    if [ "$2" = plant-known-host ]; then
+      printf '%s %s\n' "$3" "$4" >>"$dir/sandbox_known_hosts"
+      exit 0
+    fi
+    # The workload's probe, run against the fake's relay: a socket served
+    # for this one call by the relay, which enforces the sandbox's entry
+    # in front of the backing agent. What reaches the backing agent is
+    # what the suite judges, as it would for a real runtime.
+    if [ "$2" = saved ]; then
+      if [ "$broken" = install-socket-still-reachable ] && [ -f "$dir/install-agent" ]; then
+        run_ssh_probe "$dir" "$(cat "$dir/install-agent")" "$broken" list
+        exit $?
+      fi
+      exit 2
+    fi
+    if [ "$2" = socket ]; then
+      if [ -f "$dir/ssh-agent" ]; then echo /run/kit-tck/ssh-agent.sock; else echo; fi
+      exit 0
+    fi
+    if [ ! -f "$dir/ssh-agent" ]; then
+      echo "Could not open a connection to your authentication agent." >&2
+      exit 2
+    fi
+    shift
+    run_ssh_probe "$dir" "$(cat "$dir/ssh-agent")" "$broken" "$@"
+    ;;
   kit-tck-privileged)
     if [ "$broken" = "ignores-privileged" ]; then echo "no"; else echo "yes"; fi
     ;;
@@ -918,6 +1102,8 @@ start)
     write_group_state "$dir" "$rejection"
   fi
   echo running >"$dir/status"
+  if [ "$broken" = "ssh-agent-first-boot-only" ]; then rm -f "$dir/ssh-agent"; fi
+  if [ -f "$dir/ssh-agent" ] && [ "$broken" != ssh-agent-stale-boot-proofs ]; then record_ssh_processes "$dir" restart; fi
   if [ "$broken" = "loses-volume-on-restart" ]; then rm -rf "$dir/volume" && mkdir -p "$dir/volume"; fi
   if [ "$broken" != "no-startup" ]; then
     count=$(cat "$dir/startup.count")
