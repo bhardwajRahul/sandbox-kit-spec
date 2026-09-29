@@ -601,8 +601,10 @@ const MethodAny = "ANY"
 
 // Credential is CapabilityCredential's config: one service the workload
 // authenticates to and how the proxy presents proof — never where the
-// secret lives. Phase-scoped like network: an install credential is
-// injected only while install runs and is gone before the agent starts.
+// secret lives. Phase-scoped like network: an install-only credential is
+// injected only while install runs and is gone before the workload starts.
+// An entry declaring both install and runtime uses the same configuration
+// in both phases.
 type Credential struct {
 	// Service is the identifier in the host credential store.
 	Service string `json:"service" yaml:"service"`
