@@ -195,6 +195,9 @@ func validateLoadedKit(ref string, input *LoadedKit) (*Kit, error) {
 	if err := requirePlainImageManifest(ocispec.Descriptor{MediaType: mediaType}, input.Manifest); err != nil {
 		return nil, err
 	}
+	if len(input.Manifest.Layers) == 0 {
+		return nil, fmt.Errorf("kit manifest must contain at least one layer")
+	}
 	if err := input.Manifest.Config.Digest.Validate(); err != nil {
 		return nil, fmt.Errorf("config digest: %w", err)
 	}
@@ -229,7 +232,7 @@ func validateLoadedKit(ref string, input *LoadedKit) (*Kit, error) {
 			return nil, fmt.Errorf("layer %s has negative size", layer.Digest)
 		}
 	}
-	if len(input.Manifest.Layers) > 0 && input.OpenLayer == nil {
+	if input.OpenLayer == nil {
 		return nil, fmt.Errorf("loader returned layers without OpenLayer")
 	}
 	raw := input.Descriptor

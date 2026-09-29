@@ -26,7 +26,7 @@ type LoadedKit struct {
 	Descriptor []byte
 	// OpenLayer opens a fresh stream of the blob as described by the manifest,
 	// with its original compression. Assemble closes each returned stream.
-	// Reads must honor ctx. Nil is allowed only for an image without layers.
+	// Reads must honor ctx. Required: every Kit must carry at least one layer.
 	OpenLayer func(ctx context.Context, layer ocispec.Descriptor) (io.ReadCloser, error)
 }
 

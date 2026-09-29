@@ -7,6 +7,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestAssembleRejectsZeroLayerKits(t *testing.T) {
+	for index, kind := range []string{spec.KindWorkload, spec.KindMixin} {
+		for _, reader := range []string{"nil reader", "present reader"} {
+			t.Run(kind+"/"+reader, func(t *testing.T) {
+				base, _ := assemblyFixture(t, spec.KindWorkload, "base", "base")
+				mixin, _ := assemblyFixture(t, spec.KindMixin, "tool", "tool")
+				inputs := []*LoadedKit{base, mixin}
+				inputs[index].Manifest.Layers = nil
+				inputs[index].Config.RootFS.DiffIDs = nil
+				if reader == "nil reader" {
+					inputs[index].OpenLayer = nil
+				}
+				var events []Progress
+				result, err := Assemble(t.Context(), fixtureRequests(2), Options{
+					Loader:     fixtureLoader(inputs...),
+					OnProgress: func(p Progress) { events = append(events, p) },
+				})
+				require.Nil(t, result)
+				require.ErrorContains(t, err, "kit manifest must contain at least one layer")
+				require.ErrorContains(t, err, fixtureRequests(2)[index].Reference)
+				require.Equal(t, Progress{Stage: StageLoad, State: ProgressFailed, Reference: fixtureRequests(2)[index].Reference}, events[len(events)-1])
+			})
+		}
+	}
+}
+
 func TestAssembleValidatesEveryInputEnvironment(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
