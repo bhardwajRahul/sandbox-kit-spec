@@ -69,6 +69,10 @@ type CreateOptions struct {
 	// Args are kit argument overrides, passed as --arg name=value.
 	Args map[string]string
 
+	// Env overrides the final container environment, passed as --env name=value.
+	// These values take precedence over image defaults and Kit argument exports.
+	Env map[string]string
+
 	// SkillsHostMode, when set, is the host-side skills setting the
 	// adapter must arrange for this sandbox, passed as
 	// --skills-host-mode. Empty means the contract's default: the most
@@ -115,6 +119,9 @@ func (a *Adapter) Create(ctx context.Context, kits []string, opts CreateOptions)
 	}
 	for _, name := range sortedKeys(opts.Args) {
 		argv = append(argv, "--arg", name+"="+opts.Args[name])
+	}
+	for _, name := range sortedKeys(opts.Env) {
+		argv = append(argv, "--env", name+"="+opts.Env[name])
 	}
 	res, err := a.run(ctx, argv...)
 	if err != nil {

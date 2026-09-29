@@ -908,14 +908,15 @@ func kitDeclarations(published *spec.Descriptor, k spec.Kit, setArgs map[string]
 	// and publish a set that direct consumption of the same kit would
 	// refuse.
 	//
-	// A re-exported arg leaves a placeholder behind, and the strict
+	// A re-exported arg or a final-environment reference leaves a
+	// placeholder behind, and the strict
 	// form refuses any reference at all — but only the entries that
 	// still carry one are genuinely unjudgeable. Validate deferring
 	// those, so a field that did resolve is held to its type even when
 	// a sibling did not: otherwise one re-export anywhere switched off
 	// every check, and the merge could normalize away an invalid pair
 	// before anything saw it.
-	if len(spec.ReferencedArgs(expanded)) == 0 {
+	if len(spec.ReferencedArgs(expanded)) == 0 && !spec.HasEnvReferences(d.Capabilities) {
 		if _, err := spec.ValidateExpandedDeclarations(expanded, d); err != nil {
 			return nil, nil, fmt.Errorf("declarations are invalid once its args resolve: %w", err)
 		}

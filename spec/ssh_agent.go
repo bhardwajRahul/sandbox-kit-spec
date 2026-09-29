@@ -35,7 +35,7 @@ func validateSSHAgentNeed(path string, i int, n Capability) (*SSHAgent, error) {
 	}
 	seen := map[string]bool{}
 	for _, phase := range a.Phase {
-		if !ContainsArgRef(phase) && phase != "install" && phase != "runtime" {
+		if !ContainsArgRef(phase) && !ContainsEnvRef(phase) && phase != "install" && phase != "runtime" {
 			return nil, fieldErrorf(path+".config.phase", "capabilities[%d]: ssh-agent phase must be install or runtime, got %q", i, phase)
 		}
 		if seen[phase] {
@@ -55,7 +55,7 @@ func validateSSHAgentNeed(path string, i int, n Capability) (*SSHAgent, error) {
 		return nil, err
 	}
 	for _, d := range a.Authenticate {
-		if host := sshDestinationHost(d); !ContainsArgRef(d) && isAllDigitsAndDots(host) {
+		if host := sshDestinationHost(d); !ContainsArgRef(d) && !ContainsEnvRef(d) && isAllDigitsAndDots(host) {
 			return nil, fieldErrorf(path+".config.authenticate", "capabilities[%d]: ssh-agent destination %q names an IP address; name the server by its DNS name", i, d)
 		}
 	}
@@ -93,7 +93,7 @@ func validateSSHAgentPresence(path string, i int, a SSHAgent) error {
 func validateSSHAgentList(path string, i int, field string, values []string, pattern *regexp.Regexp, rule string) error {
 	seen := map[string]bool{}
 	for _, v := range values {
-		if !ContainsArgRef(v) && !pattern.MatchString(v) {
+		if !ContainsArgRef(v) && !ContainsEnvRef(v) && !pattern.MatchString(v) {
 			return fieldErrorf(path, "capabilities[%d]: ssh-agent %s value %q is invalid: %s", i, field, v, rule)
 		}
 		if seen[v] {

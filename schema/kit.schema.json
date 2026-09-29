@@ -263,7 +263,7 @@
         },
         "config": {
           "type": "object",
-          "description": "Type-specific request payload. Well-known types decode strictly; unknown types carry it opaquely. Part of the permission surface: config changes gate like any widening."
+          "description": "Type-specific request payload. Well-known types decode strictly; unknown types carry it opaquely. Part of the permission surface: config changes gate like any widening. String values may reference ${{ kit.env.NAME }} from the final container environment, expanded before selection and validation. Keys are not environment-expanded."
         },
         "description": {
           "type": "string",

@@ -17,8 +17,9 @@ type Contribution struct {
 
 	// Descriptor is the declarations this contribution brings. A
 	// listed kit's is its published descriptor with its create-phase
-	// args already resolved (KitArgValues, ExpandCreateArgs), so
-	// nothing parameterized survives into the reconciliation.
+	// args already resolved (KitArgValues, ExpandCreateArgs). Publication
+	// preserves final-environment references; Compose requires those to be
+	// expanded before reconciliation.
 	Descriptor *Descriptor
 }
 
@@ -78,7 +79,7 @@ type MergeOptions struct {
 // grouped publication stages each ContextSource at its separate Target.
 // Runtime consumers use Compose and retain the input contributions.
 func Merge(contributions []Contribution, opts MergeOptions) (*MergeResult, error) {
-	if contributionsHaveGroups(contributions) {
+	if contributionsNeedDeferredMerge(contributions) {
 		return preserveGroups(contributions, opts)
 	}
 	result, err := mergeDeclarations(contributions)

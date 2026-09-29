@@ -209,6 +209,10 @@ kits:
 		require.NoError(t, err)
 		require.NoError(t, report.Err(), "the published set conforms:\n%s", report)
 	}
+	t.Run("final environment", func(t *testing.T) {
+		child := &e2e{t: t, builder: e.builder}
+		child.environmentSet(frontend, registry)
+	})
 	t.Run("conditional declarations", func(t *testing.T) {
 		child := &e2e{t: t, builder: e.builder}
 		child.groupSet(frontend, registry)
@@ -438,4 +442,48 @@ kits:
 		require.NoError(t, err)
 		require.NoError(t, rep.Err(), "%s", rep)
 	}
+}
+
+func (e *e2e) environmentSet(frontend, registry string) {
+	t := e.t
+	dir := t.TempDir()
+	e.publish(dir, "environment", registry+"/sbx-kit-environment:1.0.0", `# syntax=`+frontend+`
+schemaVersion: "3"
+kind: mixin
+capabilities:
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      files:
+        - path: '${{ kit.env.HOME }}/config'
+          content: '${{ kit.env.MESSAGE }}'
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      content: 'Home: ${{ kit.env.HOME }}'
+`, nil)
+	e.publish(dir, "environment-set", registry+"/sbx-kit-environment-set:1.0.0", `# syntax=`+frontend+`
+schemaVersion: "3"
+kind: set
+kits:
+  - ref: `+registry+`/sbx-kit-base:1.0.0
+  - ref: `+registry+`/sbx-kit-environment:1.0.0
+`, nil)
+	client, err := fetch.New(fetch.WithPlainHTTP())
+	require.NoError(t, err)
+	result, err := fetch.Assemble(t.Context(), []fetch.Request{{Reference: registry + "/sbx-kit-environment-set:1.0.0"}}, fetch.Options{
+		Loader:    client.LoadKit,
+		Overrides: fetch.Overrides{Env: map[string]string{"HOME": "/home/runtime", "MESSAGE": "configured"}},
+	})
+	require.NoError(t, err)
+	lc, err := spec.LifecycleOf(result.Resolved.Descriptor.Capabilities)
+	require.NoError(t, err)
+	require.Len(t, lc.Files, 1)
+	require.Equal(t, "/home/runtime/config", lc.Files[0].Path)
+	require.Equal(t, "configured", lc.Files[0].Content)
+	found := false
+	for _, c := range result.Resolved.Kits[0].Descriptor.Capabilities {
+		if c.Type == spec.CapabilityAgentContext && c.Config["content"] == "Home: /home/runtime" {
+			found = true
+		}
+	}
+	require.True(t, found, "inline environment references survive set publication")
 }

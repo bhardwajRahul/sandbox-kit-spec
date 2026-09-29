@@ -387,3 +387,39 @@ func TestSSHAgentParameterizedPhaseOverlap(t *testing.T) {
 		}
 	}
 }
+
+func TestSSHAgentEnvironmentExpansion(t *testing.T) {
+	for _, tc := range []struct {
+		name, phase, sign, destination, wantError string
+	}{
+		{"valid", "install", "git", "git@github.com", ""},
+		{"invalid phase", "always", "git", "git@github.com", "phase must be"},
+		{"invalid namespace", "install", "has space", "git@github.com", "printable ASCII"},
+		{"invalid destination", "install", "git", "*.github.com", "literal lowercase DNS"},
+		{"IP destination", "install", "git", "git@192.0.2.1", "IP address"},
+		{"overlapping phases", "runtime", "git", "git@github.com", "already declared"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := sshAgentKit(t, KindMixin,
+				sshAgentEntry(`"${{ kit.env.PHASE }}"`, false, "unrestricted: false",
+					`sign: ["${{ kit.env.SIGN }}"]`, `authenticate: ["${{ kit.env.DESTINATION }}"]`),
+				sshAgentEntry("runtime", false))
+			raw, err := json.Marshal(d)
+			require.NoError(t, err)
+			_, err = ValidatePublished(raw, d)
+			require.NoError(t, err)
+			expanded, err := ExpandEnvironment(d, map[string]string{
+				"PHASE": tc.phase, "SIGN": tc.sign, "DESTINATION": tc.destination,
+			})
+			require.NoError(t, err)
+			raw, err = json.Marshal(expanded)
+			require.NoError(t, err)
+			_, err = ValidateEffective(raw, expanded)
+			if tc.wantError != "" {
+				require.ErrorContains(t, err, tc.wantError)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}

@@ -151,6 +151,8 @@ COPY --chmod=0755 kit-tck-ssh-agent.py /usr/local/bin/kit-tck-ssh-agent
 # suite controls rather than every stable name (runtime-owned variables
 # may legitimately vary with the kit set).
 ENV KIT_TCK_CANARY=image-baseline
+# Distinct from the files fixture's argument export and create-time override.
+ENV KIT_GREETING=image-greeting
 
 # Capture the entrypoint's own environment before it starts waiting: exec
 # commands can have SSH_AUTH_SOCK even if the original workload did not.

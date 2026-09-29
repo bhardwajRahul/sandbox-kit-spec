@@ -484,6 +484,7 @@ create)
 	prepare_state
 	kits=()
 	kit_args=()
+	container_env_args=()
 	skills_mode=""
 	while [ $# -gt 0 ]; do
 		case "$1" in
@@ -492,6 +493,10 @@ create)
 			# which applies the value to every kit that declares the
 			# argument.
 			kit_args+=("--kit-arg" "$2")
+			shift 2
+			;;
+		--env)
+			container_env_args+=("--env" "$2")
 			shift 2
 			;;
 		--skills-host-mode)
@@ -535,6 +540,7 @@ create)
 		argv+=(--kit "$(kit_reference "$kit")")
 	done
 	argv+=(${kit_args[@]+"${kit_args[@]}"})
+	argv+=(${container_env_args[@]+"${container_env_args[@]}"})
 
 	# Remembered before the create runs, so a create that half-succeeded
 	# still leaves a recreate and a removal something to address.
