@@ -335,6 +335,9 @@ func expandNode(n any, decls map[string]Arg, values map[string]string, expandErr
 func expandScalar(s string, decls map[string]Arg, values map[string]string, phase string, expandErr *error) any {
 	if m := argRef.FindStringSubmatch(s); m != nil && m[0] == s {
 		if v, ok := resolveRef(m[1], decls, values, phase, expandErr); ok {
+			if phase == "create" && ContainsEnvRef(v) && *expandErr == nil {
+				*expandErr = fmt.Errorf("create-phase argument substitution introduces an environment reference")
+			}
 			return typedScalar(v)
 		}
 		return s
@@ -345,12 +348,53 @@ func expandScalar(s string, decls map[string]Arg, values map[string]string, phas
 // expandString substitutes every reference in one string and keeps it a
 // string.
 func expandString(s string, decls map[string]Arg, values map[string]string, phase string, expandErr *error) string {
-	return argRef.ReplaceAllStringFunc(s, func(match string) string {
-		if v, ok := resolveRef(argRef.FindStringSubmatch(match)[1], decls, values, phase, expandErr); ok {
-			return v
+	matches := argRef.FindAllStringSubmatchIndex(s, -1)
+	if len(matches) == 0 {
+		return s
+	}
+	var out strings.Builder
+	var literals [][2]int
+	writeLiteral := func(text string) {
+		start := out.Len()
+		out.WriteString(text)
+		literals = append(literals, [2]int{start, out.Len()})
+	}
+	end := 0
+	changed := false
+	for _, match := range matches {
+		writeLiteral(s[end:match[0]])
+		value, ok := resolveRef(s[match[2]:match[3]], decls, values, phase, expandErr)
+		if ok {
+			changed = true
+			out.WriteString(value)
+		} else {
+			writeLiteral(s[match[0]:match[1]])
 		}
-		return match
-	})
+		end = match[1]
+	}
+	writeLiteral(s[end:])
+	expanded := out.String()
+	if phase == "create" && changed && *expandErr == nil {
+		// Each environment token must lie entirely in an unchanged literal
+		// span. Checking argument values or token counts misses fragments that
+		// choose a variable name or complete an opener across substitutions.
+		literalIndex := 0
+		for _, opener := range envOpener.FindAllStringIndex(expanded, -1) {
+			match := envRef.FindStringIndex(expanded[opener[0]:])
+			original := false
+			if match != nil && match[0] == 0 {
+				for literalIndex < len(literals) && literals[literalIndex][1] < opener[0]+match[1] {
+					literalIndex++
+				}
+				original = literalIndex < len(literals) && literals[literalIndex][0] <= opener[0]
+			}
+			if !original {
+				*expandErr = fmt.Errorf("create-phase argument substitution introduces an environment reference")
+				break
+			}
+		}
+	}
+	return expanded
 }
 
 // resolveRef reports the value one reference expands to, and whether this

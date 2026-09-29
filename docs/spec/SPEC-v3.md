@@ -491,7 +491,9 @@ value is present. `$NAME`, `${NAME}`, and `~/` are literal to this pass.
 Expansion neither invokes a shell nor reads host environment variables.
 Inserted values are not templates: create-argument values and referenced
 environment values containing Kit placeholders are refused rather than
-recursively evaluated. Referenced environment values containing NUL are
+recursively evaluated. Argument substitution cannot introduce an
+environment reference, including by joining fragments or substituting
+its variable name. Referenced environment values containing NUL are
 errors. Missing-name and expansion errors identify the
 variable or field without printing environment values.
 

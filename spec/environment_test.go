@@ -202,3 +202,20 @@ func TestContainsKitPlaceholder(t *testing.T) {
 		require.False(t, ContainsKitPlaceholder(value), "%q", value)
 	}
 }
+
+func TestCreateArgsCannotIntroduceEnvironmentReferences(t *testing.T) {
+	decls := map[string]Arg{"value": {Required: true}}
+	for _, field := range []string{"content", "${{kit.args.value}}"} {
+		value := "${{kit.args.value}}"
+		if field != "content" {
+			value = "literal"
+		}
+		d := &Descriptor{SchemaVersion: SchemaVersion, Kind: KindMixin, Args: decls,
+			Capabilities: []Capability{{Type: "com.example/custom@1", Config: map[string]any{field: value}}},
+		}
+		raw, err := json.Marshal(d)
+		require.NoError(t, err)
+		_, err = ExpandCreateArgs(raw, decls, map[string]string{"value": "${{kit.env.SECRET}}"})
+		require.ErrorContains(t, err, "introduces an environment reference")
+	}
+}

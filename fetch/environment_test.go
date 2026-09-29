@@ -15,10 +15,6 @@ func TestResolveEnvironmentDiagnosticsUseDecodedReferences(t *testing.T) {
 		{"escaped space", "", `"${{\u0020kit.env.HOME}}/config"`},
 		{"escaped dollar", "", `"\u0024{{ kit.env.HOME }}/config"`},
 		{"escaped newline", "", `"${{\nkit.env.HOME}}/config"`},
-		{"argument fragments", `args:
-  left: {default: '${{'}
-  right: {default: ' kit.env.HOME }}'}
-`, `'${{kit.args.left}}${{kit.args.right}}/config'`},
 	} {
 		for _, failure := range []string{"composition", "final validation"} {
 			t.Run(form.name+"/"+failure, func(t *testing.T) {
@@ -153,4 +149,66 @@ func TestResolveRejectsMalformedInsertedPlaceholders(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestResolveRejectsEnvironmentReferencesIntroducedByArguments(t *testing.T) {
+	for _, tc := range []struct {
+		name, content string
+		args          map[string]string
+	}{
+		{"literal opener", "${{${{kit.args.x}}", map[string]string{"x": " kit.env.SECRET }}"}},
+		{"split opener", "${{kit.args.x}}${{kit.args.y}}", map[string]string{"x": "${{", "y": " kit.env.SECRET }}"}},
+		{"split namespace", "${{ kit.en${{kit.args.x}}", map[string]string{"x": "v.SECRET }}"}},
+		{"variable name", "${{ kit.env.${{kit.args.x}} }}", map[string]string{"x": "SECRET"}},
+		{"empty fragment", "${{ kit.env.SEC${{kit.args.x}}RET }}", map[string]string{"x": ""}},
+		{"closing brace", "${{ kit.env.SECRET }${{kit.args.x}}", map[string]string{"x": "}"}},
+		{"alongside original", "${{kit.env.PUBLIC}} ${{${{kit.args.x}}", map[string]string{"x": " kit.env.SECRET }}"}},
+	} {
+		for _, defaults := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/defaults=%t", tc.name, defaults), func(t *testing.T) {
+				d := &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindMixin, Args: map[string]spec.Arg{},
+					Capabilities: []spec.Capability{{Type: spec.CapabilityLifecycle, Config: map[string]any{
+						"files": []any{map[string]any{"path": "/config", "content": tc.content}},
+					}}},
+				}
+				for name, value := range tc.args {
+					require.False(t, spec.ContainsKitPlaceholder(value), "individual values do not contain a full opener")
+					if defaults {
+						d.Args[name] = spec.Arg{Default: &value}
+					} else {
+						d.Args[name] = spec.Arg{Required: true}
+					}
+				}
+				supplied := tc.args
+				if defaults {
+					supplied = nil
+				}
+				raw := kitJSON(t, d)
+				kit := &Kit{Reference: "example.com/tool:1.0.0", Digest: digest.FromBytes(raw).String(), Descriptor: d, Raw: raw}
+				result, err := mergeKits([]*Kit{kit}, []map[string]string{supplied}, true,
+					WithEnvironment(map[string]string{"SECRET": "private-environment-value", "PUBLIC": "public"}, nil),
+					WithCapabilitySelector(func(spec.Capability) bool { t.Fatal("introduced reference reached selection"); return true }))
+				require.Nil(t, result)
+				require.ErrorContains(t, err, "argument substitution introduces an environment reference")
+				require.NotContains(t, err.Error(), "private-environment-value")
+			})
+		}
+	}
+}
+
+func TestResolvePreservesOriginalEnvironmentReferencesBesideArguments(t *testing.T) {
+	prefix, suffix := "é-prefix:", ":suffix"
+	d := &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindMixin,
+		Args: map[string]spec.Arg{"prefix": {Default: &prefix}, "suffix": {Default: &suffix}},
+		Capabilities: []spec.Capability{{Type: spec.CapabilityLifecycle, Config: map[string]any{
+			"files": []any{map[string]any{"path": "/config", "content": "${{kit.args.prefix}}${{\nkit.env.PUBLIC}}${{kit.args.suffix}}${{kit.env.PUBLIC}}"}},
+		}}},
+	}
+	raw := kitJSON(t, d)
+	kit := &Kit{Reference: "example.com/tool:1.0.0", Digest: digest.FromBytes(raw).String(), Descriptor: d, Raw: raw}
+	result, err := mergeKits([]*Kit{kit}, []map[string]string{nil}, true, WithEnvironment(map[string]string{"PUBLIC": "public"}, nil))
+	require.NoError(t, err)
+	lc, err := spec.LifecycleOf(result.Descriptor.Capabilities)
+	require.NoError(t, err)
+	require.Equal(t, "é-prefix:public:suffixpublic", lc.Files[0].Content)
 }
