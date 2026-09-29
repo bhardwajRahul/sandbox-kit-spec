@@ -535,11 +535,12 @@ capabilities:
 
 A capability's `name` labels the request; `description` explains it.
 Neither is an identifier. The name is separate from names inside config,
-such as `credential@1`'s `apiKey.name`, which names an environment variable.
+such as `credential@1`'s `apiKey.name`, which names an environment variable,
+or `agent-skill@1`'s `config.name`, which chooses a skill directory name.
 A runtime MAY use the label in selection UIs and derive one from the type
 and instance key when the label is absent or empty.
 
-Names **MUST NOT** affect capability identity, arity, merge compatibility, <!-- tck: SPEC-v3 §7/name-display-only -->
+Capability-entry names **MUST NOT** affect capability identity, arity, merge compatibility, <!-- tck: SPEC-v3 §7/name-display-only -->
 permission surface, or execution behavior. Changing only a name does not
 widen permissions.
 

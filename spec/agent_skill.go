@@ -19,11 +19,13 @@ type AgentSkillsDirectory struct {
 	Path string `yaml:"path" json:"path"`
 }
 
-// AgentSkillCapability retains the display label separately from config.Name.
+// AgentSkillCapability exposes config.Name as Name and the entry label as
+// DisplayName. Use AgentSkillName(request.AgentSkill) for the effective directory
+// name, including the source-basename fallback when config.Name is omitted.
 type AgentSkillCapability struct {
 	AgentSkill
 	Optional    bool
-	Name        string
+	DisplayName string
 	Description string
 }
 
@@ -105,7 +107,7 @@ func AgentSkillRequestsOf(capabilities []Capability) ([]AgentSkillCapability, er
 		if err := DecodeCapabilityConfig(c, &s); err != nil {
 			return nil, err
 		}
-		out = append(out, AgentSkillCapability{AgentSkill: s, Optional: c.Optional, Name: c.Name, Description: c.Description})
+		out = append(out, AgentSkillCapability{AgentSkill: s, Optional: c.Optional, DisplayName: c.Name, Description: c.Description})
 	}
 	return out, nil
 }

@@ -72,7 +72,7 @@ func TestAgentSkillComposition(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, requests, 1)
 	require.False(t, requests[0].Optional)
-	require.Equal(t, "Display label", requests[0].Name)
+	require.Equal(t, "Display label", requests[0].DisplayName)
 	require.Equal(t, "review", AgentSkillName(requests[0].AgentSkill))
 	dirs, err := AgentSkillsDirectoriesOf(composed.Capabilities)
 	require.NoError(t, err)
@@ -106,9 +106,16 @@ func TestAgentSkillSelectionAndReaders(t *testing.T) {
 	c.Name = "Label"
 	got, err := AgentSkillRequestsOf([]Capability{c})
 	require.NoError(t, err)
-	require.Equal(t, "review", got[0].AgentSkill.Name)
-	require.Equal(t, "Label", got[0].Name)
+	require.Equal(t, "review", got[0].Name)
+	require.Equal(t, "Label", got[0].DisplayName)
+	require.Equal(t, "review", AgentSkillName(got[0].AgentSkill))
 	require.True(t, got[0].Optional)
+	delete(c.Config, "name")
+	got, err = AgentSkillRequestsOf([]Capability{c})
+	require.NoError(t, err)
+	require.Empty(t, got[0].Name)
+	require.Equal(t, "Label", got[0].DisplayName)
+	require.Equal(t, "source", AgentSkillName(got[0].AgentSkill))
 	for _, typ := range []string{CapabilityAgentSkill, CapabilityAgentSkillsDirectory} {
 		invalid := []Capability{{Type: typ, Config: map[string]any{"path": 7}}}
 		if typ == CapabilityAgentSkill {

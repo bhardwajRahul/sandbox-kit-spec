@@ -11,10 +11,19 @@ composed agent's skill directories. A workload or a mixin can supply it.
 
 ```yaml
 - type: com.docker.sandbox/agent-skill@1
+  name: Pull request review              # optional display label
   config:
     path: /usr/share/example-skills/pr-review
     name: review-pr                       # optional basename override
 ```
+
+Here, `type` identifies the capability contract, the entry's `name`
+labels the request in a UI, and `config.name` chooses the skill directory.
+For a destination of `/home/agent/.claude/skills`, this skill appears at
+`/home/agent/.claude/skills/review-pr`. Omitting `config.name` uses
+`pr-review`, the source basename, even when the display label is present.
+Only the effective skill directory name participates in skill identity
+and collision checks; changing the display label has no such effect.
 
 | Field | Type | Rules |
 |---|---|---|
