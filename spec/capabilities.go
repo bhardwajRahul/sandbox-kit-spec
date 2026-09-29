@@ -72,7 +72,7 @@ func CapabilityWithConfig(n Capability, config any) (*Capability, error) {
 func CapabilityTypes(capabilities []Capability) string {
 	seen := make(map[string]bool, len(capabilities))
 	types := make([]string, 0, len(capabilities))
-	for _, c := range capabilities {
+	for _, c := range DeclaredCapabilities(capabilities) {
 		if seen[c.Type] {
 			continue
 		}
@@ -192,7 +192,8 @@ type CredentialCapability struct {
 	// one is skipped and recorded.
 	Required bool
 
-	// Description is the entry's human-readable label.
+	// Name and Description are the entry's display label and explanation.
+	Name        string
 	Description string
 }
 
@@ -207,7 +208,7 @@ func CredentialsOf(needs []Capability) ([]CredentialCapability, error) {
 		if err := DecodeCapabilityConfig(n, &c); err != nil {
 			return nil, err
 		}
-		out = append(out, CredentialCapability{Credential: c, Required: !n.Optional, Description: n.Description})
+		out = append(out, CredentialCapability{Credential: c, Required: !n.Optional, Name: n.Name, Description: n.Description})
 	}
 	return out, nil
 }
@@ -244,6 +245,7 @@ func AgentSkillsOf(needs []Capability) ([]AgentSkillsCapability, error) {
 		out = append(out, AgentSkillsCapability{
 			AgentSkills: s,
 			Optional:    n.Optional,
+			Name:        n.Name,
 			Description: n.Description,
 		})
 	}
@@ -288,6 +290,7 @@ type USBDeviceCapability struct {
 	USBDevice
 
 	Optional    bool
+	Name        string
 	Description string
 }
 
@@ -302,7 +305,7 @@ func USBDevicesOf(needs []Capability) ([]USBDeviceCapability, error) {
 		if err := DecodeCapabilityConfig(n, &u); err != nil {
 			return nil, err
 		}
-		out = append(out, USBDeviceCapability{USBDevice: u, Optional: n.Optional, Description: n.Description})
+		out = append(out, USBDeviceCapability{USBDevice: u, Optional: n.Optional, Name: n.Name, Description: n.Description})
 	}
 	return out, nil
 }
@@ -369,4 +372,25 @@ func AgentSessionsOf(needs []Capability) (*AgentSessions, error) {
 		return &a, nil
 	}
 	return nil, nil
+}
+
+// AgentContextsOf reads all selected context contributions of one Kit. Unlike
+// AgentContextOf (for an effective singleton), it retains separate bodies from
+// selected groups for contributor-specific runtime guidance handlers.
+func AgentContextsOf(capabilities []Capability) ([]AgentContext, error) {
+	var result []AgentContext
+	for _, c := range capabilities {
+		if c.Group != nil {
+			return nil, fmt.Errorf("agent contexts: select groups first")
+		}
+		if c.Type != CapabilityAgentContext {
+			continue
+		}
+		var context AgentContext
+		if err := DecodeCapabilityConfig(c, &context); err != nil {
+			return nil, err
+		}
+		result = append(result, context)
+	}
+	return result, nil
 }

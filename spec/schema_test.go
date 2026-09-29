@@ -156,6 +156,8 @@ func TestSchemaMatchesSpecConstants(t *testing.T) {
 	// The need type pattern is the same expression validateCapabilityEntries compiles.
 	needTypePattern := at(t, defs, "capability", "properties", "type")["pattern"].(string)
 	require.Equal(t, needType.String(), needTypePattern)
+	require.Equal(t, "string", at(t, defs, "capability", "properties", "name")["type"])
+	require.NotContains(t, at(t, defs, "capability")["required"], "name")
 
 	// Field-shape regexes in the per-type schemas match the validator's.
 	// Patterned fields that an authored descriptor may parameterize with
@@ -411,4 +413,18 @@ func TestSchemaPatternsCompileAsRE2(t *testing.T) {
 	for _, p := range paths {
 		walk(loadJSON(t, p))
 	}
+}
+
+func TestGroupSchemaMatchesGrammar(t *testing.T) {
+	schema := loadSchema(t)
+	defs := at(t, schema, "definitions")
+	require.Equal(t, "#/definitions/capabilityItem", at(t, schema, "properties", "capabilities", "items")["$ref"])
+	require.Len(t, at(t, defs, "capabilityItem")["oneOf"], 2)
+	group := at(t, defs, "capabilityGroup")
+	require.Equal(t, false, group["additionalProperties"])
+	require.Equal(t, float64(1), at(t, group, "properties", "capabilities")["minItems"])
+	require.Equal(t, "#/definitions/capabilityMember", at(t, group, "properties", "capabilities", "items")["$ref"])
+	member := at(t, defs, "capabilityMember")["allOf"].([]any)
+	require.Equal(t, []any{"optional"}, at(t, member[1].(map[string]any), "not")["required"])
+	require.ElementsMatch(t, allCapabilityTypes(), KnownCapabilities())
 }

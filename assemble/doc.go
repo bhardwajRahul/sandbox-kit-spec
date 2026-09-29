@@ -1,10 +1,15 @@
-// Package assemble is the manifest arithmetic of kit composition: given the
-// sandbox kit's image and the mixins' overlay images, in composition order,
-// it computes the merged image's config and manifest. No filesystem work
-// happens — every layer already exists as a blob wherever the inputs live;
-// assembly writes two small JSON blobs that reference them.
+// Package assemble composes image metadata for a resolved Kit set.
+// Assemble loads the platform manifests and configs through a caller-supplied
+// ImageLoader, puts the workload's layer stack first, and merges the mixins.
+// Merge performs the same arithmetic on inputs the caller already loaded.
 //
-// This is the image half of composition. The declaration half is
-// spec.Merge, which takes the order resolve derives. fetch is what reads
-// a kit's descriptor out of a registry; this package never does.
+// Image exposes typed Config and Layers. Manifest computes a config reference
+// from their current values; WriteMetadata writes config and manifest blobs
+// from one serialization snapshot. Layer transfer, file collision checks,
+// image naming, and container creation belong to the runtime. Container
+// environment overrides remain separate from the image defaults.
+//
+// The declaration half is spec.Compose for runtime use or spec.Merge for
+// publishing. fetch.Client.Resolve handles registry-backed descriptor resolution;
+// fetch.Client.LoadImage is the registry-backed image loader.
 package assemble

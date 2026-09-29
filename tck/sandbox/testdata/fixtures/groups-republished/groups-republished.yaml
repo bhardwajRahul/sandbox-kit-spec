@@ -1,0 +1,23 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+capabilities:
+  - group:
+      capabilities:
+        - type: com.docker.sandbox/lifecycle@1
+          config:
+            startup: [{command: "true"}]
+          source: {kit: "registry.example/base:1.0.0", path: "capabilities[0]"}
+    source: {kit: "registry.example/base:1.0.0", path: "capabilities[0]"}
+  - group:
+      optional: true
+      capabilities:
+        - type: com.docker.sandbox/volume@1
+          config: {path: /var/tmp/republished-volume}
+          source: {kit: "registry.example/feature:1.0.0", path: "capabilities[0].group.capabilities[0]"}
+        - type: com.docker.sandbox/lifecycle@1
+          config:
+            files:
+              - {path: /var/tmp/republished-feature, content: selected}
+          source: {kit: "registry.example/feature:1.0.0", path: "capabilities[0].group.capabilities[1]"}
+    source: {kit: "registry.example/feature:1.0.0", path: "capabilities[0]"}

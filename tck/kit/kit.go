@@ -87,7 +87,7 @@ func Run(ctx context.Context, a Artifact) (report.Report, error) {
 	if err != nil {
 		var rep report.Report
 		rep.Add("descriptor-annotation", "SPEC-v3 §9.3",
-			report.Failf("descriptor annotation does not decode: %v", err))
+			report.Failf("descriptor annotation does not decode: %v", spec.WithSource(err, spec.AnnotationDescriptor, []byte(raw))))
 		return rep, nil
 	}
 
@@ -336,7 +336,7 @@ var checks = []check{
 		run: func(_ context.Context, s *state) []report.Finding {
 			raw := []byte(s.artifact.Annotations()[spec.AnnotationDescriptor])
 			if _, err := spec.ValidatePublished(raw, s.descriptor); err != nil {
-				return fail("published descriptor is invalid: %v", err)
+				return fail("published descriptor is invalid: %v", spec.WithSource(err, spec.AnnotationDescriptor, raw))
 			}
 			return nil
 		},
@@ -505,37 +505,42 @@ var checks = []check{
 		name:        "agent-context-staged",
 		requirement: "agent-context@1",
 		run: func(ctx context.Context, s *state) []report.Finding {
-			ac, err := spec.AgentContextOf(s.descriptor.Capabilities)
-			if err != nil || ac == nil || ac.ContentFile == "" {
-				return nil
-			}
-			if s.stem == "" {
-				return skip("no staged kit root to resolve the context against")
-			}
-			// Beside this kit's own sources, not merely somewhere under
-			// the root: pointing at another kit's directory would make the
-			// body something this artifact does not carry.
-			own := path.Join(StagedKitRoot, s.stem) + "/"
-			clean := path.Clean(ac.ContentFile)
-			if !strings.HasPrefix(clean, own) || clean != ac.ContentFile {
-				return fail("published contentFile is %q; publishing rewrites it to a path directly under %s", ac.ContentFile, own)
-			}
-			// The staged descriptor and recipe paths are reserved: a
-			// contentFile claiming one would collide with what staging
-			// itself writes, and the file existing proves the collision
-			// rather than the context. Only the two direct source paths
-			// collide — a nested docs/kit.yaml is an ordinary name. The
-			// frontend refuses this at build; the shared rule has to
-			// refuse it for artifacts the frontend never saw.
-			if clean == own+stagedDescriptorName || clean == own+stagedRecipeName {
-				return fail("contentFile %q is reserved for staged kit sources", clean)
-			}
-			present, err := hasFile(ctx, s.artifact, ac.ContentFile)
-			if err != nil {
-				return fail("read staged context: %v", err)
-			}
-			if !present {
-				return fail("contentFile points at %q, which the image does not carry", ac.ContentFile)
+			for _, entry := range spec.DeclaredCapabilities(s.descriptor.Capabilities) {
+				ac, err := spec.AgentContextOf([]spec.Capability{entry})
+				if err != nil {
+					return fail("decode context: %v", err)
+				}
+				if ac == nil || ac.ContentFile == "" {
+					continue
+				}
+				if s.stem == "" {
+					return skip("no staged kit root to resolve the context against")
+				}
+				// Beside this kit's own sources, not merely somewhere under
+				// the root: pointing at another kit's directory would make the
+				// body something this artifact does not carry.
+				own := path.Join(StagedKitRoot, s.stem) + "/"
+				clean := path.Clean(ac.ContentFile)
+				if !strings.HasPrefix(clean, own) || clean != ac.ContentFile {
+					return fail("published contentFile is %q; publishing rewrites it to a path directly under %s", ac.ContentFile, own)
+				}
+				// The staged descriptor and recipe paths are reserved: a
+				// contentFile claiming one would collide with what staging
+				// itself writes, and the file existing proves the collision
+				// rather than the context. Only the two direct source paths
+				// collide — a nested docs/kit.yaml is an ordinary name. The
+				// frontend refuses this at build; the shared rule has to
+				// refuse it for artifacts the frontend never saw.
+				if clean == own+stagedDescriptorName || clean == own+stagedRecipeName {
+					return fail("contentFile %q is reserved for staged kit sources", clean)
+				}
+				present, err := hasFile(ctx, s.artifact, ac.ContentFile)
+				if err != nil {
+					return fail("read staged context: %v", err)
+				}
+				if !present {
+					return fail("contentFile points at %q, which the image does not carry", ac.ContentFile)
+				}
 			}
 			return nil
 		},
@@ -617,7 +622,7 @@ var checks = []check{
 		name:        "sbx-platform-floor",
 		requirement: "sbx@1",
 		run: func(ctx context.Context, s *state) []report.Finding {
-			if !spec.HasCapability(s.descriptor.Capabilities, spec.CapabilitySbx) {
+			if !spec.HasCapability(spec.DeclaredCapabilities(s.descriptor.Capabilities), spec.CapabilitySbx) {
 				return nil
 			}
 			if s.descriptor.Kind != spec.KindWorkload {
@@ -690,7 +695,7 @@ var checks = []check{
 		name:        "sbx-persistent-env",
 		requirement: "sbx@1",
 		run: func(ctx context.Context, s *state) []report.Finding {
-			if !spec.HasCapability(s.descriptor.Capabilities, spec.CapabilitySbx) ||
+			if !spec.HasCapability(spec.DeclaredCapabilities(s.descriptor.Capabilities), spec.CapabilitySbx) ||
 				s.descriptor.Kind != spec.KindWorkload {
 				return nil
 			}
@@ -883,7 +888,7 @@ var checks = []check{
 				}
 				d, err := spec.Decode([]byte(raw))
 				if err != nil {
-					return fail("%s: descriptor does not decode: %v", k.Ref, err)
+					return fail("descriptor does not decode: %v", spec.WithSource(err, k.Ref+" (published descriptor)", []byte(raw)))
 				}
 				// Held to the published form before it is compared
 				// against: a kit the frontend could never have merged
@@ -891,7 +896,7 @@ var checks = []check{
 				// otherwise have its malformed declarations skipped
 				// and the merge reported as conforming to them.
 				if _, err := spec.ValidatePublished([]byte(raw), d); err != nil {
-					return fail("%s is not a valid published kit, so this set could not have merged it: %v", k.Ref, err)
+					return fail("%s is not a valid published kit, so this set could not have merged it: %v", k.Ref, spec.WithSource(err, k.Ref+" (published descriptor)", []byte(raw)))
 				}
 				published = append(published, spec.Contribution{Reference: k.Ref, Descriptor: d})
 				// What the merge read is not this descriptor but its

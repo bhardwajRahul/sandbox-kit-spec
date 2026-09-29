@@ -66,6 +66,22 @@ kits:
 # because it decides what later invocations run on the host.
 workspace: .
 
+# Session transcripts survive sandbox removal in these host directories.
+# Mount only the transcript directories: the Codex kit manages config.toml
+# and auth.json in the parent directory. Custom mount destinations use
+# sbx mount after creation; additionalWorkspaces keeps the host path.
+lifecycle:
+  postCreate:
+    - name: Preserve Codex sessions on the host
+      command: |
+        set -eu
+        session_root="$HOME/.sandbox-state/codex"
+        mkdir -p "$session_root/sessions" "$session_root/archived_sessions"
+        sbx mount "$SBX_SANDBOX_NAME" \
+          "$session_root/sessions:/home/agent/.codex/sessions:rw"
+        sbx mount "$SBX_SANDBOX_NAME" \
+          "$session_root/archived_sessions:/home/agent/.codex/archived_sessions:rw"
+
 env:
   # The template sets GODEBUG=tarinsecurepath=0,zipinsecurepath=0, which
   # enables ErrInsecurePath checks for non-local archive entry names.

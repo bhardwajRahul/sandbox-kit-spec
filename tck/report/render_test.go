@@ -110,3 +110,11 @@ func TestDetailWrapsUnderItsOwnColumn(t *testing.T) {
 		require.Equal(t, starts[0], start, "continuations line up under the detail")
 	}
 }
+
+func TestSourceExcerptsKeepTheirLayout(t *testing.T) {
+	var r Report
+	r.Add("descriptor-valid", "SPEC-v3 §9.3", Failf("%s", "kit.yaml:5:25: invalid port\n  |\n5 |     config: {container: 99999}\n  |                         ^\n\nkit.yaml:8:14: invalid pattern\n  |\n8 |     pattern: '['\n  |              ^"))
+	out := render(t, r, Options{Width: 45})
+	require.Contains(t, out, "\n      5 |     config: {container: 99999}\n        |                         ^\n      \n      kit.yaml:8:14:")
+	require.Contains(t, out, "\n      8 |     pattern: '['\n        |              ^")
+}

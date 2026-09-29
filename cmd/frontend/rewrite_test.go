@@ -152,3 +152,23 @@ provides: &shared
 	require.NoError(t, err)
 	require.Equal(t, []string{"shell", "deb/bash@5.2.37"}, pd.Provides)
 }
+
+func TestRewriteGroupedContextDoesNotRewriteItsSiblings(t *testing.T) {
+	raw := []byte(`schemaVersion: "3"
+kind: mixin
+capabilities:
+  - type: com.docker.sandbox/agent-context@1
+    config: {contentFile: ./always.md}
+  - group:
+      optional: true
+      capabilities:
+        - type: com.docker.sandbox/agent-context@1
+          config: {contentFile: ./maybe.md}
+`)
+	out, err := rewriteContentFile(raw, "./maybe.md", "/staged/maybe.md")
+	require.NoError(t, err)
+	d, err := spec.Decode(out)
+	require.NoError(t, err)
+	require.Equal(t, "./always.md", d.Capabilities[0].Config["contentFile"])
+	require.Equal(t, "/staged/maybe.md", d.Capabilities[1].Group.Capabilities[0].Config["contentFile"])
+}

@@ -57,6 +57,39 @@ func TestASingleCapabilityRuntimeIsJudgedOnlyOnItsClaim(t *testing.T) {
 	}
 }
 
+func TestAtomicSelectionForPartialRuntimes(t *testing.T) {
+	for _, tc := range []struct {
+		claim  string
+		broken string
+	}{
+		{capLifecycle, ""},
+		{groupVolume, ""},
+		{capLifecycle, "ordinary-ignore-optional-rejection"},
+		{capLifecycle, "ordinary-ignore-required-rejection"},
+		{capLifecycle, "partial-group-applies-lifecycle"},
+		{capLifecycle, "partial-required-skips-volume"},
+		{groupVolume, "partial-required-skips-lifecycle"},
+		{groupVolume, "partial-group-applies-volume"},
+	} {
+		t.Run(tc.claim+"/"+tc.broken, func(t *testing.T) {
+			a := adapter.New(filepath.Join("testdata", "fake-adapter"))
+			a.Env = []string{"KIT_TCK_FAKE_STATE=" + t.TempDir(), "KIT_TCK_FAKE_CLAIMS=" + tc.claim, "KIT_TCK_FAKE_BROKEN=" + tc.broken}
+			rep, err := Run(t.Context(), &Env{Adapter: a, Fixtures: Fixtures(FixtureDir)})
+			require.NoError(t, err)
+			if tc.broken != "" {
+				require.Contains(t, failedRequirements(rep), "SPEC-v3 §7.1.1/atomic-selection")
+				return
+			}
+			require.False(t, rep.Failed(), "%s", rep)
+			for _, finding := range rep.Findings {
+				if finding.Requirement == "SPEC-v3 §7.1.1/atomic-selection" {
+					require.NotEqual(t, report.Skip, finding.Severity)
+				}
+			}
+		})
+	}
+}
+
 func TestLongRunningNeedsNoHelperCapabilities(t *testing.T) {
 	a := adapter.New(filepath.Join("testdata", "fake-adapter"))
 	a.Env = []string{
@@ -117,20 +150,54 @@ func TestAConformingRuntimePasses(t *testing.T) {
 // requirement — the two network-policy versions state the same duty about
 // the host lists — and dropping it has to fail every one of them.
 var mutations = map[string][]string{
-	"ignores-git-identity":              {"git-identity@1/global-defaults"},
-	"corrupts-git-identity":             {"git-identity@1/global-defaults"},
-	"git-identity-after-launch":         {"git-identity@1/global-defaults"},
-	"late-git-identity":                 {"git-identity@1/before-hooks"},
-	"forces-git-identity":               {"git-identity@1/local-precedence"},
-	"imports-source-git-settings":       {"git-identity@1/identity-only"},
-	"clobbers-guest-git-settings":       {"git-identity@1/identity-only"},
-	"edits-identity-source":             {"git-identity@1/source-unchanged"},
-	"rereads-identity-on-recreate":      {"git-identity@1/pinned-selection"},
-	"loses-git-identity-on-start":       {"git-identity@1/pinned-selection"},
-	"imports-unrequested-identity":      {"git-identity@1/absent-without-grant"},
-	"accepts-missing-identity":          {"git-identity@1/unavailable-refuses-required"},
-	"refuses-optional-identity":         {"git-identity@1/unavailable-refuses-required"},
-	"imports-unavailable-identity":      {"git-identity@1/unavailable-refuses-required"},
+	"ignores-git-identity":            {"git-identity@1/global-defaults"},
+	"corrupts-git-identity":           {"git-identity@1/global-defaults"},
+	"git-identity-after-launch":       {"git-identity@1/global-defaults"},
+	"late-git-identity":               {"git-identity@1/before-hooks"},
+	"forces-git-identity":             {"git-identity@1/local-precedence"},
+	"imports-source-git-settings":     {"git-identity@1/identity-only"},
+	"clobbers-guest-git-settings":     {"git-identity@1/identity-only"},
+	"edits-identity-source":           {"git-identity@1/source-unchanged"},
+	"rereads-identity-on-recreate":    {"git-identity@1/pinned-selection"},
+	"loses-git-identity-on-start":     {"git-identity@1/pinned-selection"},
+	"imports-unrequested-identity":    {"git-identity@1/absent-without-grant"},
+	"accepts-missing-identity":        {"git-identity@1/unavailable-refuses-required"},
+	"refuses-optional-identity":       {"git-identity@1/unavailable-refuses-required"},
+	"imports-unavailable-identity":    {"git-identity@1/unavailable-refuses-required"},
+	"group-invalid-expanded":          {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
+	"group-skips-invalid-expanded":    {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
+	"group-reselect-skipped-restart":  {"SPEC-v3 §7.1.1/lifetime"},
+	"group-never-admits-recreate":     {"SPEC-v3 §7.1.1/lifetime"},
+	"group-ignore-required-lifecycle": {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-ignore-optional-lifecycle": {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-selected-member-sources":   {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-skipped-member-sources":    {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-member-sources-local":      {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-wrong-source-path":         {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-wrong-source-kit":          {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-accepted-rejection":        {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-extra-rejection":           {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-required-no-kit":           {"SPEC-v3 §7.1.1/atomic-selection"},
+
+	"ordinary-ignore-optional-rejection": {"SPEC-v3 §7.1.1/atomic-selection"},
+	"ordinary-ignore-required-rejection": {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-extra-grant":                  {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-conflict-no-kit":              {"SPEC-v3 §7.1.1/conflicts"},
+	"group-file-leak":                    {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-order":                        {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-records":                      {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-member-paths":                 {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-missing-ordinary-record":      {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-missing-independent-record":   {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-accept-required":              {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-drop-conflict":                {"SPEC-v3 §7.1.1/conflicts"},
+	"group-drop-interactive-conflict":    {"SPEC-v3 §7.1.1/conflicts"},
+	"group-reselect-restart":             {"SPEC-v3 §7.1.1/lifetime"},
+	"group-no-recreate":                  {"SPEC-v3 §7.1.1/lifetime"},
+	"group-stale-recreate-records":       {"SPEC-v3 §7.1.1/lifetime"},
+	"group-stale-recreate-hooks":         {"SPEC-v3 §7.1.1/lifetime"},
+	"group-skip-failure":                 {"SPEC-v3 §7.1.1/execution"},
+
 	"ignores-long-running-mixin":        {"long-running@1/survives-session-disconnect"},
 	"stops-on-disconnect":               {"long-running@1/survives-session-disconnect"},
 	"loses-background-on-disconnect":    {"long-running@1/survives-session-disconnect"},

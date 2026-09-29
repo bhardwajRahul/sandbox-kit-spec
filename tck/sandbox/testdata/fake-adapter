@@ -18,6 +18,87 @@ if [ "$broken" = "claims-nothing" ]; then claims=""; fi
 verb="${1:-}"
 shift || true
 
+# The group fixture's observable files, ordering, records and grant surface.
+write_group_state() {
+  local dir="$1" rejected="$2"
+  local -a records=()
+  local skipped='' surface='{}' IFS=,
+  if [ "$broken" != group-missing-ordinary-record ]; then
+    records+=('{"path":"capabilities[0]","source":{"kit":"groups","path":"capabilities[0]"},"members":["capabilities[0]"]}')
+  fi
+  echo "$rejected" >"$dir/group-rejected"
+  if [ "$rejected" = yes ]; then
+    printf 'base,independent' >"$dir/group-order"
+    rm -f "$dir/group-feature"
+    if [ "$broken" = group-file-leak ]; then echo selected >"$dir/group-feature"; fi
+    skipped='{"path":"capabilities[1]","name":"Feature","source":{"kit":"groups","path":"capabilities[1]"},"members":["capabilities[1].group.capabilities[0]","capabilities[1].group.capabilities[1]"],"rejected":["capabilities[1].group.capabilities[0]"]}'
+  else
+    printf 'base,feature,independent' >"$dir/group-order"
+    echo selected >"$dir/group-feature"
+    records+=('{"path":"capabilities[1]","name":"Feature","source":{"kit":"groups","path":"capabilities[1]"},"members":["capabilities[1].group.capabilities[0]","capabilities[1].group.capabilities[1]"]}')
+    surface='{"storagePaths":["/var/tmp/group-volume"]}'
+  fi
+  if [ "$broken" != group-missing-independent-record ]; then
+    records+=('{"path":"capabilities[2]","name":"Feature","source":{"kit":"groups","path":"capabilities[2]"},"members":["capabilities[2].group.capabilities[0]"]}')
+  fi
+  if [ "$broken" = group-extra-grant ]; then
+    surface='{"services":["group:Feature"]}'
+    if [ "$rejected" != yes ]; then surface='{"services":["group:Feature"],"storagePaths":["/var/tmp/group-volume"]}'; fi
+  fi
+  printf '{"selection":{"selected":[%s],"skipped":[%s]},"surface":%s}\n' "${records[*]}" "$skipped" "$surface" >"$dir/selection.json"
+  case "$broken" in
+  group-wrong-source-path)
+    sed 's/"source":{"kit":"groups","path":"capabilities\[1\]"}/"source":{"kit":"groups","path":"capabilities[9]"}/' "$dir/selection.json" >"$dir/selection.tmp"
+    mv "$dir/selection.tmp" "$dir/selection.json"
+    ;;
+  group-wrong-source-kit)
+    sed 's/"kit":"groups"/"kit":"other-kit"/g' "$dir/selection.json" >"$dir/selection.tmp"
+    mv "$dir/selection.tmp" "$dir/selection.json"
+    ;;
+  group-accepted-rejection)
+    if [ "$rejected" = no ]; then
+      sed 's/"name":"Feature"/"rejected":["capabilities[1].group.capabilities[1]"],"name":"Feature"/' "$dir/selection.json" >"$dir/selection.tmp"
+      mv "$dir/selection.tmp" "$dir/selection.json"
+    fi
+    ;;
+  group-extra-rejection)
+    if [ "$rejected" = yes ]; then
+      sed 's/"rejected":\["capabilities\[1\].group.capabilities\[0\]"\]/"rejected":["capabilities[1].group.capabilities[0]","capabilities[1].group.capabilities[1]"]/' "$dir/selection.json" >"$dir/selection.tmp"
+      mv "$dir/selection.tmp" "$dir/selection.json"
+    fi
+    ;;
+  esac
+  if [ "$broken" = group-order ]; then printf 'independent,base' >"$dir/group-order"; fi
+  if [ "$broken" = group-records ]; then echo '{"selection":{},"surface":{}}' >"$dir/selection.json"; fi
+  if [ "$broken" = group-member-paths ]; then
+    sed 's/,"members":\["[^"]*","[^"]*"\]//' "$dir/selection.json" >"$dir/selection.tmp"
+    mv "$dir/selection.tmp" "$dir/selection.json"
+  fi
+}
+
+# Publication shifts consumed paths while retaining the original member sources.
+write_republished_state() {
+  local dir="$1" rejected="$2"
+  local base feature sources selected skipped='' surface='{}'
+  base='{"path":"capabilities[0]","source":{"kit":"registry.example/base:1.0.0","path":"capabilities[0]"},"members":["capabilities[0].group.capabilities[0]"],"memberSources":[{"kit":"registry.example/base:1.0.0","path":"capabilities[0]"}]}'
+  sources=',"memberSources":[{"kit":"registry.example/feature:1.0.0","path":"capabilities[0].group.capabilities[0]"},{"kit":"registry.example/feature:1.0.0","path":"capabilities[0].group.capabilities[1]"}]'
+  if [ "$broken" = group-selected-member-sources ] && [ "$rejected" = no ]; then sources=''; fi
+  if [ "$broken" = group-skipped-member-sources ] && [ "$rejected" = yes ]; then sources=''; fi
+  if [ "$broken" = group-member-sources-local ]; then
+    sources=',"memberSources":[{"kit":"groups-republished","path":"capabilities[1].group.capabilities[0]"},{"kit":"groups-republished","path":"capabilities[1].group.capabilities[1]"}]'
+  fi
+  feature='{"path":"capabilities[1]","source":{"kit":"registry.example/feature:1.0.0","path":"capabilities[0]"},"members":["capabilities[1].group.capabilities[0]","capabilities[1].group.capabilities[1]"]'
+  feature="$feature$sources"
+  selected="$base"
+  if [ "$rejected" = yes ]; then
+    skipped="$feature,"'"rejected":["capabilities[1].group.capabilities[0]"]}'
+  else
+    selected="$base,$feature}"
+    surface='{"storagePaths":["/var/tmp/republished-volume"]}'
+  fi
+  printf '{"selection":{"selected":[%s],"skipped":[%s]},"surface":%s}\n' "$selected" "$skipped" "$surface" >"$dir/selection.json"
+}
+
 case "$verb" in
 capabilities)
   if [ -n "$claims" ]; then echo "$claims" | tr ',' '\n'; fi
@@ -26,12 +107,20 @@ capabilities)
 create)
   kits=()
   greeting=""
+  group_path=/var/tmp/group-expanded
   hostmode="readwrite"
   identity_config=""
+  group_rejected=no
+  lifecycle_rejected=no
   while [ $# -gt 0 ]; do
     case "$1" in
     --arg)
-      case "$2" in greeting=*) greeting="${2#greeting=}" ;; esac
+      case "$2" in greeting=*) greeting="${2#greeting=}" ;; group_path=*) group_path="${2#group_path=}" ;; esac
+      shift 2
+      ;;
+    --reject-capability)
+      if [ "$2" = com.docker.sandbox/volume@1 ]; then group_rejected=yes; fi
+      if [ "$2" = com.docker.sandbox/lifecycle@1 ]; then lifecycle_rejected=yes; fi
       shift 2
       ;;
     --git-identity-config)
@@ -156,6 +245,66 @@ create)
     if [ -z "$identity_required" ] && [ "$broken" = refuses-optional-identity ]; then exit 2; fi
     if [ "$broken" != imports-unavailable-identity ]; then identity_requested=""; fi
   fi
+  for kit in "${kits[@]}"; do
+    case "$kit" in
+    */groups-expanded)
+      if [ "$group_path" = relative ]; then
+        if [ "$broken" != group-invalid-expanded ] && { [ "$lifecycle_rejected" = no ] || [ "$broken" != group-skips-invalid-expanded ]; }; then
+          echo "groups-expanded capabilities[0].group.capabilities[0].config.files[0].path: must be absolute" >&2
+          exit 2
+        fi
+      fi
+      ;;
+    */ordinary-required)
+      if [ "$lifecycle_rejected" = yes ] && [ "$broken" != ordinary-ignore-required-rejection ]; then
+        echo "ordinary-required capabilities[0]: rejected" >&2
+        exit 2
+      fi
+      ;;
+    */groups-required)
+      if [[ ",$claims," != *",com.docker.sandbox/volume@1,"* ]] && [ "$broken" != partial-required-skips-volume ]; then
+        echo "groups-required capabilities[0].group.capabilities[0]: unclaimed" >&2
+        exit 2
+      fi
+      if [[ ",$claims," != *",com.docker.sandbox/lifecycle@1,"* ]] && [ "$broken" != partial-required-skips-lifecycle ]; then
+        echo "groups-required capabilities[0].group.capabilities[1]: unclaimed" >&2
+        exit 2
+      fi
+      if [ "$lifecycle_rejected" = yes ] && [ "$broken" != group-ignore-required-lifecycle ]; then
+        echo "groups-required capabilities[0].group.capabilities[1]: rejected" >&2
+        exit 2
+      fi
+      if [ "$group_rejected" = yes ] && [ "$broken" != group-accept-required ]; then
+        source_kit=groups-required
+        if [ "$broken" = group-required-no-kit ]; then source_kit=''; fi
+        echo "$source_kit capabilities[0].group.capabilities[0]: rejected" >&2
+        exit 2
+      fi
+      ;;
+    */groups-conflict)
+      if [ "$broken" != group-drop-conflict ]; then
+        source_kit=groups-conflict
+        if [ "$broken" = group-conflict-no-kit ]; then source_kit=''; fi
+        echo "$source_kit capabilities[0] and capabilities[1]: duplicate file" >&2
+        exit 2
+      fi
+      ;;
+    */groups-interactive-conflict)
+      if [ "$broken" != group-drop-interactive-conflict ]; then
+        source_kit=groups-interactive-conflict
+        if [ "$broken" = group-conflict-no-kit ]; then source_kit=''; fi
+        echo "$source_kit capabilities[0] and capabilities[1]: multiple interactive declarations" >&2
+        exit 2
+      fi
+      ;;
+    */groups-failure)
+      if [ "$broken" != group-skip-failure ]; then
+        echo 'groups-failure: selected hook exited 37' >&2
+        exit 1
+      fi
+      ;;
+    esac
+  done
 
   id="sbx-$$-${RANDOM}"
   dir="$state/$id"
@@ -177,6 +326,35 @@ create)
   if [ "$broken" != git-identity-after-launch ]; then
     cp "$dir/git-identity" "$dir/git-workload"
   fi
+  for kit in "${kits[@]}"; do
+    if [[ "$kit" == */groups ]]; then write_group_state "$dir" "$group_rejected"; fi
+    if [[ "$kit" == */groups-republished ]]; then write_republished_state "$dir" "$group_rejected"; fi
+    if [[ "$kit" == */groups-partial ]]; then
+      rejected_member='capabilities[0].group.capabilities[1]'
+      if [[ ",$claims," != *",com.docker.sandbox/volume@1,"* ]]; then
+        rejected_member='capabilities[0].group.capabilities[0]'
+      fi
+      partial_surface='{}'
+      if [ "$broken" = partial-group-applies-volume ]; then
+        partial_surface='{"storagePaths":["/var/tmp/group-volume"]}'
+      fi
+      if [ "$broken" = partial-group-applies-lifecycle ]; then echo selected >"$dir/group-feature"; fi
+      printf '{"selection":{"selected":[],"skipped":[{"path":"capabilities[0]","source":{"kit":"groups-partial","path":"capabilities[0]"},"members":["capabilities[0].group.capabilities[0]","capabilities[0].group.capabilities[1]"],"rejected":["%s"]}]},"surface":%s}\n' "$rejected_member" "$partial_surface" >"$dir/selection.json"
+    fi
+    if [[ "$kit" == */groups-partial ]] && [ "$lifecycle_rejected" = yes ] && [ "$broken" = group-ignore-optional-lifecycle ]; then
+      echo '{"selection":{"selected":[],"skipped":[]},"surface":{"storagePaths":["/var/tmp/group-volume"]}}' >"$dir/selection.json"
+      echo selected >"$dir/group-feature"
+    fi
+    if [[ "$kit" == */ordinary-optional ]]; then
+      ordinary_record='{"path":"capabilities[0]","source":{"kit":"ordinary-optional","path":"capabilities[0]"},"members":["capabilities[0]"]}'
+      if [ "$lifecycle_rejected" = yes ] && [ "$broken" != ordinary-ignore-optional-rejection ]; then
+        printf '{"selection":{"selected":[],"skipped":[%s,"rejected":["capabilities[0]"]}]},"surface":{}}\n' "${ordinary_record%?}" >"$dir/selection.json"
+      else
+        echo selected >"$dir/ordinary-feature"
+        printf '{"selection":{"selected":[%s],"skipped":[]},"surface":{}}\n' "$ordinary_record" >"$dir/selection.json"
+      fi
+    fi
+  done
   for kit in "${kits[@]}"; do
     if [[ "$kit" == */long-running ]]; then : >"$dir/long-running-mixin"; fi
   done
@@ -349,6 +527,9 @@ exec)
     ;;
   cat)
     case "$2" in
+    /var/tmp/group-order) cat "$dir/group-order" ;;
+    /var/tmp/group-feature) cat "$dir/group-feature" ;;
+    /var/tmp/ordinary-feature) cat "$dir/ordinary-feature" ;;
     /var/tmp/install.count) cat "$dir/install.count" ;;
     /var/tmp/startup.count) cat "$dir/startup.count" ;;
     /var/tmp/sbx-entrypoint-ran)
@@ -641,10 +822,33 @@ stop)
   if [ "$broken" != "ignores-explicit-stop" ]; then echo stopped >"$state/$1/status"; fi
   ;;
 
+selection)
+  cat "$state/$1/selection.json"
+  ;;
+
+selection-policy)
+  rejection=no
+  if [ "$#" -gt 1 ]; then rejection=yes; fi
+  echo "$rejection" >"$state/$1/group-future-rejected"
+  ;;
+
 recreate)
   if [ "$broken" = rereads-identity-on-recreate ] && [ -f "$state/$1/git-source" ]; then
     git config --file "$(cat "$state/$1/git-source")" --get user.name >"$state/$1/git-identity"
     git config --file "$(cat "$state/$1/git-source")" --get user.email >>"$state/$1/git-identity"
+  fi
+  if [ -f "$state/$1/group-rejected" ] && [ "$broken" != group-no-recreate ]; then
+    cp "$state/$1/selection.json" "$state/$1/previous-selection.json"
+    cp "$state/$1/group-order" "$state/$1/previous-group-order"
+    rejection="$(cat "$state/$1/group-future-rejected")"
+    if [ "$broken" = group-never-admits-recreate ] && [ "$(cat "$state/$1/group-rejected")" = yes ]; then rejection=yes; fi
+    write_group_state "$state/$1" "$rejection"
+    if [ "$broken" = group-stale-recreate-records ]; then
+      sed 's/"storagePaths":\["[^"]*"\]/"storagePaths":[]/' "$state/$1/previous-selection.json" >"$state/$1/selection.json"
+    fi
+    if [ "$broken" = group-stale-recreate-hooks ]; then
+      cp "$state/$1/previous-group-order" "$state/$1/group-order"
+    fi
   fi
   # A fresh container: the writable layer goes, declared volumes stay.
   dir="$state/$1"
@@ -655,6 +859,12 @@ recreate)
 start)
   dir="$state/$1"
   if [ "$broken" = loses-git-identity-on-start ]; then echo missing >"$dir/git-identity"; fi
+  if [ -f "$dir/group-rejected" ]; then
+    rejection="$(cat "$dir/group-rejected")"
+    if [ "$broken" = group-reselect-restart ]; then rejection="$(cat "$dir/group-future-rejected")"; fi
+    if [ "$broken" = group-reselect-skipped-restart ] && [ "$rejection" = yes ]; then rejection="$(cat "$dir/group-future-rejected")"; fi
+    write_group_state "$dir" "$rejection"
+  fi
   echo running >"$dir/status"
   if [ "$broken" = "loses-volume-on-restart" ]; then rm -rf "$dir/volume" && mkdir -p "$dir/volume"; fi
   if [ "$broken" != "no-startup" ]; then

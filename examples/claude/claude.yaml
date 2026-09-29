@@ -47,6 +47,7 @@ capabilities:
   # subsumes v2's oauth.skipIfEnv — the mode decision belongs to the
   # host's binding, not to an env-var probe inside the descriptor.
   - type: com.docker.sandbox/credential@1
+    name: Anthropic access
     # optional, faithfully: v2 credentials default to not-required and the
     # v3 default inverts (an entry is required unless it opts out). A
     # required credential warns at create when the CLI has no literal

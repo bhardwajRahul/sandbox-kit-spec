@@ -126,6 +126,12 @@ func installPhaseScoped(fixture string) func(context.Context, *Env) []report.Fin
 }
 
 var checks = append(gitIdentityChecks, []check{
+	{requirement: "SPEC-v3 §7.1.1/validate-expanded-declarations", capability: capLifecycle, run: groupExpandedValidation},
+	{requirement: "SPEC-v3 §7.1.1/atomic-selection", run: atomicSelection},
+	{requirement: "SPEC-v3 §7.1.1/conflicts", capability: capLifecycle, run: groupConflicts},
+	{requirement: "SPEC-v3 §7.1.1/lifetime", capability: capLifecycle, needs: []string{"com.docker.sandbox/volume@1"}, run: groupLifetime},
+	{requirement: "SPEC-v3 §7.1.1/execution", capability: capLifecycle, run: groupExecution},
+
 	{requirement: "long-running@1/survives-session-disconnect", capability: capLongRunning, run: survivesSessionDisconnect},
 	{requirement: "long-running@1/explicit-stop-honored", capability: capLongRunning, run: longRunningStop},
 	{requirement: "conformance.md §2.2/optional-long-running-accepted", run: optionalLongRunning},

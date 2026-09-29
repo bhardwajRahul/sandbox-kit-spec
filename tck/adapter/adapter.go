@@ -63,6 +63,8 @@ type CreateOptions struct {
 	// GitIdentityConfig transports a suite-owned test binding in Git config
 	// format, or "off" to withhold it. It does not prescribe runtime storage.
 	GitIdentityConfig string
+	// RejectCapabilities arranges false selector answers for these types.
+	RejectCapabilities []string
 
 	// Args are kit argument overrides, passed as --arg name=value.
 	Args map[string]string
@@ -81,6 +83,9 @@ func (a *Adapter) Create(ctx context.Context, kits []string, opts CreateOptions)
 	argv := append([]string{"create"}, kits...)
 	if opts.GitIdentityConfig != "" {
 		argv = append(argv, "--git-identity-config", opts.GitIdentityConfig)
+	}
+	for _, typ := range opts.RejectCapabilities {
+		argv = append(argv, "--reject-capability", typ)
 	}
 	if opts.SkillsHostMode != "" {
 		argv = append(argv, "--skills-host-mode", opts.SkillsHostMode)

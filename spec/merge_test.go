@@ -728,7 +728,7 @@ kits:
 	pd, err = Decode([]byte(pinned))
 	require.NoError(t, err)
 	_, err = ValidatePublished([]byte(pinned), pd)
-	require.ErrorContains(t, err, "expansion did not reach it",
+	require.ErrorContains(t, err, "kits[0].ref: published descriptor still references an arg",
 		"a set's kits resolve at build, so a surviving reference means expansion did not run")
 }
 
