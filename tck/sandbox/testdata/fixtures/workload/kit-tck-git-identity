@@ -31,7 +31,7 @@ absent)
   ;;
 only)
   test "$(git config --global --get alias.kit-tck-guest)" = status
-  for key in alias.kit-tck-source credential.helper http.extraHeader core.hooksPath; do
+  for key in user.signingKey alias.kit-tck-source credential.helper http.extraHeader core.hooksPath; do
     if git config --global --get "$key"; then exit 1; else test "$?" = 1; fi
   done
   echo only

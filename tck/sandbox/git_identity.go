@@ -31,6 +31,7 @@ func gitIdentityConfig(name, email string) string {
 		return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(value) + `"`
 	}
 	return "[user]\n name = " + quote(name) + "\n email = " + quote(email) + `
+ signingKey = kit-tck-source-signing-key
 [alias]
  kit-tck-source = !false
 [credential]

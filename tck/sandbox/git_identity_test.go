@@ -114,6 +114,12 @@ func TestGitIdentityProbe(t *testing.T) {
 		require.Equal(t, want+"\n", string(out))
 	}
 	put(strings.Split(gitIdentityConfig(gitIdentityName, gitIdentityEmail), "[alias]")[0] + guestAlias)
+	// Copying just the user section still leaks signing configuration.
+	out, err = run("sh", probe, "only")
+	require.Error(t, err, "%s", out)
+	require.Contains(t, string(out), "kit-tck-source-signing-key")
+	out, err = run("git", "config", "--global", "--unset", "user.signingKey")
+	require.NoError(t, err, "%s", out)
 	// A late write changes exec defaults but cannot repair what the
 	// workload saw when it started.
 	out, err = run("sh", probe, "workload-identity")

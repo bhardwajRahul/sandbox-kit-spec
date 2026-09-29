@@ -150,6 +150,7 @@ func TestAConformingRuntimePasses(t *testing.T) {
 // requirement — the two network-policy versions state the same duty about
 // the host lists — and dropping it has to fail every one of them.
 var mutations = map[string][]string{
+	"imports-identity-signing-key":         {"git-identity@1/identity-only"},
 	"identity-skip-wrong-path":             {"git-identity@1/unavailable-refuses-required"},
 	"identity-skip-wrong-source-path":      {"git-identity@1/unavailable-refuses-required"},
 	"identity-skip-missing-member-sources": {"git-identity@1/unavailable-refuses-required"},
