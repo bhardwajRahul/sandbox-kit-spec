@@ -261,26 +261,31 @@ func TestAssembleCachesInventoriesWithoutHidingCollisions(t *testing.T) {
 }
 
 func TestAssembleDefaultRegistryLoader(t *testing.T) {
-	reg := newRegistry(t)
-	reg.user, reg.pass = "user", "password"
-	dockerConfig := t.TempDir()
-	config := fmt.Sprintf(`{"auths":{%q:{"auth":%q}}}`, reg.Listener.Addr().String(), base64.StdEncoding.EncodeToString([]byte("user:password")))
-	require.NoError(t, os.WriteFile(filepath.Join(dockerConfig, "config.json"), []byte(config), 0600))
-	t.Setenv("DOCKER_CONFIG", dockerConfig)
-	input, blob := assemblyFixture(t, spec.KindWorkload, "base", "base")
-	configRaw, err := json.Marshal(input.Config)
-	require.NoError(t, err)
-	reg.mu.Lock()
-	reg.blobs["kit/blobs/"+input.Manifest.Config.Digest.String()] = configRaw
-	reg.blobs["kit/blobs/"+input.Manifest.Layers[0].Digest.String()] = blob
-	reg.mu.Unlock()
-	manifestRaw, err := json.Marshal(input.Manifest)
-	require.NoError(t, err)
-	reg.tag("kit", "1.0.0", manifestRaw)
-	result, err := Assemble(t.Context(), reqs(reg.ref("kit", "1.0.0")), Options{})
-	require.NoError(t, err)
-	require.Equal(t, digest.FromBytes(manifestRaw).String(), result.Resolved.Kits[0].Digest)
-	require.Equal(t, 2, reg.blobReads, "config and layer are read")
+	for _, mediaType := range []string{ocispec.MediaTypeImageManifest, ""} {
+		t.Run("mediaType="+mediaType, func(t *testing.T) {
+			reg := newRegistry(t)
+			reg.user, reg.pass = "user", "password"
+			dockerConfig := t.TempDir()
+			config := fmt.Sprintf(`{"auths":{%q:{"auth":%q}}}`, reg.Listener.Addr().String(), base64.StdEncoding.EncodeToString([]byte("user:password")))
+			require.NoError(t, os.WriteFile(filepath.Join(dockerConfig, "config.json"), []byte(config), 0600))
+			t.Setenv("DOCKER_CONFIG", dockerConfig)
+			input, blob := assemblyFixture(t, spec.KindWorkload, "base", "base")
+			input.Manifest.MediaType = mediaType
+			configRaw, err := json.Marshal(input.Config)
+			require.NoError(t, err)
+			reg.mu.Lock()
+			reg.blobs["kit/blobs/"+input.Manifest.Config.Digest.String()] = configRaw
+			reg.blobs["kit/blobs/"+input.Manifest.Layers[0].Digest.String()] = blob
+			reg.mu.Unlock()
+			manifestRaw, err := json.Marshal(input.Manifest)
+			require.NoError(t, err)
+			reg.tag("kit", "1.0.0", manifestRaw)
+			result, err := Assemble(t.Context(), reqs(reg.ref("kit", "1.0.0")), Options{})
+			require.NoError(t, err)
+			require.Equal(t, digest.FromBytes(manifestRaw).String(), result.Resolved.Kits[0].Digest)
+			require.Equal(t, 2, reg.blobReads, "config and layer are read")
+		})
+	}
 }
 
 func TestAssembleRejectsBadLoaderInputsAndOverrides(t *testing.T) {
@@ -315,6 +320,7 @@ func TestLoadKitKeepsIndexDescriptorAndPinnedImage(t *testing.T) {
 	input, blob := assemblyFixture(t, spec.KindWorkload, "base", "base")
 	descriptor := input.Manifest.Annotations[spec.AnnotationDescriptor]
 	input.Manifest.Annotations = nil
+	input.Manifest.MediaType = "" // The index descriptor carries the media type.
 	configRaw, err := json.Marshal(input.Config)
 	require.NoError(t, err)
 	reg.mu.Lock()
@@ -334,6 +340,7 @@ func TestLoadKitKeepsIndexDescriptorAndPinnedImage(t *testing.T) {
 	require.Equal(t, digest.FromBytes(index), loaded.Digest)
 	require.Equal(t, descriptor, string(loaded.Descriptor))
 	require.Empty(t, loaded.Manifest.Annotations)
+	require.Empty(t, loaded.Manifest.MediaType)
 	require.Equal(t, 1, reg.blobReads, "loading leaves layer blobs unopened")
 	// Subsequent tag movement cannot change the retained metadata or layer refs.
 	reg.tag("kit", "1.0.0", reg.image(t, nil))

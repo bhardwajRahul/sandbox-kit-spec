@@ -152,7 +152,7 @@ func Assemble(ctx context.Context, requests []Request, options Options) (*Result
 	environment := make(map[string]string)
 	for _, entry := range image.Config.Config.Env {
 		key, value, ok := strings.Cut(entry, "=")
-		if !ok || key == "" {
+		if !ok || key == "" || strings.ContainsRune(entry, '\x00') {
 			return nil, fmt.Errorf("assemble: malformed image environment entry")
 		}
 		environment[key] = value
@@ -185,7 +185,14 @@ func validateLoadedKit(ref string, input *LoadedKit) (*Kit, error) {
 	if err := input.Digest.Validate(); err != nil {
 		return nil, fmt.Errorf("kit digest: %w", err)
 	}
-	if err := requirePlainImageManifest(ocispec.Descriptor{MediaType: input.Manifest.MediaType}, input.Manifest); err != nil {
+	// OCI permits an omitted embedded mediaType. Registry loaders already
+	// checked the enclosing descriptor; custom loaders supply an image manifest
+	// by contract. Default only the validation hint, preserving loaded metadata.
+	mediaType := input.Manifest.MediaType
+	if mediaType == "" {
+		mediaType = ocispec.MediaTypeImageManifest
+	}
+	if err := requirePlainImageManifest(ocispec.Descriptor{MediaType: mediaType}, input.Manifest); err != nil {
 		return nil, err
 	}
 	if err := input.Manifest.Config.Digest.Validate(); err != nil {
@@ -193,6 +200,15 @@ func validateLoadedKit(ref string, input *LoadedKit) (*Kit, error) {
 	}
 	if input.Manifest.Config.Size < 0 {
 		return nil, fmt.Errorf("image config has negative size")
+	}
+	// Merge ignores entries without '=' in mixins. Validate every input before
+	// composition can discard or shadow an invalid value. Do not echo values:
+	// image environment entries may contain credentials.
+	for i, entry := range input.Config.Config.Env {
+		name, _, ok := strings.Cut(entry, "=")
+		if !ok || name == "" || strings.ContainsRune(entry, '\x00') {
+			return nil, fmt.Errorf("malformed image environment entry at index %d: require a nonempty name, '=' and no NUL", i)
+		}
 	}
 	for _, diffID := range input.Config.RootFS.DiffIDs {
 		if err := diffID.Validate(); err != nil {
