@@ -17,7 +17,7 @@ import (
 // driven. Without it the suite would ship never having run: a conformance
 // harness that has only ever been read cannot be trusted to fail when it
 // should.
-func runAgainstFake(t *testing.T, broken string) report.Report {
+func runAgainstFake(t *testing.T, broken string, selected ...check) report.Report {
 	t.Helper()
 	a := adapter.New(filepath.Join("testdata", "fake-adapter"))
 	a.Env = []string{
@@ -26,10 +26,13 @@ func runAgainstFake(t *testing.T, broken string) report.Report {
 		"KIT_TCK_FAKE_CLAIMS=",
 	}
 
-	rep, err := Run(context.Background(), &Env{
+	if len(selected) == 0 {
+		selected = checks
+	}
+	rep, err := runChecks(t.Context(), &Env{
 		Adapter:  a,
 		Fixtures: Fixtures(FixtureDir),
-	})
+	}, selected)
 	require.NoError(t, err, "the suite must run even when the runtime is wrong")
 	return rep
 }
@@ -192,6 +195,27 @@ func TestBackingAgentCloseWithIdleClient(t *testing.T) {
 // requirement — the two network-policy versions state the same duty about
 // the host lists — and dropping it has to fail every one of them.
 var mutations = map[string][]string{
+	"bundle-drops-register":          {"agent-skill@1/exposed", "agent-skill@1/before-launch"},
+	"bundle-corrupts-register":       {"agent-skill@1/exposed"},
+	"bundle-register-not-executable": {"agent-skill@1/exposed"},
+	"bundle-overwrites-host":         {"agent-skill@1/host-conflict"},
+	"bundle-ignores":                 {"agent-skill@1/exposed"},
+	"bundle-first-only":              {"agent-skill@1/exposed", "agent-skills-directory@1/destination"},
+	"bundle-ignores-name":            {"agent-skill@1/exposed"},
+	"bundle-drops-support":           {"agent-skill@1/exposed"},
+	"bundle-loses-executable":        {"agent-skill@1/exposed"},
+	"bundle-corrupts":                {"agent-skill@1/exposed"},
+	"bundle-skill-newline":           {"agent-skill@1/exposed"},
+	"bundle-renamed-newline":         {"agent-skill@1/exposed"},
+	"bundle-reference-newline":       {"agent-skill@1/exposed"},
+	"bundle-reader-newline":          {"agent-skill@1/exposed"},
+	"bundle-after-launch":            {"agent-skill@1/before-launch"},
+	"bundle-executes":                {"agent-skill@1/no-execution"},
+	"bundle-accepts-unavailable":     {"agent-skill@1/unavailable"},
+	"bundle-refuses-optional":        {"agent-skill@1/unavailable"},
+	"bundle-drops-skip":              {"agent-skill@1/unavailable"},
+	"bundle-overwrites-existing":     {"agent-skill@1/existing-conflict"},
+
 	"drops-image-env-defaults":                       {"SPEC-v3 §6/env-expanded"},
 	"ignores-env-overrides":                          {"SPEC-v3 §6/env-expanded"},
 	"drops-empty-env-overrides":                      {"SPEC-v3 §6/env-expanded"},
@@ -403,10 +427,24 @@ func TestEachCheckFailsWhenItsBehaviorIsAbsent(t *testing.T) {
 	// Host claims must not skip the checks these mutations exercise.
 	t.Setenv("KIT_TCK_FAKE_CLAIMS", "com.docker.sandbox/volume@1")
 
+	byRequirement := make(map[string]check, len(checks))
+	for _, c := range checks {
+		byRequirement[c.requirement] = c
+	}
 	for broken, requirements := range mutations {
 		t.Run(broken, func(t *testing.T) {
 			t.Parallel()
-			rep := runAgainstFake(t, broken)
+			// Every mutation still has to fail every requirement it names.
+			// Repeating unrelated checks here makes suite growth quadratic;
+			// TestAConformingRuntimePasses retains the complete baseline.
+			require.NotEmpty(t, requirements)
+			selected := make([]check, 0, len(requirements))
+			for _, requirement := range requirements {
+				c, ok := byRequirement[requirement]
+				require.True(t, ok, "mutation %q names unknown requirement %q", broken, requirement)
+				selected = append(selected, c)
+			}
+			rep := runAgainstFake(t, broken, selected...)
 			failed := failedRequirements(rep)
 			for _, requirement := range requirements {
 				require.Contains(t, failed, requirement,

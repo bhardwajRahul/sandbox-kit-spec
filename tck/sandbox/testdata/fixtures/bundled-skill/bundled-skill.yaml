@@ -1,0 +1,11 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+capabilities:
+  - type: com.docker.sandbox/agent-skill@1
+    config:
+      path: /usr/share/kit-tck/bundled/review
+  - type: com.docker.sandbox/agent-skill@1
+    config:
+      path: /usr/share/kit-tck/bundled/source-name
+      name: renamed

@@ -1,0 +1,125 @@
+package sandbox
+
+import (
+	"context"
+	"errors"
+	"slices"
+
+	"github.com/docker/sandbox-kit-spec/v3/spec"
+	"github.com/docker/sandbox-kit-spec/v3/tck/adapter"
+	"github.com/docker/sandbox-kit-spec/v3/tck/report"
+)
+
+const (
+	capAgentSkill           = spec.CapabilityAgentSkill
+	capAgentSkillsDirectory = spec.CapabilityAgentSkillsDirectory
+	fixtureBundledSkill     = "bundled-skill"
+	fixtureBundledOptional  = "bundled-optional"
+	fixtureBundledReader    = "bundled-reader"
+	fixtureBundledExisting  = "bundled-existing"
+)
+
+func bundledProbe(ctx context.Context, e *Env, id, mode, want string) []report.Finding {
+	res, err := e.Adapter.Exec(ctx, id, "kit-tck-bundled", mode)
+	if err != nil {
+		return []report.Finding{report.Failf("%s: %v", mode, err)}
+	}
+	if res.ExitCode != 0 || res.Stdout != want {
+		return []report.Finding{report.Failf("%s: exit %d, stdout %q, stderr %q; want %q", mode, res.ExitCode, res.Stdout, res.Stderr, want)}
+	}
+	return nil
+}
+
+func bundledObservation(mode, want string, shared bool) func(context.Context, *Env) []report.Finding {
+	return func(ctx context.Context, e *Env) []report.Finding {
+		kits := []string{fixtureBundledReader, fixtureBundledSkill}
+		opts := adapter.CreateOptions{SkillsHostMode: "off"}
+		if shared {
+			kits = append(kits, fixtureSkills, fixtureSkillsRW)
+			opts.SkillsHostMode = "readonly"
+		}
+		id, cleanup, err := e.sandboxWith(ctx, kits, opts)
+		if err != nil {
+			return []report.Finding{report.Failf("create: %v", err)}
+		}
+		defer cleanup()
+		findings := bundledProbe(ctx, e, id, mode, want)
+		if shared {
+			for _, dir := range []string{skillsReadOnlyPath, skillsWritablePath} {
+				if f := storeMountedAt(ctx, e, id, dir); f != nil {
+					findings = append(findings, f...)
+				}
+			}
+		}
+		return findings
+	}
+}
+
+func bundledUnavailable(ctx context.Context, e *Env) []report.Finding {
+	id, cleanup, err := e.sandbox(ctx, []string{fixtureWorkload, fixtureBundledSkill}, nil)
+	cleanup()
+	var refused *adapter.RefusedError
+	if !errors.As(err, &refused) {
+		return []report.Finding{report.Failf("required skill without a discovery directory: id=%q err=%v; want refusal", id, err)}
+	}
+	id, cleanup, err = e.sandbox(ctx, []string{fixtureWorkload, fixtureBundledOptional}, nil)
+	if err != nil {
+		return []report.Finding{report.Failf("optional skill without a discovery directory: %v", err)}
+	}
+	defer cleanup()
+	state, err := e.Adapter.Selection(ctx, id)
+	if err != nil {
+		return []report.Finding{report.Failf("read skipped skill: %v", err)}
+	}
+	found := 0
+	for _, r := range state.Selection.Selected {
+		if r.Source != nil && (r.Source.Kit == fixtureBundledOptional || r.Source.Kit == e.Fixtures(fixtureBundledOptional)) {
+			return []report.Finding{report.Failf("unavailable skill recorded as selected")}
+		}
+	}
+	for _, r := range state.Selection.Skipped {
+		if r.Source == nil || (r.Source.Kit != fixtureBundledOptional && r.Source.Kit != e.Fixtures(fixtureBundledOptional)) {
+			continue
+		}
+		if r.Path != "capabilities[0]" || r.Source.Path != "capabilities[0]" || !slices.Equal(r.Members, []string{"capabilities[0]"}) || !slices.Equal(r.Rejected, []string{"capabilities[0]"}) || !slices.Equal(r.MemberSources, []spec.CapabilitySource{*r.Source}) {
+			return []report.Finding{report.Failf("incomplete skipped skill record: %+v", r)}
+		}
+		found++
+	}
+	if found != 1 {
+		return []report.Finding{report.Failf("got %d skipped skill records, want one", found)}
+	}
+	return nil
+}
+
+func bundledHostConflict(ctx context.Context, e *Env) []report.Finding {
+	id, cleanup, err := e.sandboxWith(ctx, []string{fixtureBundledReader, "bundled-host-conflict", fixtureSkills}, adapter.CreateOptions{SkillsHostMode: "readonly"})
+	cleanup()
+	var refused *adapter.RefusedError
+	if !errors.As(err, &refused) {
+		return []report.Finding{report.Failf("host skill conflict: id=%q err=%v; want refusal", id, err)}
+	}
+	return nil
+}
+
+func bundledConflict(ctx context.Context, e *Env) []report.Finding {
+	id, cleanup, err := e.sandbox(ctx, []string{fixtureBundledReader, fixtureBundledSkill, fixtureBundledExisting}, nil)
+	cleanup()
+	var refused *adapter.RefusedError
+	if !errors.As(err, &refused) {
+		return []report.Finding{report.Failf("existing skill conflict: id=%q err=%v; want refusal", id, err)}
+	}
+	return nil
+}
+
+var bundledSkillChecks = []check{
+	{requirement: "agent-skill@1/host-conflict", capability: capAgentSkill, needs: []string{capAgentSkillsDirectory, capAgentSkills}, run: bundledHostConflict},
+	{requirement: "agent-skill@1/exposed", capability: capAgentSkill, needs: []string{capAgentSkillsDirectory}, run: bundledObservation("exposed", "ready\n", false)},
+	{requirement: "agent-skill@1/before-launch", capability: capAgentSkill, needs: []string{capAgentSkillsDirectory}, run: bundledObservation("launch", "ready\n", false)},
+	{requirement: "agent-skill@1/no-execution", capability: capAgentSkill, needs: []string{capAgentSkillsDirectory}, run: bundledObservation("no-execution", "clean\n", false)},
+	{requirement: "agent-skill@1/unavailable", capability: capAgentSkill, run: bundledUnavailable},
+	{requirement: "agent-skill@1/existing-conflict", capability: capAgentSkill, needs: []string{capAgentSkillsDirectory}, run: bundledConflict},
+	{requirement: "agent-skills-directory@1/destination", capability: capAgentSkillsDirectory, needs: []string{capAgentSkill, capAgentSkills}, run: bundledObservation("exposed", "ready\n", true)},
+}
+
+func init() { checks = append(checks, bundledSkillChecks...) }

@@ -405,6 +405,12 @@ const (
 	// that read skills from different places declares one entry each.
 	CapabilityAgentSkills = "com.docker.sandbox/agent-skills@1"
 
+	// CapabilityAgentSkill exposes one image-bundled skill, keyed by its effective name.
+	CapabilityAgentSkill = "com.docker.sandbox/agent-skill@1"
+
+	// CapabilityAgentSkillsDirectory declares an agent's bundled-skill discovery path.
+	CapabilityAgentSkillsDirectory = "com.docker.sandbox/agent-skills-directory@1"
+
 	// CapabilityUSBDevice is one device passthrough request; config decodes
 	// to USBDevice. Instance-shaped.
 	CapabilityUSBDevice = "com.docker.sandbox/usb-device@1"

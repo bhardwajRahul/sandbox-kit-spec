@@ -192,6 +192,12 @@ capabilities:
           env: [MCP_GATEWAY_URL, MCP_SENTINEL_TOKEN_NAME]
           description: Register the sandbox MCP gateway (startup fallback)
 
+  # Bundled skills use this directory even when host sharing is off.
+  - type: com.docker.sandbox/agent-skills-directory@1
+    optional: true
+    config:
+      path: /home/agent/.claude/skills
+
   # Where claude reads shared skills, so the host's store reaches it in
   # the mixin shape too.
   - type: com.docker.sandbox/agent-skills@1

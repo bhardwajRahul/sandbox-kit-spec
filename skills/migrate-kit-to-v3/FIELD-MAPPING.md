@@ -462,6 +462,21 @@ verb tails: `promptArgs: ["-p"]` → `prompt: ["-p", "{{.Prompt}}"]`, plus
 complete command rather than a tail. Where `promptArgs` was deliberately
 omitted, omit the capability — do not invent flags.
 
+### Bundled skills
+
+`agent-skill@1` declares a skill carried by the Kit: `path` is an absolute
+image directory containing `SKILL.md` and supporting files. Its basename
+becomes the directory name in the agent's skill store, unless `config.name`
+overrides it. The entry's `name` is still only a display label.
+
+Declare `agent-skills-directory@1` on the agent-bearing Kit to identify its
+discovery directory. This is independent of `agent-skills@1`, which requests
+host-shared content. All selected destinations receive all selected bundled
+skills; directory assembly is a runtime concern. A required bundled skill
+without a destination fails, and conflicting effective names cannot silently
+replace one another. These new types leave the existing host-store contract
+unchanged.
+
 ### agent-skills@1
 
 Only where the v2 kit already declares or documents the agent's skills

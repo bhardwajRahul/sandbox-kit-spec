@@ -320,6 +320,7 @@ func ValidatePublished(raw []byte, d *Descriptor) (warnings []string, err error)
 	var errs ValidationErrors
 	warnings, err = ValidateRaw(raw, d)
 	errs.add(err)
+	errs.add(validatePublishedSkillPaths(d.Capabilities, "capabilities"))
 	if argRef.MatchString(d.Version) {
 		errs.add(fieldErrorf("version", "published descriptor still references an arg in version %q; build-phase expansion did not run", d.Version))
 	}
@@ -520,6 +521,8 @@ func validateCapabilityBlock(d *Descriptor) error {
 	seenSSHAgent := map[string]int{}
 	seenVolume := map[string]int{}
 	seenSkills := map[string]int{}
+	seenBundledSkills := map[string]int{}
+	seenSkillDirectories := map[string]int{}
 	seenPort := map[string]int{}
 
 	deferCrossChecks := false
@@ -673,6 +676,20 @@ func validateCapabilityBlock(d *Descriptor) error {
 				errs.add(fieldErrorf(path+".config.path", "capabilities[%d]: volume for %q already declared at capabilities[%d]", i, v.Path, prev))
 			}
 			seenVolume[v.Path] = i
+		case CapabilityAgentSkill, CapabilityAgentSkillsDirectory:
+			key, err := validateBundledSkill(path, n)
+			if err != nil {
+				errs.add(err)
+				continue
+			}
+			seen := seenBundledSkills
+			if n.Type == CapabilityAgentSkillsDirectory {
+				seen = seenSkillDirectories
+			}
+			if prev, dup := seen[key]; dup {
+				errs.add(fieldErrorf(path+".config", "%s %q already declared at capabilities[%d]", n.Type, key, prev))
+			}
+			seen[key] = i
 		case CapabilityAgentSkills:
 			var s AgentSkills
 			if err := DecodeCapabilityConfig(n, &s); err != nil {
@@ -1012,6 +1029,9 @@ func validatePresenceRules(path string, i int, n Capability) error {
 		}
 		_, err := validateSSHAgentNeed(path, i, n)
 		return err
+	}
+	if n.Type == CapabilityAgentSkill {
+		return validateParameterizedSkillSource(path, n)
 	}
 	if n.Type != CapabilityAgentContext {
 		return errs.err()
