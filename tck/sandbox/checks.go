@@ -213,6 +213,8 @@ var checks = append(gitIdentityChecks, []check{
 				{capResources, fixtureResources, false},
 				{capPrivileged, fixturePrivileged, false},
 				{capAgentSkills, fixtureSkills, false},
+				{capAgentSkill, fixtureBundledSkill, false},
+				{capAgentSkillsDirectory, fixtureBundledReader, true},
 				{capPort, fixturePort, false},
 				{capUSBDevice, fixtureUSBDevice, false},
 				{capAgentSessions, fixtureAgentSessions, false},
@@ -224,6 +226,16 @@ var checks = append(gitIdentityChecks, []check{
 				compose := []string{fixtureWorkload, probe.fixture}
 				if probe.alone {
 					compose = []string{probe.fixture}
+				}
+				if probe.capability == capAgentSkill {
+					// Without a supported destination, even an adapter
+					// accepting the unclaimed skill can legitimately refuse.
+					if !e.claims(capAgentSkillsDirectory) {
+						findings = append(findings, report.Skipf(
+							"%s: refusal probe needs claimed %s", capAgentSkill, capAgentSkillsDirectory))
+						continue
+					}
+					compose = []string{fixtureBundledReader, probe.fixture}
 				}
 				id, cleanup, err := e.sandbox(ctx, compose, nil)
 				var refused *adapter.RefusedError

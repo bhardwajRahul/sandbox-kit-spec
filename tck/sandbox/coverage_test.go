@@ -28,6 +28,7 @@ var anchorPattern = regexp.MustCompile(`<!-- tck: (.+?) -->`)
 // judges several statements, and one statement is often judged from
 // several angles.
 var covers = map[string][]string{
+	"agent-skill@1/host-conflict":                 {"agent-skill@1/existing-conflict"},
 	"git-identity@1/global-defaults":              {"git-identity@1/runtime-provided"},
 	"git-identity@1/unavailable-refuses-required": {"git-identity@1/runtime-provided"},
 	"SPEC-v3 §7.1.1/conflicts":                    {"lifecycle@1/shared-paths-avoided"},
@@ -91,10 +92,13 @@ var covers = map[string][]string{
 // section key would survive the deletion of the one check that actually
 // supplies the evidence.
 var kitCovers = map[string][]string{
+	"agent-skill-content": {"agent-skill@1/content-present"},
 	// ValidatePublished enforces §9.2 on every descriptor this check
 	// decodes, and refuses the authoring-only kind: set — a published
 	// set that was never merged describes layers it does not have.
 	"descriptor-valid": {
+		"agent-skill@1/name-valid",
+		"agent-skill@1/source-literal",
 		"long-running@1/no-config",
 		"git-identity@1/no-config",
 		"SPEC-v3 §7.1.1/group-grammar",

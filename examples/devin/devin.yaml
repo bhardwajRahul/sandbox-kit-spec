@@ -115,6 +115,12 @@ capabilities:
           env: [MCP_GATEWAY_URL, MCP_SENTINEL_TOKEN_NAME]
           description: Register the sandbox MCP gateway by merging into mcp_config.json
 
+  # Bundled skills use this directory even when host sharing is off.
+  - type: com.docker.sandbox/agent-skills-directory@1
+    optional: true
+    config:
+      path: /home/agent/.agents/skills
+
   # Where devin reads shared skills, so the host's store reaches it.
   - type: com.docker.sandbox/agent-skills@1
     optional: true

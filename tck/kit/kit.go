@@ -330,6 +330,7 @@ func resolveImageUser(ctx context.Context, a Artifact, user string) (passwdEntry
 }
 
 var checks = []check{
+	{name: "agent-skill-content", requirement: "agent-skill@1/content-present", run: checkAgentSkillContent},
 	{
 		name:        "descriptor-valid",
 		requirement: "SPEC-v3 §9.3",

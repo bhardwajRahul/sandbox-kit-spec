@@ -535,11 +535,12 @@ capabilities:
 
 A capability's `name` labels the request; `description` explains it.
 Neither is an identifier. The name is separate from names inside config,
-such as `credential@1`'s `apiKey.name`, which names an environment variable.
+such as `credential@1`'s `apiKey.name`, which names an environment variable,
+or `agent-skill@1`'s `config.name`, which chooses a skill directory name.
 A runtime MAY use the label in selection UIs and derive one from the type
 and instance key when the label is absent or empty.
 
-Names **MUST NOT** affect capability identity, arity, merge compatibility, <!-- tck: SPEC-v3 §7/name-display-only -->
+Capability-entry names **MUST NOT** affect capability identity, arity, merge compatibility, <!-- tck: SPEC-v3 §7/name-display-only -->
 permission surface, or execution behavior. Changing only a name does not
 widen permissions.
 
@@ -566,7 +567,8 @@ other.
 
 **Instance-shaped types appear once per thing requested**, deduplicated on
 their own key: `credential@1` on (service, phase), `volume@1` on path,
-`agent-skills@1` on path, `port@1` on (container, transport),
+`agent-skills@1` and `agent-skills-directory@1` on path,
+`agent-skill@1` on effective name, `port@1` on (container, transport),
 `ssh-agent@1` on each phase it names.
 `usb-device@1` is instance-shaped with no dedup key beyond the exact
 entry.
@@ -679,6 +681,8 @@ behavior** for a runtime supporting the type:
 | `com.docker.sandbox/agent-context@1` | [agent-context@1](capabilities/com.docker.sandbox/agent-context@1.md) | singleton |
 | `com.docker.sandbox/agent-sessions@1` | [agent-sessions@1](capabilities/com.docker.sandbox/agent-sessions@1.md) | singleton |
 | `com.docker.sandbox/agent-skills@1` | [agent-skills@1](capabilities/com.docker.sandbox/agent-skills@1.md) | per path |
+| `com.docker.sandbox/agent-skill@1` | [agent-skill@1](capabilities/com.docker.sandbox/agent-skill@1.md) | per effective name |
+| `com.docker.sandbox/agent-skills-directory@1` | [agent-skills-directory@1](capabilities/com.docker.sandbox/agent-skills-directory@1.md) | per path |
 | `com.docker.sandbox/git-identity@1` | [git-identity@1](capabilities/com.docker.sandbox/git-identity@1.md) | singleton, config-less |
 | `com.docker.sandbox/kit-registry@1` | [kit-registry@1](capabilities/com.docker.sandbox/kit-registry@1.md) | singleton, config-less |
 | `com.docker.sandbox/sbx@1` | [sbx@1](capabilities/com.docker.sandbox/sbx@1.md) | singleton, config-less |

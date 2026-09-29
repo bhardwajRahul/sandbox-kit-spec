@@ -106,6 +106,12 @@ capabilities:
           overwrite: false
           description: Seed HTTP/1.1+SSE for agent connections
 
+  # Bundled skills use this directory even when host sharing is off.
+  - type: com.docker.sandbox/agent-skills-directory@1
+    optional: true
+    config:
+      path: /home/agent/.cursor/skills
+
   # Where cursor reads shared skills, so the host's store reaches it.
   - type: com.docker.sandbox/agent-skills@1
     optional: true

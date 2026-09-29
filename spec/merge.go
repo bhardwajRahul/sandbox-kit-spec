@@ -667,6 +667,18 @@ func (m *capabilityMerge) instanceKey(reference string, n Capability) (string, e
 		// the text would emit both and leave a runtime to reconcile
 		// sizes nobody agreed on.
 		return n.Type + "\x00" + path.Clean(v.Path), nil
+	case CapabilityAgentSkill:
+		var s AgentSkill
+		if err := decodeForMerge(reference, n, &s); err != nil {
+			return "", err
+		}
+		return n.Type + "\x00" + AgentSkillName(s), nil
+	case CapabilityAgentSkillsDirectory:
+		var s AgentSkillsDirectory
+		if err := decodeForMerge(reference, n, &s); err != nil {
+			return "", err
+		}
+		return n.Type + "\x00" + s.Path, nil
 	case CapabilityAgentSkills:
 		var s AgentSkills
 		if err := decodeForMerge(reference, n, &s); err != nil {
@@ -730,6 +742,11 @@ func sameRequest(a, b Capability) bool {
 		var pa, pb Port
 		if DecodeCapabilityConfig(a, &pa) == nil && DecodeCapabilityConfig(b, &pb) == nil {
 			return PortKey(pa) == PortKey(pb)
+		}
+	case CapabilityAgentSkill:
+		var sa, sb AgentSkill
+		if DecodeCapabilityConfig(a, &sa) == nil && DecodeCapabilityConfig(b, &sb) == nil {
+			return sa.Path == sb.Path && AgentSkillName(sa) == AgentSkillName(sb)
 		}
 	case CapabilityAgentSkills:
 		var sa, sb AgentSkills

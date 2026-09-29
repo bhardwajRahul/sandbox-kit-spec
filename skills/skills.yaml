@@ -28,15 +28,17 @@ version: "3.0.0"
 provides: ["kit-skills"]
 
 capabilities:
-  # DELIBERATELY NOT agent-skills@1, which is the trap this kit would fall
-  # into by default. That capability asks the host to MOUNT its shared skills
-  # store at a path — it does not mean "this kit carries skills" — and the
-  # claude kits already declare it at /home/agent/.claude/skills. Shipping
-  # content to a path some other kit has invited a mount onto means the mount
-  # hides what this kit exists to deliver, and nothing reports the loss.
-  #
-  # So the skills land somewhere no capability claims, and the agent is told
-  # where by the only mechanism meant for telling it things.
+  # Native discovery when supported; context remains a fallback for older
+  # runtimes. Sources stay separate from agent discovery destinations.
+  - type: com.docker.sandbox/agent-skill@1
+    optional: true
+    config:
+      path: /usr/share/kit-skills/create-kit-v3
+  - type: com.docker.sandbox/agent-skill@1
+    optional: true
+    config:
+      path: /usr/share/kit-skills/migrate-kit-to-v3
+
   - type: com.docker.sandbox/agent-context@1
     config:
       contentFile: ./skills-context.md
