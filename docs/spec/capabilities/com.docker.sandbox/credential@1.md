@@ -85,6 +85,13 @@ A conforming runtime:
   a runtime-only credential is unavailable to install hooks and is the
   agent's steady state. When both phases are listed, the credential is
   available in both, with the same configuration.
+- **MUST** scope a bound, named, proxy-managed API key's sentinel to its <!-- tck: credential@1/sentinel-phase-scoped -->
+  declared phases. This includes install hooks that declare its
+  variable in `env`, the workload's initial environment, and later runtime
+  commands: each receives a sentinel in a granted phase and none outside
+  the granted phases. This is the environment-visible part of the broader
+  phase boundary above; outbound injection and OAuth presentations remain
+  subject to that boundary independently.
 - **MUST** fail resolution when a **required** entry has no binding; an <!-- tck: credential@1/required-without-binding-fails -->
   **optional** entry with no binding is skipped and recorded, and the Kit
   runs unauthenticated.

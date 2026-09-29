@@ -126,7 +126,7 @@ func installPhaseScoped(fixture string) func(context.Context, *Env) []report.Fin
 }
 
 var checks = append(gitIdentityChecks, []check{
-	{requirement: "credential@1/phase-scoped", capability: capCredential, needs: []string{capLifecycle}, run: credentialPhaseScoped},
+	{requirement: "credential@1/sentinel-phase-scoped", capability: capCredential, needs: []string{capLifecycle}, run: credentialSentinelPhaseScoped},
 	{requirement: "SPEC-v3 §6/env-expanded", capability: capLifecycle, run: finalEnvironmentPrecedence},
 	{requirement: "ssh-agent@1/destination-keys-outside-sandbox", capability: capSSHAgent, run: sshAgentDestinationKeys},
 	{requirement: "ssh-agent@1/agent-reachable", capability: capSSHAgent, run: sshAgentReachable},

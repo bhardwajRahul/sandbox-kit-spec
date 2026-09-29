@@ -8,9 +8,10 @@ import (
 	"github.com/docker/sandbox-kit-spec/v3/tck/report"
 )
 
-// Credential phases are tested separately and together: observing only a
-// dual grant cannot distinguish correct scoping from a phase-blind runtime.
-func credentialPhaseScoped(ctx context.Context, e *Env) []report.Finding {
+// Named, proxy-managed API-key sentinels are tested in each phase and both
+// together. Their environments cannot prove that outbound injection or OAuth
+// presentations obey the same boundary; those need independent probes.
+func credentialSentinelPhaseScoped(ctx context.Context, e *Env) []report.Finding {
 	for _, tc := range []struct {
 		fixture          string
 		install, runtime bool
