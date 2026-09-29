@@ -121,3 +121,36 @@ func TestResolveWithEnvironment(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveRejectsMalformedInsertedPlaceholders(t *testing.T) {
+	for _, value := range []string{"${{ kit.args.123 }}", "${{ kit.args.NAME", "${{\nkit.args.NAME", "${{ kit.env.123 }}", "${{ kit.env.NAME"} {
+		for _, source := range []string{"argument", "environment"} {
+			t.Run(source+"/"+value, func(t *testing.T) {
+				reg := newRegistry(t)
+				d := &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindMixin,
+					Capabilities: []spec.Capability{{Type: spec.CapabilityLifecycle, Config: map[string]any{
+						"files": []any{map[string]any{"path": "/config", "content": "${{ kit.env.VALUE }}"}},
+					}}},
+				}
+				if source == "argument" {
+					d.Args = map[string]spec.Arg{"value": {Required: true, Env: "VALUE"}}
+					d.Capabilities[0].Config["files"].([]any)[0].(map[string]any)["content"] = "${{kit.args.value}}"
+				}
+				reg.tag("kits/placeholders", "1.0.0", reg.image(t, kitJSON(t, d)))
+				client, err := New()
+				require.NoError(t, err)
+				requests := reqs(reg.ref("kits/placeholders", "1.0.0"))
+				secret := "private-value " + value
+				if source == "argument" {
+					requests[0].Args = map[string]string{"value": secret}
+				}
+				result, err := client.ResolvePartial(t.Context(), requests,
+					WithEnvironment(map[string]string{"VALUE": secret}, nil),
+					WithCapabilitySelector(func(spec.Capability) bool { t.Fatal("invalid inserted value reached selector"); return true }))
+				require.Nil(t, result)
+				require.ErrorContains(t, err, "placeholders")
+				require.NotContains(t, err.Error(), "private-value")
+			})
+		}
+	}
+}

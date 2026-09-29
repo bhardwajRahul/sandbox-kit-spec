@@ -46,6 +46,9 @@ func TestEnvironmentExpansionRejectsInvalidInputs(t *testing.T) {
 		{"NUL", "${{kit.env.VALUE}}", "secret\x00", "NUL"},
 		{"recursive environment", "${{kit.env.VALUE}}", "${{kit.env.HOME}}", "placeholders"},
 		{"recursive argument", "${{kit.env.VALUE}}", "${{kit.args.x}}", "placeholders"},
+		{"malformed argument", "${{kit.env.VALUE}}", "secret ${{ kit.args.123 }}", "placeholders"},
+		{"unfinished argument", "${{kit.env.VALUE}}", "secret ${{ kit.args.NAME", "placeholders"},
+		{"argument with newline", "${{kit.env.VALUE}}", "secret ${{\nkit.args.NAME", "placeholders"},
 		{"budget", "${{kit.env.VALUE}}", strings.Repeat("secret", SizeErrorBytes), "budget"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -160,4 +163,42 @@ func TestEnvironmentReferencesWithEscapedWhitespace(t *testing.T) {
 	out, err := ExpandEnvironment(d, map[string]string{"HOME": "/home/user", "VALUE": "data"})
 	require.NoError(t, err)
 	require.False(t, HasEnvReferences(out.Capabilities))
+}
+
+func TestEnvironmentMappingKeysFailAtPublication(t *testing.T) {
+	for i, config := range []map[string]any{
+		{"${{ kit.env.KEY }}": "literal"},
+		{"nested": []map[string]string{{"${{\nkit.env.KEY}}": "literal"}}},
+		{"${{kit.env.KEY": "literal"},
+		{"${{kit.env.123}}": "literal"},
+		{"${{kit.env.KEY}}": "${{kit.env.VALUE}}"},
+	} {
+		for _, capabilityType := range []string{CapabilityLifecycle, "com.example/custom@1"} {
+			for _, grouped := range []bool{false, true} {
+				c := Capability{Type: capabilityType, Config: config}
+				require.Equal(t, i == 4, capabilityIsParameterized(c), "only the last config has a value reference that can defer typed validation")
+				d := &Descriptor{SchemaVersion: SchemaVersion, Kind: KindMixin, Capabilities: []Capability{c}}
+				if grouped {
+					d.Capabilities = []Capability{{Group: &CapabilityGroup{Optional: true, Capabilities: d.Capabilities}}}
+				}
+				raw, err := json.Marshal(d)
+				require.NoError(t, err)
+				for _, validate := range []func([]byte, *Descriptor) ([]string, error){ValidatePublished, ValidateDeclarations, ValidateEffective} {
+					_, err := validate(raw, d)
+					require.ErrorContains(t, err, "environment references are not allowed in mapping keys")
+				}
+				_, err = SelectCapabilities(d, func(Capability) bool { t.Fatal("invalid mapping key reached selector"); return false })
+				require.ErrorContains(t, err, "mapping keys")
+			}
+		}
+	}
+}
+
+func TestContainsKitPlaceholder(t *testing.T) {
+	for _, value := range []string{"${{kit.args.NAME}}", "${{ kit.args.123 }}", "${{ kit.args.NAME", "${{\nkit.args.NAME", "${{kit.env.HOME}}", "${{kit.env.123}}", "${{kit.env.HOME"} {
+		require.True(t, ContainsKitPlaceholder(value), "%q", value)
+	}
+	for _, value := range []string{"$HOME", "${HOME}", "~/", "kit.args.NAME", "${{ unrelated.NAME }}", "${{ kit.argsExtra.NAME }}"} {
+		require.False(t, ContainsKitPlaceholder(value), "%q", value)
+	}
 }

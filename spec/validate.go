@@ -523,6 +523,9 @@ func validateCapabilityBlock(d *Descriptor) error {
 	invalidCredentials := map[int]bool{}
 	for i, n := range needs {
 		path := fmt.Sprintf("capabilities[%d]", i)
+		if _, keys := environmentReferences(n.Config); keys {
+			errs.add(fieldErrorf(path+".config", "environment references are not allowed in mapping keys"))
+		}
 		if n.Source != nil && n.Source.Path == "" {
 			errs.add(fieldErrorf(path+".source.path", "source path is required"))
 		}
@@ -966,7 +969,8 @@ func capabilityIsParameterized(n Capability) bool {
 	if err != nil {
 		return false
 	}
-	return ContainsArgRef(string(data)) || HasEnvReferences([]Capability{n})
+	values, _ := environmentReferences(n.Config)
+	return ContainsArgRef(string(data)) || values
 }
 
 // validateCredentialNeed decodes and checks one credential entry.

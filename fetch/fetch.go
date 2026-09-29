@@ -458,7 +458,7 @@ func resolveKitArgs(k *Kit, args map[string]string) (map[string]string, map[stri
 		return nil, nil, fmt.Errorf("%s: %w", k.Reference, err)
 	}
 	for name, value := range values {
-		if spec.ContainsArgRef(value) || spec.ContainsEnvRef(value) {
+		if spec.ContainsKitPlaceholder(value) {
 			return nil, nil, fmt.Errorf("%s: arg %q must be a literal value without Kit placeholders", k.Reference, name)
 		}
 	}

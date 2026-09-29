@@ -431,3 +431,9 @@ func ReferencedArgs(raw []byte) []string {
 func ContainsArgRef(s string) bool {
 	return strings.Contains(s, "${{") && argRef.MatchString(s)
 }
+
+var kitPlaceholderOpener = regexp.MustCompile(`\$\{\{\s*kit\.(args|env)\b`)
+
+// ContainsKitPlaceholder recognizes Kit template openers even when the name
+// or closing braces are malformed. Inserted values must remain literal.
+func ContainsKitPlaceholder(s string) bool { return kitPlaceholderOpener.MatchString(s) }

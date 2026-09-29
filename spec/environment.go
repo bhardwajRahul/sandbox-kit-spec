@@ -76,7 +76,7 @@ func ExpandEnvironment(d *Descriptor, environment map[string]string) (*Descripto
 				if !ok {
 					return nil, fieldErrorf(at, "final container environment has no variable %q", name)
 				}
-				if strings.ContainsRune(replacement, '\x00') || ContainsEnvRef(replacement) || ContainsArgRef(replacement) {
+				if strings.ContainsRune(replacement, '\x00') || ContainsKitPlaceholder(replacement) {
 					return nil, fieldErrorf(at, "environment variable %q contains NUL or Kit placeholders", name)
 				}
 				if err := appendText(v[:start]); err != nil {
@@ -136,34 +136,41 @@ func ExpandEnvironment(d *Descriptor, environment map[string]string) (*Descripto
 // including group members. Checking serialized bytes would miss escaped whitespace.
 func HasEnvReferences(items []Capability) bool {
 	for _, c := range DeclaredCapabilities(items) {
-		raw, err := json.Marshal(c.Config)
-		if err != nil {
-			continue // Configuration validation owns values JSON cannot represent.
-		}
-		var config any
-		if json.Unmarshal(raw, &config) == nil && containsEnvValue(config) {
+		values, keys := environmentReferences(c.Config)
+		if values || keys {
 			return true
 		}
 	}
 	return false
 }
 
-func containsEnvValue(value any) bool {
-	switch v := value.(type) {
-	case string:
-		return ContainsEnvRef(v)
-	case map[string]any:
-		for key, child := range v {
-			if ContainsEnvRef(key) || containsEnvValue(child) {
-				return true
+// Normalize caller-created containers as well as decoded ones. Key references
+// are invalid at publication; only value references can defer typed validation.
+func environmentReferences(config map[string]any) (values, keys bool) {
+	raw, err := json.Marshal(config)
+	if err != nil {
+		return false, false // Configuration validation owns unrepresentable values.
+	}
+	var root any
+	if json.Unmarshal(raw, &root) != nil {
+		return false, false
+	}
+	var walk func(any)
+	walk = func(value any) {
+		switch v := value.(type) {
+		case string:
+			values = values || ContainsEnvRef(v)
+		case map[string]any:
+			for key, child := range v {
+				keys = keys || ContainsEnvRef(key)
+				walk(child)
 			}
-		}
-	case []any:
-		for _, child := range v {
-			if containsEnvValue(child) {
-				return true
+		case []any:
+			for _, child := range v {
+				walk(child)
 			}
 		}
 	}
-	return false
+	walk(root)
+	return values, keys
 }
