@@ -160,7 +160,13 @@ func (c check) firstUnclaimed(e *Env) string {
 }
 
 // Run judges a runtime against every check it claims to be subject to.
-func Run(ctx context.Context, e *Env) (rep report.Report, err error) {
+func Run(ctx context.Context, e *Env) (report.Report, error) {
+	return runChecks(ctx, e, checks)
+}
+
+// Mutation tests judge only the requirements each mutation targets, but need
+// the same claim gating, sentinel environment, and cleanup as a complete run.
+func runChecks(ctx context.Context, e *Env, selected []check) (rep report.Report, err error) {
 	if e.Adapter == nil {
 		return report.Report{}, fmt.Errorf("no adapter to test")
 	}
@@ -231,7 +237,7 @@ func Run(ctx context.Context, e *Env) (rep report.Report, err error) {
 				report.Failf("a sandbox could not be removed: %s", l))
 		}
 	}()
-	for _, c := range checks {
+	for _, c := range selected {
 		if unclaimed := c.firstUnclaimed(e); unclaimed != "" {
 			rep.Add(c.requirement, c.requirement,
 				report.Skipf("runtime does not claim %s", unclaimed))
