@@ -55,7 +55,6 @@ var covers = map[string][]string{
 	// The login check binds a session to a server whose host key the
 	// runtime was never given, validly signed: only matching bindings to
 	// keys from outside the sandbox refuses that login.
-	"ssh-agent@1/logins-bounded": {"ssh-agent@1/destination-keys-outside-sandbox"},
 
 	// The hook env check judges names against the declared set and values
 	// against the host sentinel; the files fixture's content is an arg

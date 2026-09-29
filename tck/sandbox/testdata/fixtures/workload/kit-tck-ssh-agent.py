@@ -4,6 +4,7 @@
 kit-tck-ssh-agent socket                    print SSH_AUTH_SOCK (empty when unset)
 kit-tck-ssh-agent list                      print the offered keys, one authorized_keys line each
 kit-tck-ssh-agent observe                   record a git signature and filtering probes
+kit-tck-ssh-agent plant-known-host HOST KEY add a sandbox-owned known_hosts entry
 kit-tck-ssh-agent saved PATH                list keys through the socket path saved in PATH
 kit-tck-ssh-agent sign KEY                  sign random bytes: a signature for no protocol
 kit-tck-ssh-agent sshsig NAMESPACE KEY      sign a namespaced (SSHSIG) signature
@@ -143,6 +144,12 @@ def main(argv):
         with open(args[0], encoding="utf-8") as record:
             os.environ["SSH_AUTH_SOCK"] = record.read().strip()
         op = "list"
+    if op == "plant-known-host" and len(args) == 2:
+        directory = os.path.expanduser("~/.ssh")
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        with open(os.path.join(directory, "known_hosts"), "a", encoding="utf-8") as hosts:
+            hosts.write(args[0] + " " + args[1] + "\n")
+        return
     agent = Agent()
     if op in ("list", "observe"):
         kind, body = agent.call(REQUEST_IDENTITIES)

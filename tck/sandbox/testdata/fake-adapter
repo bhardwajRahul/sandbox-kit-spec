@@ -106,8 +106,13 @@ run_ssh_probe() (
   # A Unix socket path is capped near 104 bytes on macOS, which the
   # state directory can exceed.
   relay_dir="$(mktemp -d /tmp/kit-tck-relay-XXXXXX)"
+  if [ "$relay_broken" = trusts-sandbox-known-hosts ] && [ -f "$dir/sandbox_known_hosts" ]; then
+    cat "$dir/known_hosts" "$dir/sandbox_known_hosts" >"$relay_dir/known_hosts"
+  else
+    if [ -f "$dir/known_hosts" ]; then cp "$dir/known_hosts" "$relay_dir/known_hosts"; fi
+  fi
   "$KIT_TCK_FAKE_RELAY" -listen "$relay_dir/agent.sock" -backing "$backing" \
-    -config "$dir/ssh-agent.json" -known-hosts "$dir/known_hosts" -broken "$relay_broken" 2>/dev/null &
+    -config "$dir/ssh-agent.json" -known-hosts "$relay_dir/known_hosts" -broken "$relay_broken" 2>/dev/null &
   relay_pid=$!
   trap 'kill "$relay_pid" 2>/dev/null || true; wait "$relay_pid" 2>/dev/null || true; rm -rf "$relay_dir"' EXIT
   for _ in $(seq 1 100); do [ -S "$relay_dir/agent.sock" ] && break; sleep 0.02; done
@@ -970,6 +975,10 @@ exec)
     if [ "$broken" = "ignores-resources" ]; then echo "max"; else echo "2147483648"; fi
     ;;
   kit-tck-ssh-agent)
+    if [ "$2" = plant-known-host ]; then
+      printf '%s %s\n' "$3" "$4" >>"$dir/sandbox_known_hosts"
+      exit 0
+    fi
     # The workload's probe, run against the fake's relay: a socket served
     # for this one call by the relay, which enforces the sandbox's entry
     # in front of the backing agent. What reaches the backing agent is

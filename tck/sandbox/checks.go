@@ -126,6 +126,7 @@ func installPhaseScoped(fixture string) func(context.Context, *Env) []report.Fin
 }
 
 var checks = append(gitIdentityChecks, []check{
+	{requirement: "ssh-agent@1/destination-keys-outside-sandbox", capability: capSSHAgent, run: sshAgentDestinationKeys},
 	{requirement: "ssh-agent@1/agent-reachable", capability: capSSHAgent, run: sshAgentReachable},
 	{requirement: "ssh-agent@1/operations-restricted", capability: capSSHAgent, run: sshAgentRestricted},
 	{requirement: "ssh-agent@1/signatures-bounded", capability: capSSHAgent, run: sshAgentSignaturesBounded},

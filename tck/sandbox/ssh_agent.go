@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/docker/sandbox-kit-spec/v3/tck/adapter"
 	"github.com/docker/sandbox-kit-spec/v3/tck/report"
 )
@@ -654,5 +656,27 @@ func sshAgentOptionalSkipped(ctx context.Context, e *Env) []report.Finding {
 		// The suite's agent was never handed over, so it cannot have
 		// been reached; what remains observable is the announced socket.
 		return agentUnreachable(ctx, e, id, a, "no backing agent was available")
+	})
+}
+
+// A key offered by the sandbox cannot augment the runtime's external trust.
+func sshAgentDestinationKeys(ctx context.Context, e *Env) []report.Finding {
+	return withBoundedSandbox(ctx, e, func(id string, a *backingAgent, server, _, impostor *sshServer) []report.Finding {
+		key := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(impostor.signer.PublicKey())))
+		if _, f := execOutput(ctx, e, id, sshAgentProbe, "plant-known-host", sshTestServer, key); f != nil {
+			return []report.Finding{*f}
+		}
+		sid := newSessionID()
+		trusted, err := server.binding(sid, false)
+		if err != nil {
+			return []report.Finding{report.Failf("bind trusted server: %v", err)}
+		}
+		untrusted, err := impostor.binding(sid, false)
+		if err != nil {
+			return []report.Finding{report.Failf("bind sandbox-presented server: %v", err)}
+		}
+		return judgeLogins(ctx, e, id, a,
+			loginCase{"externally trusted host key", sshTestUser, sid, trusted, ""},
+			[]loginCase{{"host key trusted only by sandbox known_hosts", sshTestUser, sid, untrusted, ""}})
 	})
 }

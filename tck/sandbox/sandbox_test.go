@@ -238,6 +238,7 @@ var mutations = map[string][]string{
 	"trusts-invalid-login-key":              {"ssh-agent@1/logins-bounded"},
 	"ignores-login-user":                    {"ssh-agent@1/logins-bounded"},
 	"ignores-session-id":                    {"ssh-agent@1/logins-bounded"},
+	"trusts-sandbox-known-hosts":            {"ssh-agent@1/destination-keys-outside-sandbox"},
 	"trusts-any-host-key":                   {"ssh-agent@1/logins-bounded"},
 	"trusts-unverified-binding":             {"ssh-agent@1/binding-verified"},
 	"trusts-forwarding-binding":             {"ssh-agent@1/binding-verified"},
