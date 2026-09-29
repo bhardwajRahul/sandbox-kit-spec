@@ -393,3 +393,45 @@ func TestComposeOmitsSourcesFromEffectiveCapabilities(t *testing.T) {
 		})
 	}
 }
+
+func TestSelectionRejectsUnexpandedCapabilityMetadata(t *testing.T) {
+	ref := "${{ kit.args.label }}"
+	for _, grouped := range []bool{false, true} {
+		for _, field := range []string{"name", "description", "member-name", "member-description"} {
+			t.Run(fmt.Sprintf("group=%t/%s", grouped, field), func(t *testing.T) {
+				member := groupHook("true")
+				if field == "member-name" {
+					member.Name = ref
+				}
+				if field == "member-description" {
+					member.Description = ref
+				}
+				item := member
+				if grouped {
+					item = Capability{Group: &CapabilityGroup{Capabilities: []Capability{member}}}
+					if field == "name" {
+						item.Group.Name = ref
+					}
+					if field == "description" {
+						item.Group.Description = ref
+					}
+				} else {
+					if field == "name" {
+						item.Name = ref
+					}
+					if field == "description" {
+						item.Description = ref
+					}
+				}
+				// A valid first item must not reach policy before the later error.
+				d := &Descriptor{Kind: KindMixin, Capabilities: []Capability{{Type: CapabilityVolume, Config: map[string]any{"path": "/cache"}}, item}}
+				selection, err := SelectCapabilities(d, func(Capability) bool {
+					t.Fatal("unexpanded declarations reached policy")
+					return true
+				})
+				require.ErrorContains(t, err, "unresolved arguments")
+				require.Empty(t, selection)
+			})
+		}
+	}
+}

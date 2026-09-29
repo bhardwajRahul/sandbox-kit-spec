@@ -318,9 +318,13 @@ func SelectCapabilities(d *Descriptor, selectCapability SelectCapability) (Selec
 		return result, err
 	}
 	items := d.Capabilities
-	for _, c := range DeclaredCapabilities(items) {
-		if capabilityIsParameterized(c) {
-			return result, fmt.Errorf("select capabilities: %s still contains unresolved arguments", c.Type)
+	for i, item := range items {
+		raw, err := json.Marshal(item)
+		if err != nil {
+			return result, fmt.Errorf("select capabilities: capabilities[%d]: %w", i, err)
+		}
+		if argRef.Match(raw) {
+			return result, fmt.Errorf("select capabilities: capabilities[%d] still contains unresolved arguments", i)
 		}
 	}
 	var errs ValidationErrors
