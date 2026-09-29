@@ -208,8 +208,10 @@ func gitIdentitySourceUnchanged(ctx context.Context, e *Env) []report.Finding {
 		findings := gitIdentityOutput(ctx, e, id, "defaults", gitIdentityName+"\n"+gitIdentityEmail+"\n")
 		findings = append(findings, gitIdentityOutput(ctx, e, id, "edit", "attempted\n")...)
 		raw, err := os.ReadFile(file)
-		if err != nil || string(raw) != original {
-			findings = append(findings, report.Failf("identity source changed after guest edit: %v", err))
+		if err != nil {
+			findings = append(findings, report.Failf("read identity source after guest edit: %v", err))
+		} else if string(raw) != original {
+			findings = append(findings, report.Failf("identity source changed after guest edit: got %q, want %q", string(raw), original))
 		}
 		return findings
 	})

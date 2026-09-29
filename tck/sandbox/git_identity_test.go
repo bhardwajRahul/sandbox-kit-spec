@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,6 +37,11 @@ func TestGitIdentityChecksAndMutations(t *testing.T) {
 					a := adapter.New(filepath.Join("testdata", "fake-adapter"))
 					a.Env = []string{"KIT_TCK_FAKE_STATE=" + t.TempDir(), "KIT_TCK_FAKE_BROKEN=" + broken, "KIT_TCK_FAKE_CLAIMS=" + capGitIdentity + "," + capLifecycle}
 					findings := c.run(ctx, &Env{Adapter: a, Fixtures: Fixtures(FixtureDir)})
+					if broken == "edits-identity-source" {
+						require.Len(t, findings, 1)
+						original := gitIdentityConfig(gitIdentityName, gitIdentityEmail)
+						require.Equal(t, fmt.Sprintf("identity source changed after guest edit: got %q, want %q", original+"changed\n", original), findings[0].Detail)
+					}
 					if broken == "git-identity-after-launch" {
 						// Both required and optional grants must fail on the
 						// startup capture even though their exec defaults pass.
