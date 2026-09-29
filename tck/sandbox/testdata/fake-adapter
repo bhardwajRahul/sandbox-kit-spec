@@ -525,6 +525,7 @@ exec)
   kit-tck-git-identity)
     case "$2" in
     defaults) cat "$dir/git-identity" ;;
+    clear-workload) rm -f "$dir/git-workload" ;;
     workload-identity) cat "$dir/git-workload" ;;
     hooks) cat "$dir/git-install" "$dir/git-startup" ;;
     startup-hook) cat "$dir/git-startup" ;;
@@ -862,6 +863,8 @@ selection-policy)
   ;;
 
 recreate)
+  cp "$state/$1/git-identity" "$state/$1/git-workload"
+  if [ "$broken" = late-identity-workload-recreate ]; then echo missing >"$state/$1/git-workload"; fi
   rm -f "$state/$1/git-install" "$state/$1/git-startup"
   if [ "$broken" != skips-identity-recreate-hook ]; then
     cp "$state/$1/git-identity" "$state/$1/git-startup"
@@ -891,6 +894,8 @@ recreate)
   ;;
 
 start)
+  cp "$state/$1/git-identity" "$state/$1/git-workload"
+  if [ "$broken" = late-identity-workload-start ]; then echo missing >"$state/$1/git-workload"; fi
   dir="$state/$1"
   if [ "$broken" != skips-identity-restart-hook ]; then
     cp "$dir/git-identity" "$dir/git-startup"

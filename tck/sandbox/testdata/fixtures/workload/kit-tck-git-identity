@@ -9,6 +9,9 @@ workload)
   shift
   exec "$@"
   ;;
+clear-workload)
+  rm -f "$HOME/git-identity-workload"
+  ;;
 workload-identity)
   # Create can return before the entrypoint is scheduled. Wait only for
   # its capture, never for the current Git config to acquire the pair.

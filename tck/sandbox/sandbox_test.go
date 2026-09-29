@@ -150,6 +150,8 @@ func TestAConformingRuntimePasses(t *testing.T) {
 // requirement — the two network-policy versions state the same duty about
 // the host lists — and dropping it has to fail every one of them.
 var mutations = map[string][]string{
+	"late-identity-workload-start":         {"git-identity@1/pinned-selection"},
+	"late-identity-workload-recreate":      {"git-identity@1/pinned-selection"},
 	"late-identity-restart-hook":           {"git-identity@1/before-hooks"},
 	"late-identity-recreate-hook":          {"git-identity@1/before-hooks"},
 	"skips-identity-restart-hook":          {"git-identity@1/before-hooks"},

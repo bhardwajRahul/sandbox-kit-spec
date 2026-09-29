@@ -239,11 +239,19 @@ func gitIdentityPersistence(ctx context.Context, e *Env) []report.Finding {
 		}{
 			{"stop", e.Adapter.Stop}, {"start", e.Adapter.Start}, {"recreate", e.Adapter.Recreate},
 		} {
+			if operation.name != "start" {
+				if findings := gitIdentityOutput(ctx, e, id, "clear-workload", ""); len(findings) != 0 {
+					return findings
+				}
+			}
 			if err := operation.run(ctx, id); err != nil {
 				return []report.Finding{report.Failf("%s: %v", operation.name, err)}
 			}
 			if operation.name != "stop" {
 				if findings := gitIdentityOutput(ctx, e, id, "defaults", gitIdentityName+"\n"+gitIdentityEmail+"\n"); len(findings) != 0 {
+					return findings
+				}
+				if findings := gitIdentityOutput(ctx, e, id, "workload-identity", gitIdentityName+"\n"+gitIdentityEmail+"\n"); len(findings) != 0 {
 					return findings
 				}
 			}
