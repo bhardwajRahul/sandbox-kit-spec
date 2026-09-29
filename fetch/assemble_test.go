@@ -370,3 +370,14 @@ func TestAssembleValidatesExpandedGroupBeforeSelector(t *testing.T) {
 	require.ErrorContains(t, err, "group.capabilities[0]")
 	require.ErrorContains(t, err, requests[0].Reference)
 }
+
+func TestAssembleRejectsWrongDiffIDEvenForCachedBlob(t *testing.T) {
+	input, _ := assemblyFixture(t, spec.KindWorkload, "base", "base")
+	// The same compressed blob appears twice. A verified first occurrence
+	// cannot stand in for checking the second occurrence's claimed diff ID.
+	input.Manifest.Layers = append(input.Manifest.Layers, input.Manifest.Layers[0])
+	input.Config.RootFS.DiffIDs = append(input.Config.RootFS.DiffIDs, digest.FromString("wrong"))
+	result, err := Assemble(t.Context(), fixtureRequests(1), Options{Loader: fixtureLoader(input)})
+	require.Nil(t, result)
+	require.ErrorContains(t, err, "diff ID mismatch")
+}

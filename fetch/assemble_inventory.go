@@ -1,11 +1,13 @@
 package fetch
 
 import (
+	"archive/tar"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"math"
+	"strings"
 
 	"github.com/docker/sandbox-kit-spec/v3/assemble"
 	"github.com/docker/sandbox-kit-spec/v3/resolve"
@@ -17,22 +19,24 @@ func inventoryKits(ctx context.Context, kits []*resolve.Unit, loaded map[string]
 	type blobKey struct {
 		digest digest.Digest
 		size   int64
+		diffID digest.Digest
 	}
 	cache := map[blobKey][]string{}
 	inventories := make([]assemble.Inventory, 0, len(kits))
 	for _, kit := range kits {
 		input := loaded[kit.Reference]
 		inventory := assemble.Inventory{Kit: kit.Reference}
-		for _, layer := range input.Manifest.Layers {
+		for index, layer := range input.Manifest.Layers {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			key := blobKey{layer.Digest, layer.Size}
+			diffID := input.Config.RootFS.DiffIDs[index]
+			key := blobKey{layer.Digest, layer.Size, diffID}
 			files, exists := cache[key]
 			if !exists {
 				err := progressStep(ctx, report, Progress{Stage: StageInventory, Reference: kit.Reference, Layer: layer.Digest}, func() error {
 					var err error
-					files, err = readLayerInventory(ctx, input, layer)
+					files, err = readLayerInventory(ctx, input, layer, diffID)
 					return err
 				})
 				if err != nil {
@@ -47,7 +51,7 @@ func inventoryKits(ctx context.Context, kits []*resolve.Unit, loaded map[string]
 	return inventories, nil
 }
 
-func readLayerInventory(ctx context.Context, input *LoadedKit, layer ocispec.Descriptor) (files []string, retErr error) {
+func readLayerInventory(ctx context.Context, input *LoadedKit, layer ocispec.Descriptor, diffID digest.Digest) (files []string, retErr error) {
 	if layer.Size == math.MaxInt64 {
 		return nil, fmt.Errorf("layer size is too large")
 	}
@@ -64,7 +68,12 @@ func readLayerInventory(ctx context.Context, input *LoadedKit, layer ocispec.Des
 	limited := &io.LimitedReader{R: contextReader{ctx: ctx, reader: reader}, N: layer.Size + 1}
 	verifier := layer.Digest.Verifier()
 	verified := io.TeeReader(limited, verifier)
-	files, err = assemble.ReadInventory(verified)
+	err = assemble.WalkLayerVerified(verified, diffID, func(hdr *tar.Header) error {
+		if hdr.Typeflag != tar.TypeDir {
+			files = append(files, strings.TrimPrefix(strings.TrimPrefix(hdr.Name, "./"), "/"))
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}

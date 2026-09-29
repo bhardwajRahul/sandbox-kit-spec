@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
+	"github.com/opencontainers/go-digest"
 )
 
 // Inventory is the set of non-directory paths one kit's layers contribute,
@@ -242,6 +243,37 @@ func WalkLayer(r io.Reader, fn func(*tar.Header) error) error {
 		return err
 	}
 	defer closeLayer()
+	return walkTar(tr, fn)
+}
+
+// WalkLayerVerified visits a layer's headers and verifies the complete
+// uncompressed stream against diffID, including padding after tar EOF. It
+// also consumes compression trailers, so checksum and truncation errors
+// cannot be hidden by a tar reader stopping before the blob ends.
+func WalkLayerVerified(r io.Reader, diffID digest.Digest, fn func(*tar.Header) error) error {
+	if err := diffID.Validate(); err != nil {
+		return fmt.Errorf("layer diff ID: %w", err)
+	}
+	stream, closeLayer, err := openLayerStream(r)
+	if err != nil {
+		return err
+	}
+	defer closeLayer()
+	verifier := diffID.Verifier()
+	verified := io.TeeReader(stream, verifier)
+	if err := walkTar(tar.NewReader(verified), fn); err != nil {
+		return err
+	}
+	if _, err := io.Copy(io.Discard, verified); err != nil {
+		return fmt.Errorf("read uncompressed layer: %w", err)
+	}
+	if !verifier.Verified() {
+		return fmt.Errorf("layer diff ID mismatch: expected %s", diffID)
+	}
+	return nil
+}
+
+func walkTar(tr *tar.Reader, fn func(*tar.Header) error) error {
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -315,6 +347,14 @@ func readEntry(tr *tar.Reader, path string, withBody bool, before int) (FileEntr
 // magic bytes: callers hand over blob bytes without their manifest media
 // type.
 func openLayer(r io.Reader) (*tar.Reader, func(), error) {
+	stream, closeLayer, err := openLayerStream(r)
+	if err != nil {
+		return nil, nil, err
+	}
+	return tar.NewReader(stream), closeLayer, nil
+}
+
+func openLayerStream(r io.Reader) (io.Reader, func(), error) {
 	br := bufio.NewReader(r)
 	magic, _ := br.Peek(4)
 	switch {
@@ -323,15 +363,15 @@ func openLayer(r io.Reader) (*tar.Reader, func(), error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("open layer: %w", err)
 		}
-		return tar.NewReader(gz), func() { _ = gz.Close() }, nil
+		return gz, func() { _ = gz.Close() }, nil
 	case len(magic) >= 4 && bytes.Equal(magic, zstdMagic):
 		zr, err := zstd.NewReader(br)
 		if err != nil {
 			return nil, nil, fmt.Errorf("open layer: %w", err)
 		}
-		return tar.NewReader(zr), zr.Close, nil
+		return zr, zr.Close, nil
 	default:
-		return tar.NewReader(br), func() {}, nil
+		return br, func() {}, nil
 	}
 }
 
