@@ -150,6 +150,11 @@ and hook-time captures. Required and optional fixtures exercise missing
 values and withheld identity. The suite never needs the user's real
 name, email or signing keys.
 
+An adapter claiming this capability also supports `selection <id>` using
+the record format below. The suite checks that an unavailable optional
+identity is recorded as skipped, with its rejected member, and is absent
+from selected records.
+
 ### 2.3 Known values the suite arranges
 
 Several requirements are about what must **not** appear, and absence

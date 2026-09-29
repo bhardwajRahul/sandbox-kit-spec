@@ -224,11 +224,12 @@ create)
   fi
 
   identity_required=""
+  identity_optional=""
   identity_requested=""
   for kit in "${kits[@]}"; do
     case "$kit" in
     */git-identity) identity_required=1; identity_requested=1 ;;
-    */git-identity-optional) identity_requested=1 ;;
+    */git-identity-optional) identity_requested=1; identity_optional=1 ;;
     esac
   done
   identity_name=""
@@ -310,6 +311,17 @@ create)
   dir="$state/$id"
   mkdir -p "$dir"
   echo running >"$dir/status"
+  if [ -n "$identity_optional" ] && { [ -z "$identity_name" ] || [ -z "$identity_email" ]; }; then
+    record='{"path":"capabilities[0]","source":{"kit":"git-identity-optional","path":"capabilities[0]"},"members":["capabilities[0]"],"memberSources":[{"kit":"git-identity-optional","path":"capabilities[0]"}],"rejected":["capabilities[0]"]}'
+    selected='[]'
+    skipped="[$record]"
+    case "$broken" in
+    drops-identity-skip-record) skipped='[]' ;;
+    selects-unavailable-identity) selected="[$record]"; skipped='[]' ;;
+    selects-and-skips-identity) selected="[$record]" ;;
+    esac
+    printf '{"selection":{"selected":%s,"skipped":%s},"surface":{}}\n' "$selected" "$skipped" >"$dir/selection.json"
+  fi
   printf '%s\n' 'Image Author' image@example.invalid >"$dir/git-identity"
   if [ "$broken" = git-identity-after-launch ]; then
     cp "$dir/git-identity" "$dir/git-workload"

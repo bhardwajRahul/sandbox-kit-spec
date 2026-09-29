@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/docker/sandbox-kit-spec/v3/tck/adapter"
@@ -122,6 +123,7 @@ func gitIdentityUnavailable(ctx context.Context, e *Env) []report.Finding {
 				return []report.Finding{report.Failf("optional identity with %s missing: %v", missing, err)}
 			}
 			findings := gitIdentityOutput(ctx, e, id, "absent", "absent\n")
+			findings = append(findings, gitIdentitySkipped(ctx, e, id)...)
 			cleanup()
 			if len(findings) != 0 {
 				return findings
@@ -129,6 +131,34 @@ func gitIdentityUnavailable(ctx context.Context, e *Env) []report.Finding {
 		}
 		return nil
 	})
+}
+
+func gitIdentitySkipped(ctx context.Context, e *Env, id string) []report.Finding {
+	state, err := e.Adapter.Selection(ctx, id)
+	if err != nil {
+		return []report.Finding{report.Failf("optional identity selection records: %v", err)}
+	}
+	fixtureRef := e.Fixtures(fixtureGitIdentityOptional)
+	for _, record := range state.Selection.Selected {
+		if record.Source != nil && (record.Source.Kit == fixtureGitIdentityOptional || record.Source.Kit == fixtureRef) {
+			return []report.Finding{report.Failf("unavailable optional identity recorded as selected: %+v", record)}
+		}
+	}
+	found := 0
+	for _, record := range state.Selection.Skipped {
+		if record.Source == nil || (record.Source.Kit != fixtureGitIdentityOptional && record.Source.Kit != fixtureRef) {
+			continue
+		}
+		if record.Source.Path != "capabilities[0]" || record.Path == "" ||
+			!slices.Equal(record.Members, []string{record.Path}) || !slices.Equal(record.Rejected, []string{record.Path}) {
+			return []report.Finding{report.Failf("optional identity skip record incomplete: %+v", record)}
+		}
+		found++
+	}
+	if found != 1 {
+		return []report.Finding{report.Failf("optional identity skip record: got %d, want 1", found)}
+	}
+	return nil
 }
 
 func gitIdentityPersistence(ctx context.Context, e *Env) []report.Finding {
