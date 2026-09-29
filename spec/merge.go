@@ -591,6 +591,9 @@ func (m *capabilityMerge) add(reference string, n Capability) error {
 		if err != nil {
 			return fmt.Errorf("merge: %s and %s: %w", prev.reference, reference, err)
 		}
+		if merged.Name == "" {
+			merged.Name = n.Name
+		}
 		m.byKey[key] = keyed{reference: prev.reference, capability: *merged}
 		if !n.Optional {
 			m.optional[key] = false

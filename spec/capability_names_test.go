@@ -134,6 +134,8 @@ func TestMergeCapabilityNames(t *testing.T) {
 		{"volume", "type: com.docker.sandbox/volume@1\n    config: {path: /cache}", "type: com.docker.sandbox/volume@1\n    config: {path: /./cache}"},
 		{"port", "type: com.docker.sandbox/port@1\n    config: {container: 8080}", "type: com.docker.sandbox/port@1\n    config: {container: 8080, transport: tcp}"},
 		{"skills", "type: com.docker.sandbox/agent-skills@1\n    config: {path: /skills}", ""},
+		{"ssh agent", "type: com.docker.sandbox/ssh-agent@1\n    config: {phase: runtime}", ""},
+		{"bounded ssh agent", "type: com.docker.sandbox/ssh-agent@1\n    config: {phase: runtime, unrestricted: false, sign: [git]}", "type: com.docker.sandbox/ssh-agent@1\n    config: {phase: runtime, unrestricted: false, sign: [file]}"},
 		{"configless", "type: com.docker.sandbox/privileged@1", ""},
 		{"unknown", "type: example.com/service@1\n    config: {mode: read}", ""},
 	} {
