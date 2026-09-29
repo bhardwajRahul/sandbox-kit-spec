@@ -146,6 +146,19 @@ func agentServes(ctx context.Context, e *Env, id string, a *backingAgent) *repor
 func agentUnreachable(ctx context.Context, e *Env, id string, a *backingAgent, when string) []report.Finding {
 	before := a.Requests()
 	var findings []report.Finding
+	// Wait for the entrypoint's completed probe before judging its
+	// environment: create may return before the workload starts.
+	proof, f := initialAgentProof(ctx, e, id, "/var/tmp/kit-tck-workload-ssh-sock-proof", "")
+	if f != nil {
+		return []report.Finding{*f}
+	}
+	initial, f := execOutput(ctx, e, id, "cat", "/var/tmp/kit-tck-workload-ssh-sock")
+	if f != nil {
+		return []report.Finding{*f}
+	}
+	if strings.TrimSpace(initial) != "" || strings.Contains(proof, "data ") || strings.Contains(proof, a.PublicKey()) {
+		findings = append(findings, report.Failf("%s, yet the initial workload recorded socket %q or agent access", when, strings.TrimSpace(initial)))
+	}
 	socket, f := execOutput(ctx, e, id, sshAgentProbe, "socket")
 	if f != nil {
 		return []report.Finding{*f}
@@ -536,7 +549,11 @@ func sshAgentAbsentWithoutGrant(ctx context.Context, e *Env) []report.Finding {
 			return []report.Finding{report.Failf("create: %v", err)}
 		}
 		defer cleanup()
-		return agentUnreachable(ctx, e, id, a, "no kit asked for the SSH agent")
+		findings := agentUnreachable(ctx, e, id, a, "no kit asked for the SSH agent")
+		if a.Requests() != 0 {
+			findings = append(findings, report.Failf("without a grant, %d requests reached the backing agent", a.Requests()))
+		}
+		return findings
 	})
 }
 

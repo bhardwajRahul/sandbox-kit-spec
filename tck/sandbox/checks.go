@@ -126,7 +126,7 @@ func installPhaseScoped(fixture string) func(context.Context, *Env) []report.Fin
 }
 
 var checks = []check{
-	{requirement: "ssh-agent@1/agent-reachable", capability: capSSHAgent, needs: []string{capLifecycle}, run: sshAgentReachable},
+	{requirement: "ssh-agent@1/agent-reachable", capability: capSSHAgent, run: sshAgentReachable},
 	{requirement: "ssh-agent@1/operations-restricted", capability: capSSHAgent, run: sshAgentRestricted},
 	{requirement: "ssh-agent@1/signatures-bounded", capability: capSSHAgent, run: sshAgentSignaturesBounded},
 	{requirement: "ssh-agent@1/logins-bounded", capability: capSSHAgent, run: sshAgentLoginsBounded},

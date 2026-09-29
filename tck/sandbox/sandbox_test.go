@@ -220,6 +220,8 @@ var mutations = map[string][]string{
 	"ssh-agent-forwards-constrained-rsa":    {"ssh-agent@1/operations-restricted"},
 	"ssh-agent-relays-everything":           {"ssh-agent@1/operations-restricted"},
 	"ssh-agent-forwards-refused":            {"ssh-agent@1/operations-restricted"},
+	"ssh-agent-initial-without-grant":       {"ssh-agent@1/absent-without-grant"},
+	"ssh-agent-initial-optional-leak":       {"ssh-agent@1/unavailable-skips-optional"},
 	"ssh-agent-without-grant":               {"ssh-agent@1/absent-without-grant"},
 	"ssh-agent-install-missing":             {"ssh-agent@1/phase-scoped"},
 	"leaves-install-ssh-agent-open":         {"ssh-agent@1/phase-scoped"},
@@ -418,4 +420,30 @@ func TestAFailingCreateIsNotMistakenForARefusal(t *testing.T) {
 	rep := runAgainstFake(t, "refusal-as-error")
 	require.Contains(t, failedRequirements(rep), "SPEC-v3 §7.3/unknown-required-refused",
 		"a create that fails for unrelated reasons must not count as a refusal:\n%s", rep)
+}
+
+func TestSSHAgentReachabilityWithoutLifecycle(t *testing.T) {
+	for _, broken := range []string{"", "ssh-agent-missing-workload-env", "ssh-agent-bogus-workload-socket"} {
+		t.Run(broken, func(t *testing.T) {
+			a := adapter.New(filepath.Join("testdata", "fake-adapter"))
+			a.Env = []string{
+				"KIT_TCK_FAKE_STATE=" + t.TempDir(),
+				"KIT_TCK_FAKE_CLAIMS=" + capSSHAgent,
+				"KIT_TCK_FAKE_BROKEN=" + broken,
+			}
+			rep, err := Run(t.Context(), &Env{Adapter: a, Fixtures: Fixtures(FixtureDir)})
+			require.NoError(t, err)
+			found := false
+			for _, f := range rep.Findings {
+				if f.Requirement == "ssh-agent@1/agent-reachable" {
+					found = true
+					require.Equal(t, report.Fail, f.Severity)
+				}
+			}
+			require.Equal(t, broken != "", found, "%s", rep)
+			if broken == "" {
+				require.False(t, rep.Failed(), "%s", rep)
+			}
+		})
+	}
 }

@@ -394,6 +394,17 @@ create)
   if [ -f "$dir/ssh-agent" ]; then
     record_ssh_processes "$dir" create
   fi
+  if [ "$broken" = ssh-agent-initial-without-grant ] && [ -z "$agent_phase" ] && [ -n "$offered_agent" ]; then
+    printf '%s' "$offered_agent" >"$dir/ssh-agent"
+    record_ssh_processes "$dir" create
+    rm "$dir/ssh-agent"
+  fi
+  if [ "$broken" = ssh-agent-initial-optional-leak ] && [ "$agent_phase" = runtime ] && [ -z "$offered_agent" ]; then
+    printf '%s' /run/leaked-agent.sock >"$dir/workload-ssh-sock"
+  fi
+  if [ ! -f "$dir/workload-ssh-sock-proof" ]; then
+    echo 'no agent' >"$dir/workload-ssh-sock-proof"
+  fi
   # The entrypoint records an empty value when no runtime-phase grant
   # exists; only the leak mutation writes a non-empty value instead.
   if [ ! -f "$dir/workload-ssh-sock" ]; then : >"$dir/workload-ssh-sock"; fi
