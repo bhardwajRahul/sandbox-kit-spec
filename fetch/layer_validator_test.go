@@ -73,6 +73,26 @@ func TestAssembleWithoutLayerValidatorSkipsCollisions(t *testing.T) {
 	require.Len(t, result.Image.Layers, 2)
 }
 
+func TestAssembleWithoutLayerValidatorHonorsResolveCallbackCancellation(t *testing.T) {
+	input, _ := assemblyFixture(t, spec.KindWorkload, "base", "base")
+	input.LayerLoader = nil
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var events []Progress
+	result, err := Assemble(ctx, fixtureRequests(1), Options{
+		Loader: fixtureLoader(input),
+		OnProgress: func(p Progress) {
+			events = append(events, p)
+			if p.Stage == StageResolve && p.State == ProgressCompleted {
+				cancel()
+			}
+		},
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, result)
+	require.Equal(t, Progress{Stage: StageResolve, State: ProgressCompleted}, events[len(events)-1])
+}
+
 func TestAssembleWithoutLayerValidatorStillValidatesMetadata(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

@@ -169,9 +169,9 @@ func Assemble(ctx context.Context, requests []Request, options Options) (*Result
 		if err := options.LayerValidator(ctx, resolved.Kits, loaded, options.OnProgress); err != nil {
 			return nil, err
 		}
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	maps.Copy(environment, resolved.ContainerEnv)
 	maps.Copy(environment, options.Overrides.Env)
