@@ -36,33 +36,50 @@ capabilities:
   - type: com.docker.sandbox/lifecycle@1
     config:
       files:
-        # GitHub's published host keys (https://api.github.com/meta), so
-        # the first connection is verified rather than trusted on sight.
-        # The runtime matches session bindings against host keys it gets
-        # from outside the sandbox; these are the sandbox's own check that
-        # it is talking to GitHub.
-        - path: /home/agent/.ssh/known_hosts
+        # Published keys from https://api.github.com/meta, staged separately
+        # so an existing known_hosts never suppresses the GitHub entries.
+        - path: /home/agent/.ssh/github-ssh-known-hosts
           mode: "0644"
-          overwrite: false
-          description: GitHub's SSH host keys
+          description: GitHub's published SSH host keys
           content: |
             github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
             github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
             github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=
-        # As in the git-signing example: defaults the user's own
-        # ~/.gitconfig overrides.
-        - path: /home/agent/.config/git/config
-          overwrite: false
-          description: Sign commits and tags with the agent's key
-          content: |
-            [gpg]
-            	format = ssh
-            [gpg "ssh"]
-            	defaultKeyCommand = ssh-add -L
-            [commit]
-            	gpgsign = true
-            [tag]
-            	gpgsign = true
+      startup:
+        # Fill only missing XDG defaults; ~/.gitconfig still takes precedence.
+        - command: |
+            set -eu
+            config="${XDG_CONFIG_HOME:-$HOME/.config}/git/config"
+            mkdir -p "$(dirname "$config")"
+            set_default() {
+              if git config --file "$config" --get "$1" >/dev/null; then
+                return
+              else
+                status=$?
+                [ "$status" -eq 1 ] || return "$status"
+              fi
+              git config --file "$config" "$1" "$2"
+            }
+            set_default gpg.format ssh
+            set_default gpg.ssh.defaultKeyCommand 'ssh-add -L'
+            set_default commit.gpgsign true
+            set_default tag.gpgsign true
+          env: [XDG_CONFIG_HOME]
+          description: Merge missing signing defaults without replacing user settings
+        - command: |
+            set -eu
+            mkdir -p "$HOME/.ssh"
+            touch "$HOME/.ssh/known_hosts"
+            while IFS= read -r key; do
+              if grep -qxF "$key" "$HOME/.ssh/known_hosts"; then
+                continue
+              else
+                status=$?
+                [ "$status" -eq 1 ] || exit "$status"
+              fi
+              printf '\n%s\n' "$key" >> "$HOME/.ssh/known_hosts"
+            done < /home/agent/.ssh/github-ssh-known-hosts
+          description: Merge GitHub host keys while preserving existing entries
 
   - type: com.docker.sandbox/agent-context@1
     config:
