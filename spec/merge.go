@@ -29,13 +29,12 @@ type MergeResult struct {
 	// Descriptor is the merged declaration set, under the derived kind.
 	Descriptor *Descriptor
 
-	// ContextSources are the agent-context bodies to concatenate into
-	// the merged entry's contentFile, in contribution order. Empty when
-	// no contribution declared any context content.
-	//
-	// The type is a singleton, so several contributors' guidance has to
-	// become one body; which file that is and who writes it belongs to
-	// whoever stages layers, not to the arithmetic here.
+	// ContextSources are agent-context bodies in contribution order. Empty
+	// when no contribution declared any context content. Sources with an
+	// empty Target are concatenated into the merged entry's contentFile.
+	// Each source with a Target must instead be staged separately at that
+	// path, preserving its conditional selection boundary. The caller owns
+	// reading and staging the bodies; this package only computes the paths.
 	ContextSources []ContextSource
 }
 
@@ -75,7 +74,8 @@ type MergeOptions struct {
 // what several of the rules below mean by "first" and "last", and
 // deriving it needs the resolver, which does not belong here.
 //
-// Context bodies are concatenated by the publisher at opts.ContextPath.
+// Unconditional context bodies are concatenated at opts.ContextPath;
+// grouped publication stages each ContextSource at its separate Target.
 // Runtime consumers use Compose and retain the input contributions.
 func Merge(contributions []Contribution, opts MergeOptions) (*MergeResult, error) {
 	if contributionsHaveGroups(contributions) {
