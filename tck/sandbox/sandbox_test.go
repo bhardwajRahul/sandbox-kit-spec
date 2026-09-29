@@ -195,6 +195,7 @@ var mutations = map[string][]string{
 	"refuses-optional-long-running":     {"conformance.md §2.2/optional-long-running-accepted"},
 	"install-twice":                     {"lifecycle@1/install-once"},
 	"no-startup":                        {"lifecycle@1/startup-every-boot"},
+	"ignores-env-expansion":             {"lifecycle@1/files-written"},
 	"ignores-files":                     {"lifecycle@1/files-written"},
 	"writes-files-as-root":              {"lifecycle@1/files-written"},
 	"writes-files-read-only":            {"lifecycle@1/files-written"},

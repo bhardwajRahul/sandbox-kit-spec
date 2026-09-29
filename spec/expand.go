@@ -404,6 +404,9 @@ func ValidateEffective(raw []byte, d *Descriptor) ([]string, error) {
 	if refs := ReferencedArgs(raw); len(refs) > 0 {
 		errs.add(fieldErrorf("", "effective descriptor still references kit args %v; expansion did not run or a value did not resolve", refs))
 	}
+	if containsEnvironment(d.Capabilities) {
+		errs.add(fieldErrorf("capabilities", "effective configuration still contains kit.env references; expand the final container environment first"))
+	}
 	warnings, err := ValidateRaw(raw, d)
 	errs.add(err)
 	return warnings, errs.err()

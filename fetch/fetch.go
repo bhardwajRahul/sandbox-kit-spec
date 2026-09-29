@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 
 	"github.com/opencontainers/go-digest"
@@ -203,7 +204,11 @@ type KitSelection struct {
 
 // ResolveOption configures create-time descriptor selection.
 type ResolveOption func(*resolveOptions)
-type resolveOptions struct{ selector spec.SelectCapability }
+type resolveOptions struct {
+	selector     spec.SelectCapability
+	environment  map[string]string
+	envOverrides map[string]string
+}
 
 // WithCapabilitySelector lets a runtime decide each expanded request. The
 // library retains atomic groups, ordering, validation, and source records.
@@ -290,19 +295,34 @@ func mergeKits(kits []*Kit, args []map[string]string, partial bool, opts ...Reso
 			opt(&options)
 		}
 	}
+	hadEnvironment := false
 	prepared := make([]*Kit, len(kits))
 	exports := make([]map[string]string, len(kits))
 	values := make([]map[string]string, len(kits))
 	for i, k := range kits {
-		expanded, err := expandKit(k, args[i])
+		hadEnvironment = hadEnvironment || (k != nil && spec.ContainsEnvRef(string(k.Raw)))
+		var err error
+		values[i], exports[i], err = resolveKitArgs(k, args[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	env, err := combineExports(kits, exports)
+	if err != nil {
+		return nil, err
+	}
+	environment := map[string]string{}
+	maps.Copy(environment, options.environment)
+	maps.Copy(environment, env)
+	maps.Copy(environment, options.envOverrides)
+	for i, k := range kits {
+		expanded, err := expandResolvedKit(k, values[i], exports[i], environment)
 		if err != nil {
 			return nil, err
 		}
 		cp := *k
 		cp.Descriptor = expanded.descriptor
 		prepared[i] = &cp
-		exports[i] = expanded.env
-		values[i] = expanded.args
 	}
 	units, err := Units(prepared)
 	if err != nil {
@@ -338,10 +358,9 @@ func mergeKits(kits []*Kit, args []map[string]string, partial bool, opts ...Reso
 	}
 	merged, err := spec.Compose(contributions)
 	if err != nil {
-		return nil, err
-	}
-	env, err := combineExports(prepared, exports)
-	if err != nil {
+		if hadEnvironment {
+			return nil, fmt.Errorf("compose capabilities after environment expansion: incompatible declarations")
+		}
 		return nil, err
 	}
 	result := &Resolved{Descriptor: merged, Kits: ordered, ContainerEnv: env, Selections: selections}
@@ -353,6 +372,9 @@ func mergeKits(kits []*Kit, args []map[string]string, partial bool, opts ...Reso
 	}
 	result.Warnings, err = spec.ValidateEffective(raw, merged)
 	if err != nil {
+		if hadEnvironment {
+			return nil, fmt.Errorf("merged descriptor is invalid after environment expansion")
+		}
 		return nil, spec.WithSource(err, "merged descriptor", raw)
 	}
 	return result, nil
@@ -400,25 +422,37 @@ type expandedKit struct {
 // those lived on is cleared, so the map is the only copy. The fetched
 // Kit is left as the registry served it.
 func expandKit(k *Kit, args map[string]string) (*expandedKit, error) {
+	values, env, err := resolveKitArgs(k, args)
+	if err != nil {
+		return nil, err
+	}
+	return expandResolvedKit(k, values, env, env)
+}
+
+func resolveKitArgs(k *Kit, args map[string]string) (map[string]string, map[string]string, error) {
 	if k == nil || k.Descriptor == nil {
-		return nil, fmt.Errorf("fetch: kit %s has no descriptor", refOf(k))
+		return nil, nil, fmt.Errorf("fetch: kit %s has no descriptor", refOf(k))
 	}
 	if _, err := spec.ValidatePublished(k.Raw, k.Descriptor); err != nil {
-		return nil, spec.WithSource(err, k.Reference+" (published descriptor)", k.Raw)
+		return nil, nil, spec.WithSource(err, k.Reference+" (published descriptor)", k.Raw)
 	}
 	values, err := spec.KitArgValues(k.Descriptor.Args, args)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", k.Reference, err)
+		return nil, nil, fmt.Errorf("%s: %w", k.Reference, err)
 	}
 	for name, value := range values {
-		if spec.ContainsArgRef(value) {
-			return nil, fmt.Errorf("%s: arg %q must be a literal value, got %q", k.Reference, name, value)
+		if spec.ContainsArgRef(value) || spec.ContainsEnvRef(value) {
+			return nil, nil, fmt.Errorf("%s: arg %q must be a literal value without Kit placeholders", k.Reference, name)
 		}
 	}
 	env, err := argExports(k.Descriptor.Args, values)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", k.Reference, err)
+		return nil, nil, fmt.Errorf("%s: %w", k.Reference, err)
 	}
+	return values, env, nil
+}
+
+func expandResolvedKit(k *Kit, values, exports, environment map[string]string) (*expandedKit, error) {
 	expanded, err := spec.ExpandCreateArgs(k.Raw, k.Descriptor.Args, values)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", k.Reference, err)
@@ -427,11 +461,31 @@ func expandKit(k *Kit, args map[string]string) (*expandedKit, error) {
 	if err != nil {
 		return nil, spec.WithSource(err, k.Reference+" (expanded descriptor)", expanded)
 	}
+	hadEnvironment := false
+	for _, c := range spec.DeclaredCapabilities(d.Capabilities) {
+		raw, _ := json.Marshal(c.Config)
+		hadEnvironment = hadEnvironment || spec.ContainsEnvRef(string(raw))
+	}
+	if hadEnvironment {
+		d, err = spec.ExpandEnvironment(d, environment)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", k.Reference, err)
+		}
+		expanded, err = json.Marshal(d)
+		if err != nil {
+			return nil, fmt.Errorf("%s: encode environment-expanded descriptor", k.Reference)
+		}
+	}
 	if _, err := spec.ValidateExpandedDeclarations(expanded, d); err != nil {
+		if hadEnvironment {
+			// Expanded values may be secrets. Neither validator details nor source
+			// excerpts from the expanded document are safe to include in errors.
+			return nil, fmt.Errorf("%s: invalid capability configuration after environment expansion", k.Reference)
+		}
 		return nil, spec.WithSource(err, k.Reference+" (expanded descriptor)", expanded)
 	}
 	d.Args = nil
-	return &expandedKit{descriptor: d, raw: expanded, args: values, env: env}, nil
+	return &expandedKit{descriptor: d, raw: expanded, args: values, env: exports}, nil
 }
 
 // argExports collects the variables one kit's create-phase args bind.

@@ -957,7 +957,7 @@ func validatePresenceRules(path string, i int, n Capability) error {
 }
 
 // capabilityIsParameterized reports whether the entry's config references
-// a kit arg anywhere in its (canonical-JSON) rendering.
+// a Kit argument or environment value in its canonical JSON rendering.
 func capabilityIsParameterized(n Capability) bool {
 	if len(n.Config) == 0 {
 		return false
@@ -966,7 +966,7 @@ func capabilityIsParameterized(n Capability) bool {
 	if err != nil {
 		return false
 	}
-	return ContainsArgRef(string(data))
+	return ContainsArgRef(string(data)) || ContainsEnvRef(string(data))
 }
 
 // validateCredentialNeed decodes and checks one credential entry.

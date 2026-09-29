@@ -291,7 +291,8 @@ func ValidateDeclarations(raw []byte, d *Descriptor) ([]string, error) {
 	return ValidateRaw(raw, &cp)
 }
 
-// ValidateExpandedDeclarations additionally refuses unresolved arguments.
+// ValidateExpandedDeclarations additionally refuses unresolved arguments
+// and environment references.
 func ValidateExpandedDeclarations(raw []byte, d *Descriptor) ([]string, error) {
 	cp := *d
 	cp.declarationsOnly = true
@@ -326,6 +327,9 @@ func SelectCapabilities(d *Descriptor, selectCapability SelectCapability) (Selec
 		if argRef.Match(raw) {
 			return result, fmt.Errorf("select capabilities: capabilities[%d] still contains unresolved arguments", i)
 		}
+	}
+	if containsEnvironment(items) {
+		return result, fmt.Errorf("select capabilities: expand the final container environment before selection")
 	}
 	var errs ValidationErrors
 	for i, item := range items {
@@ -429,16 +433,17 @@ func cloneConfigValue(v reflect.Value) reflect.Value {
 	return out
 }
 
-func contributionsHaveGroups(contributions []Contribution) bool {
+func contributionsNeedDeferredMerge(contributions []Contribution) bool {
 	for _, c := range contributions {
-		if c.Descriptor != nil && HasGroups(c.Descriptor.Capabilities) {
+		if c.Descriptor != nil && (HasGroups(c.Descriptor.Capabilities) || containsEnvironment(c.Descriptor.Capabilities)) {
 			return true
 		}
 	}
 	return false
 }
 
-// preserveGroups publishes declaration order, not a hypothetical selection.
+// preserveGroups preserves declarations until selection and environment
+// expansion can determine which concrete requests to reconcile.
 // Wrapping ordinary entries preserves their optionality and allows independent
 // singleton contributions without inventing a second publishing-only grammar.
 func preserveGroups(contributions []Contribution, opts MergeOptions) (*MergeResult, error) {
@@ -496,7 +501,9 @@ func preserveGroups(contributions []Contribution, opts MergeOptions) (*MergeResu
 				if err := DecodeCapabilityConfig(member, &ac); err != nil {
 					return nil, err
 				}
-				if ac.ContentFile == "" && ac.Content == "" {
+				// Keep runtime templates in the descriptor: staged file bodies
+				// are not evaluated by descriptor expansion.
+				if ContainsEnvRef(ac.Content) || (ac.ContentFile == "" && ac.Content == "") {
 					continue
 				}
 				if opts.ContextPath == "" {

@@ -100,8 +100,19 @@ The program prints the result plus its computed manifest:
 Environment and working-directory overrides do not modify the reusable
 image. Apply the returned container settings at creation. Empty
 variable values remain empty; missing override keys retain their values.
-Values are literal: this API does not evaluate shell expressions or
-`${{ kit.env.* }}` placeholders. Those placeholders are not supported.
+Capability configuration strings can use `${{ kit.env.HOME }}` and other
+`${{ kit.env.NAME }}` references. Assembly composes the image, applies
+argument exports and runtime overrides to the environment, then expands
+configurations before validation and capability selection. Values stay
+strings; missing names fail and explicitly empty values remain empty.
+No shell expansion or host environment lookup occurs. `$HOME`, `${HOME}`,
+and `~/` are unchanged. Environment references do not expand mapping keys,
+capability metadata, or the environment values themselves.
+
+For example, a mixin can declare a lifecycle file with
+`path: "${{ kit.env.HOME }}/.config/tool/settings.json"` without hard-coding
+the user's home. All group members expand and validate before selection;
+optional declarations do not hide missing variables or malformed results.
 
 Persist `Resolved.Descriptor` and `Resolved.Selections` with the sandbox
 and reuse the decision on restart. A recreation selects afresh. Apply
@@ -148,9 +159,9 @@ An archive entry the shared extractor model refuses fails assembly.
 
 `OnProgress` receives serialized stage transitions on the calling
 goroutine: `started`, `completed`, or `failed`. The stages are `load`,
-`resolve` (including argument expansion, selection, and descriptor
-validation), `compose`, `inventory`, and `collisions`. Kit references and
-layer digests identify individual work. Inventory events include cached
+`compose` (image defaults), `resolve` (argument and environment expansion,
+selection, and descriptor validation), `inventory`, and `collisions`.
+Kit references and layer digests identify individual work. Inventory events include cached
 layer replays, which consume the operation budget without reopening
 blobs. Callbacks should return promptly; use the context to cancel. The
 returned error remains authoritative, and events never contain

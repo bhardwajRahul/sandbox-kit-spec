@@ -384,6 +384,14 @@ var checks = []check{
 					"declared file holds %q; the arg reference should have expanded to %q", body, "hello")}
 			}
 
+			body, f = execOutput(ctx, e, id, "cat", "/home/agent/.config/env-written")
+			if f != nil {
+				return []report.Finding{*f}
+			}
+			if body != "hello" {
+				return []report.Finding{report.Failf("final environment references did not expand in the declared file")}
+			}
+
 			// Whose it is, not only that it arrived: a declared file the
 			// agent does not own is off the trust plane this capability
 			// stays on, and its content reads the same either way. Both

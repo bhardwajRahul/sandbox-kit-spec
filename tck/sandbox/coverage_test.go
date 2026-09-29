@@ -54,7 +54,7 @@ var covers = map[string][]string{
 	// against the host sentinel; the files fixture's content is an arg
 	// reference, so files-written observes expansion too.
 	"lifecycle@1/hook-env-restricted": {"lifecycle@1/baseline-values-sandbox-derived"},
-	"lifecycle@1/files-written":       {"lifecycle@1/args-expanded"},
+	"lifecycle@1/files-written":       {"lifecycle@1/args-expanded", "SPEC-v3 §6/env-expanded"},
 
 	// The install-egress recording observes the same boundary lifecycle
 	// requires the runtime to hold during install.

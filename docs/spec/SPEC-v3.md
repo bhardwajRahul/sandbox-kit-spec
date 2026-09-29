@@ -466,6 +466,41 @@ args:
 - A supplied value failing its `enum`/`pattern`, a missing `required`
   value, and a supplied name the Kit never declared are all errors.
 
+### 6.1. Final container environment
+
+Capability configuration string values may reference `${{ kit.env.NAME }}`.
+`NAME` follows `[A-Za-z_][A-Za-z0-9_]*`; whitespace inside the braces is
+optional.
+This is the final **container** environment, not the host process's
+`os.Environ` and not only the values declared by Kits. Image defaults are
+composed first, create-argument `env` exports replace them, and explicit
+runtime environment overrides win last.
+
+Runtimes **MUST** expand these references at create, before strict <!-- tck: SPEC-v3 §6/env-expanded -->
+validation, capability selection, reconciliation, and the permission
+gate. It covers every configuration string value, including group members, but never map keys,
+capability types, source attribution, display metadata, or argument
+export names. Build inputs such as authored `contentFile` paths still
+resolve at publish; file bodies are not descriptor strings and are not
+expanded. The published descriptor remains unchanged. Persist the
+expanded descriptor and selection for restart; recreate resolves afresh.
+
+Environment values stay strings, including a whole-value reference such
+as `${{ kit.env.HOME }}`. Missing names are errors; an explicitly empty
+value is present. `$NAME`, `${NAME}`, and `~/` are literal to this pass.
+Expansion neither invokes a shell nor reads host environment variables.
+Inserted values are not templates: create-argument values and referenced
+environment values containing Kit placeholders are refused rather than
+recursively evaluated. Referenced environment values containing NUL are
+errors. Missing-name and expansion errors identify the
+variable or field without printing environment values.
+
+For example, a lifecycle file can use
+`path: "${{ kit.env.HOME }}/.config/tool/settings.json"`. The resolved
+path still has to satisfy the capability's absolute-path rule, and two
+paths that become identical still conflict. All declarations validate
+after expansion, including optional entries a selector would reject.
+
 ---
 
 ## 7. `capabilities`
@@ -564,7 +599,7 @@ ordinary top-level entries and to each group's members.
 All declarations MUST validate before selection, including skipped <!-- tck: SPEC-v3 §7.1.1/validate-declarations -->
 groups and every member.
 
-All declarations MUST validate again after create-argument expansion, <!-- tck: SPEC-v3 §7.1.1/validate-expanded-declarations -->
+All declarations MUST validate again after argument and environment expansion, <!-- tck: SPEC-v3 §7.1.1/validate-expanded-declarations -->
 including members of groups that selection would skip. Cross-entry
 constraints dependent on selection, including credential ownership and
 injection domains, are checked on the selected contributions and merged
