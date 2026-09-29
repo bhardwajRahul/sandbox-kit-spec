@@ -456,7 +456,10 @@ func preserveGroups(contributions []Contribution, opts MergeOptions) (*MergeResu
 		for i, item := range contribution.Descriptor.Capabilities {
 			source := &CapabilitySource{Kit: contribution.Reference, Path: fmt.Sprintf("capabilities[%d]", i)}
 			if item.Source != nil {
-				source = item.Source
+				*source = *item.Source
+				if source.Kit == "" {
+					source.Kit = contribution.Reference
+				}
 			}
 			if item.Group == nil {
 				member := item
@@ -472,6 +475,12 @@ func preserveGroups(contributions []Contribution, opts MergeOptions) (*MergeResu
 				for j := range g.Capabilities {
 					if g.Capabilities[j].Source == nil {
 						g.Capabilities[j].Source = &CapabilitySource{Kit: source.Kit, Path: fmt.Sprintf("%s.group.capabilities[%d]", source.Path, j)}
+					} else {
+						memberSource := *g.Capabilities[j].Source
+						if memberSource.Kit == "" {
+							memberSource.Kit = contribution.Reference
+						}
+						g.Capabilities[j].Source = &memberSource
 					}
 				}
 			}

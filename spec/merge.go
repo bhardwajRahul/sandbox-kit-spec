@@ -111,6 +111,11 @@ func Compose(contributions []Contribution) (*Descriptor, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A reconciled entry can represent several Kits. Keep their sources in
+	// the input declarations and diagnostics, not on the effective request.
+	for i := range result.Descriptor.Capabilities {
+		result.Descriptor.Capabilities[i].Source = nil
+	}
 	return result.Descriptor, nil
 }
 

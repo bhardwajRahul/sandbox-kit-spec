@@ -323,3 +323,73 @@ func TestSelectionIsolatesCallbackOutputsAndOriginals(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicationCompletesPathOnlySources(t *testing.T) {
+	for _, kit := range []string{"", "original-kit"} {
+		t.Run("source-kit="+kit, func(t *testing.T) {
+			ordinary := groupHook("ordinary")
+			ordinary.Source = &CapabilitySource{Kit: kit, Path: "capabilities[7]"}
+			member := groupHook("member")
+			member.Source = &CapabilitySource{Kit: kit, Path: "capabilities[8].group.capabilities[2]"}
+			d := &Descriptor{Kind: KindMixin, Capabilities: []Capability{ordinary, {
+				Source: &CapabilitySource{Kit: kit, Path: "capabilities[8]"},
+				Group:  &CapabilityGroup{Capabilities: []Capability{member, {Type: CapabilityVolume, Config: map[string]any{"path": "/cache"}}}},
+			}}}
+			before, err := json.Marshal(d)
+			require.NoError(t, err)
+			published, err := Merge([]Contribution{{Reference: "contributing-kit", Descriptor: d}}, MergeOptions{})
+			require.NoError(t, err)
+			wantKit := kit
+			if wantKit == "" {
+				wantKit = "contributing-kit"
+			}
+			for _, item := range published.Descriptor.Capabilities {
+				require.Equal(t, wantKit, item.Source.Kit)
+				for _, member := range item.Group.Capabilities {
+					require.Equal(t, wantKit, member.Source.Kit)
+				}
+			}
+			republished, err := Merge([]Contribution{{Reference: "published-set", Descriptor: published.Descriptor}}, MergeOptions{})
+			require.NoError(t, err)
+			selected, err := SelectCapabilities(republished.Descriptor, Supported(CapabilityLifecycle, CapabilityVolume))
+			require.NoError(t, err)
+			require.Equal(t, []CapabilitySource{{Kit: wantKit, Path: "capabilities[7]"}}, selected.Selected[0].MemberSources)
+			require.Equal(t, []CapabilitySource{
+				{Kit: wantKit, Path: "capabilities[8].group.capabilities[2]"},
+				{Kit: wantKit, Path: "capabilities[8].group.capabilities[1]"},
+			}, selected.Selected[1].MemberSources)
+			// Publication must neither fill nor alias the caller's source objects.
+			published.Descriptor.Capabilities[0].Source.Path = "changed"
+			published.Descriptor.Capabilities[1].Source.Path = "changed"
+			published.Descriptor.Capabilities[1].Group.Capabilities[0].Source.Path = "changed"
+			after, err := json.Marshal(d)
+			require.NoError(t, err)
+			require.JSONEq(t, string(before), string(after))
+			require.Equal(t, "capabilities[8]", republished.Descriptor.Capabilities[1].Source.Path)
+		})
+	}
+}
+
+func TestComposeOmitsSourcesFromEffectiveCapabilities(t *testing.T) {
+	for _, capability := range []Capability{
+		{Type: CapabilityVolume, Config: map[string]any{"path": "/cache"}},
+		{Type: CapabilityResources, Config: map[string]any{"cpus": 2}},
+	} {
+		t.Run(capability.Type, func(t *testing.T) {
+			capability.Source = &CapabilitySource{Kit: "original-kit", Path: "capabilities[7]"}
+			d := &Descriptor{Kind: KindMixin, Capabilities: []Capability{capability}}
+			inputs := []Contribution{{Reference: "first", Descriptor: d}}
+			if capability.Type == CapabilityVolume {
+				duplicate := capability
+				duplicate.Source = &CapabilitySource{Kit: "another-kit", Path: "capabilities[9]"}
+				inputs = append(inputs, Contribution{Reference: "second", Descriptor: &Descriptor{Kind: KindMixin, Capabilities: []Capability{duplicate}}})
+			}
+			merged, err := Compose(inputs)
+			require.NoError(t, err)
+			require.Len(t, merged.Capabilities, 1)
+			require.Nil(t, merged.Capabilities[0].Source)
+			require.Equal(t, capability.Config, merged.Capabilities[0].Config)
+			require.Equal(t, &CapabilitySource{Kit: "original-kit", Path: "capabilities[7]"}, d.Capabilities[0].Source)
+		})
+	}
+}
