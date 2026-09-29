@@ -154,7 +154,10 @@ capabilities)
 create)
   kits=()
   greeting=""
+  greeting_override=""
+  greeting_override_set=no
   group_path=/var/tmp/group-expanded
+  env_group_path=/var/tmp/env-group-expanded
   hostmode="readwrite"
   # The backing SSH agent available to this sandbox; empty when none is.
   offered_agent=""
@@ -165,7 +168,11 @@ create)
   while [ $# -gt 0 ]; do
     case "$1" in
     --arg)
-      case "$2" in greeting=*) greeting="${2#greeting=}" ;; group_path=*) group_path="${2#group_path=}" ;; esac
+      case "$2" in greeting=*) greeting="${2#greeting=}" ;; group_path=*) group_path="${2#group_path=}" ;; env_group_path=*) env_group_path="${2#env_group_path=}" ;; esac
+      shift 2
+      ;;
+    --env)
+      case "$2" in KIT_GREETING=*) greeting_override="${2#KIT_GREETING=}"; greeting_override_set=yes ;; esac
       shift 2
       ;;
     --reject-capability)
@@ -368,6 +375,12 @@ create)
   for kit in "${kits[@]}"; do
     case "$kit" in
     */groups-expanded)
+      if [ "$env_group_path" = relative ]; then
+        if [ "$broken" != group-invalid-env-expanded ] && { [ "$lifecycle_rejected" = no ] || [ "$broken" != group-skips-invalid-env-expanded ]; }; then
+          echo "groups-expanded capabilities[0].group.capabilities[0].config.files[1].path: must be absolute" >&2
+          exit 2
+        fi
+      fi
       if [ "$group_path" = relative ]; then
         if [ "$broken" != group-invalid-expanded ] && { [ "$lifecycle_rejected" = no ] || [ "$broken" != group-skips-invalid-expanded ]; }; then
           echo "groups-expanded capabilities[0].group.capabilities[0].config.files[0].path: must be absolute" >&2
@@ -620,6 +633,22 @@ create)
   done
   if [ -z "$records_env" ]; then rm -f "$dir/hook.env"; fi
   if [ "$broken" = "ignores-files" ]; then printf '%s' "" >"$dir/kit-written"; else printf '%s' "$greeting" >"$dir/kit-written"; fi
+  expanded_greeting="$greeting"
+  for kit in "${kits[@]}"; do
+    if [[ "$kit" == */files-image-env ]] && [ "$broken" != "drops-image-env-defaults" ]; then
+      expanded_greeting=image-greeting
+    fi
+  done
+  if [ "$greeting_override_set" = yes ] && [ "$broken" != "ignores-env-overrides" ]; then
+    if [ "$broken" != "drops-empty-env-overrides" ] || [ -n "$greeting_override" ]; then
+      expanded_greeting="$greeting_override"
+    fi
+  fi
+  if [ "$broken" = "ignores-env-expansion" ]; then
+    printf '%s' '${{ kit.env.KIT_GREETING }}' >"$dir/env-written"
+  else
+    printf '%s' "$expanded_greeting" >"$dir/env-written"
+  fi
   mkdir -p "$dir/volume"
   if [ "$hostmode" = "readonly" ]; then : >"$dir/host-skills-readonly"; fi
   # A co-composed kit widening the shared path to readwrite.
@@ -807,6 +836,7 @@ exec)
       ;;
     /var/tmp/skills-at-install) cat "$dir/skills-at-install" ;;
     /var/tmp/skills-rw-at-install) cat "$dir/skills-rw-at-install" ;;
+    /home/agent/.config/env-written) cat "$dir/env-written" ;;
     /home/agent/.config/kit-written) cat "$dir/kit-written" ;;
     /home/agent/AGENTS.md) cat "$dir/profile" ;;
     /home/sbxagent/AGENTS.md)

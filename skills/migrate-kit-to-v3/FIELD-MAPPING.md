@@ -345,12 +345,16 @@ that needs nothing from create time. Keep it a hook when:
   and says why. `examples/builder/builder.yaml` declares the proxy pair for
   exactly this reason.
 - `files[].onlyIfMissing: true` → `overwrite: false`.
-- `files[].content` expands `${{ kit.args.* }}` and nothing else; it gets no
-  runtime variable substitution. A v2 file whose content relied on a runtime
-  `${WORKDIR}` substitution must either keep the reference inside a script the
-  shell expands when it runs, or become an install hook that writes the file and
-  declares `env: [WORKSPACE_DIR]`. Prefer the hook. The variable is spelled
-  `WORKSPACE_DIR` in v3 hooks.
+- `files[].content` expands `${{ kit.args.* }}` and `${{ kit.env.* }}` at
+  create. Environment references use the final container environment:
+  composed image defaults, then argument exports, then runtime overrides.
+  This is string substitution, not shell evaluation; `$VAR`, `${VAR}`,
+  and `~/` remain literal in the file. For v2 `${WORKDIR}` substitution,
+  use `${{ kit.env.WORKSPACE_DIR }}` when the runtime supplies that
+  variable in the final environment. Missing variables are errors.
+  Otherwise, keep `$WORKSPACE_DIR` inside a script for the shell to
+  expand when it runs, or write the file from an install hook declaring
+  `env: [WORKSPACE_DIR]`. The v3 hook variable is `WORKSPACE_DIR`.
 - A v2 `startup[].background` carries over unchanged. The field is
   **startup-only** in v3 — `InstallHook` has no `background`, so strict
   decoding rejects it on an install hook rather than ignoring it.

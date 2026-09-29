@@ -224,3 +224,25 @@ func TestAgentSkillSourceIsKnownAtPublish(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentSkillEnvironmentExpansion(t *testing.T) {
+	d := &Descriptor{SchemaVersion: SchemaVersion, Kind: KindMixin, Capabilities: []Capability{
+		skillEntry("/usr/share/source", "${{ kit.env.SKILL_NAME }}"),
+		{Type: CapabilityAgentSkillsDirectory, Config: map[string]any{"path": "${{ kit.env.HOME }}/.example/skills"}},
+	}}
+	expanded, err := ExpandEnvironment(d, map[string]string{"SKILL_NAME": "review", "HOME": "/home/agent"})
+	require.NoError(t, err)
+	_, err = Validate(expanded)
+	require.NoError(t, err)
+	skills, err := AgentSkillRequestsOf(expanded.Capabilities)
+	require.NoError(t, err)
+	require.Equal(t, "review", AgentSkillName(skills[0].AgentSkill))
+	directories, err := AgentSkillsDirectoriesOf(expanded.Capabilities)
+	require.NoError(t, err)
+	require.Equal(t, "/home/agent/.example/skills", directories[0].Path)
+	d.Capabilities[0].Config["path"] = "${{ kit.env.HOME }}/source"
+	raw, err := json.Marshal(d)
+	require.NoError(t, err)
+	_, err = ValidatePublished(raw, d)
+	require.ErrorContains(t, err, "published skill source path must be literal")
+}

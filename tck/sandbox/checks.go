@@ -126,6 +126,7 @@ func installPhaseScoped(fixture string) func(context.Context, *Env) []report.Fin
 }
 
 var checks = append(gitIdentityChecks, []check{
+	{requirement: "SPEC-v3 §6/env-expanded", capability: capLifecycle, run: finalEnvironmentPrecedence},
 	{requirement: "ssh-agent@1/destination-keys-outside-sandbox", capability: capSSHAgent, run: sshAgentDestinationKeys},
 	{requirement: "ssh-agent@1/agent-reachable", capability: capSSHAgent, run: sshAgentReachable},
 	{requirement: "ssh-agent@1/operations-restricted", capability: capSSHAgent, run: sshAgentRestricted},
@@ -397,6 +398,14 @@ var checks = append(gitIdentityChecks, []check{
 			if body != "hello" {
 				return []report.Finding{report.Failf(
 					"declared file holds %q; the arg reference should have expanded to %q", body, "hello")}
+			}
+
+			body, f = execOutput(ctx, e, id, "cat", "/home/agent/.config/env-written")
+			if f != nil {
+				return []report.Finding{*f}
+			}
+			if body != "hello" {
+				return []report.Finding{report.Failf("final environment references did not expand in the declared file")}
 			}
 
 			// Whose it is, not only that it arrived: a declared file the

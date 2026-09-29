@@ -55,8 +55,8 @@ last client disconnecting declares [long-running@1](long-running@1.md).
 | `startup[].user` | string | optional. |
 | `startup[].background` | bool | Detach instead of blocking boot. |
 | `startup[].env` | list\<string\> | Same deny-by-default rule. |
-| `files[].path` | string | REQUIRED. Absolute. |
-| `files[].content` | string | File body. `${{ kit.args.* }}` expands at create; `$VAR` is left for the shell. |
+| `files[].path` | string | REQUIRED. Absolute after create-time expansion, including `${{ kit.env.HOME }}` from the final container environment ([§6.1](../../SPEC-v3.md#61-final-container-environment)). |
+| `files[].content` | string | File body. `${{ kit.args.* }}` and `${{ kit.env.* }}` expand at create; `$VAR` remains literal in the file. |
 | `files[].mode` | string | optional octal. |
 | `files[].overwrite` | bool | Default **true**. `false` skips the write when the file exists (e.g. state on a persistent volume). |
 | `interactive` | list\<string\> | Argv tail appended to the workload's launch command (image `Entrypoint` + `Cmd` is the headless mode) for an interactive (TTY) session. The image config's `Cmd` is single-valued, so the interactive variant has no native slot; it rides here because the engine consumes it like the hooks — behavior, not a grant. Meaningful on workload kits: the launch command it modifies is the workload's. |

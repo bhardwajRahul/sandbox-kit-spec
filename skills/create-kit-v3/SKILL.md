@@ -397,3 +397,15 @@ environment exports. Group names are display labels, not merge keys.
 Groups extend the unfinished schema-3 grammar in place. Descriptors
 using them require a reader implementing this extension; older strict
 readers reject them.
+
+## Final environment references
+
+Use `${{ kit.env.HOME }}` in capability configuration strings when a path
+depends on the final container environment. Image defaults compose first,
+argument `env` exports replace them, and runtime environment overrides win
+last. Expansion happens before validation and selection, including inside
+groups. Missing names fail; empty values remain empty. This is structural
+string substitution, not shell evaluation: `$HOME`, `${HOME}`, and `~/`
+are unchanged. Do not use environment references in mapping keys or Kit
+metadata, and do not pass Kit placeholders inside argument or environment
+values. Persist the expanded descriptor for restart.

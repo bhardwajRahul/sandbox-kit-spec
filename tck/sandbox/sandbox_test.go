@@ -206,6 +206,9 @@ var mutations = map[string][]string{
 	"bundle-drops-skip":          {"agent-skill@1/unavailable"},
 	"bundle-overwrites-existing": {"agent-skill@1/existing-conflict"},
 
+	"drops-image-env-defaults":                       {"SPEC-v3 §6/env-expanded"},
+	"ignores-env-overrides":                          {"SPEC-v3 §6/env-expanded"},
+	"drops-empty-env-overrides":                      {"SPEC-v3 §6/env-expanded"},
 	"ssh-agent-create-workload-forward-refused-sign": {"ssh-agent@1/signatures-bounded"},
 	"ssh-agent-restart-startup-forward-refused-sign": {"ssh-agent@1/signatures-bounded"},
 
@@ -300,6 +303,8 @@ var mutations = map[string][]string{
 	"drops-identity-skip-record":            {"git-identity@1/unavailable-refuses-required"},
 	"selects-unavailable-identity":          {"git-identity@1/unavailable-refuses-required"},
 	"selects-and-skips-identity":            {"git-identity@1/unavailable-refuses-required"},
+	"group-invalid-env-expanded":            {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
+	"group-skips-invalid-env-expanded":      {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
 	"group-invalid-expanded":                {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
 	"group-skips-invalid-expanded":          {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
 	"group-reselect-skipped-restart":        {"SPEC-v3 §7.1.1/lifetime"},
@@ -345,6 +350,7 @@ var mutations = map[string][]string{
 	"refuses-optional-long-running":     {"conformance.md §2.2/optional-long-running-accepted"},
 	"install-twice":                     {"lifecycle@1/install-once"},
 	"no-startup":                        {"lifecycle@1/startup-every-boot"},
+	"ignores-env-expansion":             {"lifecycle@1/files-written", "SPEC-v3 §6/env-expanded"},
 	"ignores-files":                     {"lifecycle@1/files-written"},
 	"writes-files-as-root":              {"lifecycle@1/files-written"},
 	"writes-files-read-only":            {"lifecycle@1/files-written"},

@@ -388,3 +388,98 @@ func TestAssembleRejectsWrongDiffIDEvenForCachedBlob(t *testing.T) {
 	require.Nil(t, result)
 	require.ErrorContains(t, err, "diff ID mismatch")
 }
+
+func TestAssembleExpandsFinalEnvironment(t *testing.T) {
+	for _, tc := range []struct {
+		name, exported, override, want string
+	}{
+		{"image default", "", "", "/home/image"},
+		{"argument export", "/home/argument", "", "/home/argument"},
+		{"runtime override", "/home/argument", "/home/runtime", "/home/runtime"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base, _ := assemblyFixture(t, spec.KindWorkload, "base", "base")
+			mixin, _ := assemblyFixture(t, spec.KindMixin, "tool", "tool")
+			base.Config.Config.Env = []string{"HOME=/home/image"}
+			bd := &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindWorkload}
+			if tc.exported != "" {
+				bd.Args = map[string]spec.Arg{"home": {Default: &tc.exported, Env: "HOME"}}
+			}
+			base.Descriptor = kitJSON(t, bd)
+			mixin.Descriptor = kitJSON(t, &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindMixin,
+				Capabilities: []spec.Capability{{Group: &spec.CapabilityGroup{Capabilities: []spec.Capability{
+					{Type: spec.CapabilityLifecycle, Config: map[string]any{"files": []any{map[string]any{
+						"path": "${{ kit.env.HOME }}/config", "content": "$HOME ${HOME} ~/",
+					}}}},
+				}}}},
+			})
+			original := append([]byte(nil), mixin.Descriptor...)
+			overrides := map[string]string{}
+			if tc.override != "" {
+				overrides["HOME"] = tc.override
+			}
+			calls := 0
+			result, err := Assemble(t.Context(), fixtureRequests(2), Options{Loader: fixtureLoader(base, mixin), Overrides: Overrides{Env: overrides},
+				CapabilitySelector: func(c spec.Capability) bool {
+					calls++
+					lc, err := spec.LifecycleOf([]spec.Capability{c})
+					require.NoError(t, err)
+					require.Equal(t, tc.want+"/config", lc.Files[0].Path)
+					overrides["HOME"] = "/mutated-by-selector"
+					return true
+				},
+			})
+			require.NoError(t, err)
+			require.Equal(t, 1, calls)
+			require.Equal(t, tc.want, result.Environment["HOME"])
+			lc, err := spec.LifecycleOf(result.Resolved.Descriptor.Capabilities)
+			require.NoError(t, err)
+			require.Equal(t, tc.want+"/config", lc.Files[0].Path)
+			require.Equal(t, "$HOME ${HOME} ~/", lc.Files[0].Content)
+			require.Equal(t, original, mixin.Descriptor)
+			require.Equal(t, []string{"HOME=/home/image"}, base.Config.Config.Env)
+		})
+	}
+}
+
+func TestAssembleEnvironmentErrorsBeforeSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		env    map[string]string
+		config map[string]any
+	}{
+		{"missing", nil, map[string]any{"path": "${{kit.env.HOME}}/cache"}},
+		{"relative path", map[string]string{"HOME": "private-relative-value"}, map[string]any{"path": "${{kit.env.HOME}}/cache"}},
+		{"string boolean", map[string]string{"HOME": "/home/user", "FLAG": "true"}, map[string]any{"path": "${{kit.env.HOME}}/cache", "tmpfs": "${{kit.env.FLAG}}"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base, _ := assemblyFixture(t, spec.KindWorkload, "base", "base")
+			base.Descriptor = kitJSON(t, &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindWorkload,
+				Capabilities: []spec.Capability{{Type: spec.CapabilityVolume, Optional: true, Config: tc.config}},
+			})
+			result, err := Assemble(t.Context(), fixtureRequests(1), Options{Loader: fixtureLoader(base), Overrides: Overrides{Env: tc.env},
+				CapabilitySelector: func(spec.Capability) bool { t.Fatal("selector called before validation"); return false },
+			})
+			require.Error(t, err)
+			require.Nil(t, result)
+			require.NotContains(t, err.Error(), "private-relative-value")
+		})
+	}
+}
+
+func TestAssembleEnvironmentExpansionDetectsFileConflict(t *testing.T) {
+	base, _ := assemblyFixture(t, spec.KindWorkload, "base", "base")
+	mixin, _ := assemblyFixture(t, spec.KindMixin, "tool", "tool")
+	for i, kit := range []*LoadedKit{base, mixin} {
+		kind := spec.KindMixin
+		if i == 0 {
+			kind = spec.KindWorkload
+		}
+		kit.Descriptor = kitJSON(t, &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: kind,
+			Capabilities: []spec.Capability{{Type: spec.CapabilityLifecycle, Config: map[string]any{"files": []any{map[string]any{"path": "${{kit.env.HOME}}/config", "content": "data"}}}}},
+		})
+	}
+	_, err := Assemble(t.Context(), fixtureRequests(2), Options{Loader: fixtureLoader(base, mixin), Overrides: Overrides{Env: map[string]string{"HOME": "/private-value"}}})
+	require.ErrorContains(t, err, "incompatible declarations")
+	require.NotContains(t, err.Error(), "/private-value")
+}

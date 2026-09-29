@@ -44,13 +44,14 @@ type Result struct {
 	Image    *assemble.Image
 	Resolved *Resolved
 	// Environment is the full image-default + arg-export + override snapshot.
-	// Values are literal; no shell or kit.env expansion is performed.
+	// Values are literal; kit.env references in capability configs use this snapshot.
 	Environment map[string]string
 	WorkingDir  string
 }
 
-// Assemble loads a closed set of OCI Kit references, resolves and selects
-// declarations, composes image metadata, and checks resolved filesystem collisions.
+// Assemble loads a closed set of OCI Kit references, composes image defaults,
+// expands and selects declarations using the final container environment, and
+// checks resolved filesystem collisions.
 // It does not publish blobs, create a container, or apply capabilities.
 // Image.Manifest and Image.WriteMetadata serialize consistent image metadata;
 // Environment and WorkingDir are applied separately at container creation.
@@ -64,6 +65,7 @@ func Assemble(ctx context.Context, requests []Request, options Options) (*Result
 	if err := validateOverrides(options.Overrides); err != nil {
 		return nil, err
 	}
+	options.Overrides.Env = maps.Clone(options.Overrides.Env)
 	if options.Loader == nil {
 		client, err := New(WithDockerCredentials())
 		if err != nil {
@@ -96,8 +98,46 @@ func Assemble(ctx context.Context, requests []Request, options Options) (*Result
 		kits = append(kits, kit)
 		args = append(args, maps.Clone(request.Args))
 	}
+	var image *assemble.Image
+	err := progressStep(ctx, options.OnProgress, Progress{Stage: StageCompose}, func() error {
+		// Assembly asks for pinned image references, while the retained inputs are
+		// indexed by consumption reference so two tags never silently share metadata.
+		units, err := Units(kits)
+		if err != nil {
+			return err
+		}
+		// Image composition depends on Kit relationships, not capability
+		// selection. The final image environment is needed to select requests.
+		for _, unit := range units {
+			unit.Descriptor.Capabilities = nil
+		}
+		inputs := make(map[string]assemble.Input, len(units))
+		for _, kit := range units {
+			input := loaded[kit.Reference]
+			inputs[kit.Image] = assemble.Input{Manifest: input.Manifest, Config: input.Config}
+		}
+		image, err = assemble.Assemble(ctx, units, func(_ context.Context, ref string) (assemble.Input, error) {
+			input, ok := inputs[ref]
+			if !ok {
+				return assemble.Input{}, fmt.Errorf("image %s was not loaded", ref)
+			}
+			return input, nil
+		})
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	environment := make(map[string]string)
+	for _, entry := range image.Config.Config.Env {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok || key == "" || strings.ContainsRune(entry, '\x00') {
+			return nil, fmt.Errorf("assemble: malformed image environment entry")
+		}
+		environment[key] = value
+	}
 	var resolved *Resolved
-	err := progressStep(ctx, options.OnProgress, Progress{Stage: StageResolve}, func() error {
+	err = progressStep(ctx, options.OnProgress, Progress{Stage: StageResolve}, func() error {
 		selector := options.CapabilitySelector
 		if selector == nil {
 			selector = spec.Supported(spec.KnownCapabilities()...)
@@ -108,32 +148,10 @@ func Assemble(ctx context.Context, requests []Request, options Options) (*Result
 				return false
 			}
 			return selector(c)
-		}))
+		}), WithEnvironment(environment, options.Overrides.Env))
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	var image *assemble.Image
-	err = progressStep(ctx, options.OnProgress, Progress{Stage: StageCompose}, func() error {
-		// Assembly asks for pinned image references, while the retained inputs are
-		// indexed by consumption reference so two tags never silently share metadata.
-		inputs := make(map[string]assemble.Input, len(resolved.Kits))
-		for _, kit := range resolved.Kits {
-			input := loaded[kit.Reference]
-			inputs[kit.Image] = assemble.Input{Manifest: input.Manifest, Config: input.Config}
-		}
-		var err error
-		image, err = assemble.Assemble(ctx, resolved.Kits, func(_ context.Context, ref string) (assemble.Input, error) {
-			input, ok := inputs[ref]
-			if !ok {
-				return assemble.Input{}, fmt.Errorf("image %s was not loaded", ref)
-			}
-			return input, nil
-		})
 		return err
 	})
 	if err != nil {
@@ -148,14 +166,6 @@ func Assemble(ctx context.Context, requests []Request, options Options) (*Result
 	})
 	if err != nil {
 		return nil, err
-	}
-	environment := make(map[string]string)
-	for _, entry := range image.Config.Config.Env {
-		key, value, ok := strings.Cut(entry, "=")
-		if !ok || key == "" || strings.ContainsRune(entry, '\x00') {
-			return nil, fmt.Errorf("assemble: malformed image environment entry")
-		}
-		environment[key] = value
 	}
 	maps.Copy(environment, resolved.ContainerEnv)
 	maps.Copy(environment, options.Overrides.Env)
@@ -257,7 +267,7 @@ type Stage string
 
 const (
 	StageLoad Stage = "load"
-	// StageResolve includes arg expansion, declaration validation, atomic
+	// StageResolve includes arg and environment expansion, validation, atomic
 	// capability selection, and validation of the composed descriptor.
 	StageResolve    Stage = "resolve"
 	StageCompose    Stage = "compose"

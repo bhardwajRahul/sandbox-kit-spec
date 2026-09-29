@@ -529,6 +529,9 @@ func validateCapabilityBlock(d *Descriptor) error {
 	invalidCredentials := map[int]bool{}
 	for i, n := range needs {
 		path := fmt.Sprintf("capabilities[%d]", i)
+		if _, keys := environmentReferences(n.Config); keys {
+			errs.add(fieldErrorf(path+".config", "environment references are not allowed in mapping keys"))
+		}
 		if n.Source != nil && n.Source.Path == "" {
 			errs.add(fieldErrorf(path+".source.path", "source path is required"))
 		}
@@ -575,7 +578,7 @@ func validateCapabilityBlock(d *Descriptor) error {
 			phaseConfig := Capability{Type: n.Type, Config: map[string]any{"phase": n.Config["phase"]}}
 			if DecodeCapabilityConfig(phaseConfig, &phaseOnly) == nil {
 				for _, phase := range phaseOnly.Phase {
-					if ContainsArgRef(phase) {
+					if ContainsArgRef(phase) || ContainsEnvRef(phase) {
 						continue
 					}
 					if prev, dup := seenSSHAgent[phase]; dup && prev != i {
@@ -1022,7 +1025,7 @@ func validatePresenceRules(path string, i int, n Capability) error {
 }
 
 // capabilityIsParameterized reports whether the entry's config references
-// a kit arg anywhere in its (canonical-JSON) rendering.
+// a Kit argument or environment value in its canonical JSON rendering.
 func capabilityIsParameterized(n Capability) bool {
 	if len(n.Config) == 0 {
 		return false
@@ -1031,7 +1034,8 @@ func capabilityIsParameterized(n Capability) bool {
 	if err != nil {
 		return false
 	}
-	return ContainsArgRef(string(data))
+	values, _ := environmentReferences(n.Config)
+	return ContainsArgRef(string(data)) || values
 }
 
 // validateCredentialNeed decodes and checks one credential entry.

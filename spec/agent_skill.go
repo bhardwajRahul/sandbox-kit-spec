@@ -120,7 +120,7 @@ func validatePublishedSkillPaths(items []Capability, prefix string) error {
 		if c.Group != nil {
 			errs.add(validatePublishedSkillPaths(c.Group.Capabilities, field+".group.capabilities"))
 		} else if c.Type == CapabilityAgentSkill {
-			if source, ok := c.Config["path"].(string); ok && ContainsArgRef(source) {
+			if source, ok := c.Config["path"].(string); ok && (ContainsArgRef(source) || ContainsEnvRef(source)) {
 				errs.add(fieldErrorf(field+".config.path", "published skill source path must be literal; use a build-phase argument for image content"))
 			}
 		}

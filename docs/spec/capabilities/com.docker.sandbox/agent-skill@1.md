@@ -23,8 +23,8 @@ composed agent's skill directories. A workload or a mixin can supply it.
 
 The published source `path` **MUST** be literal. <!-- tck: agent-skill@1/source-literal -->
 Build-phase arguments may choose it while authoring; create-phase
-arguments cannot, because artifact validation checks the source before
-a sandbox exists. The destination name may still be chosen at create.
+arguments and `kit.env` references cannot, because artifact validation
+checks the source before a sandbox exists. The destination name may still be chosen at create.
 
 The effective name **MUST** match `[A-Za-z0-9][A-Za-z0-9._-]*` and be at most 255 bytes. <!-- tck: agent-skill@1/name-valid -->
 This portable component cannot escape the discovery directory. An explicit
