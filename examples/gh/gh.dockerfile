@@ -7,11 +7,11 @@ FROM nixos/nix:2.35.2 AS build
 WORKDIR /src
 # The pinned commit in the input URL is the version authority, and the
 # descriptor's `provides` reports what it resolves to. Pin a full commit
-# hash — a branch name would float. This one is the nixos-25.05 release
+# hash — a branch name would float. This one is the nixos-unstable
 # branch head at the time of writing.
 COPY <<'EOF' flake.nix
 {
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/93fb0b35924f318ea6464f981d0fb7ea669d0bd8";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/7a0f122f5090cf4c2ade2a13a0e229d4e19ba71f";
   outputs = { self, nixpkgs }:
     let
       forAll = f: nixpkgs.lib.genAttrs [ "x86_64-linux" "aarch64-linux" ]
