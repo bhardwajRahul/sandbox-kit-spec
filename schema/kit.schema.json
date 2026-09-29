@@ -621,28 +621,6 @@
               }
             }
           }
-        },
-        {
-          "if": {
-            "properties": {
-              "type": {
-                "const": "com.docker.sandbox/agent-skills-directory@1"
-              }
-            },
-            "required": [
-              "type"
-            ]
-          },
-          "then": {
-            "required": [
-              "config"
-            ],
-            "properties": {
-              "config": {
-                "$ref": "capabilities/com.docker.sandbox/agent-skills-directory@1.schema.json"
-              }
-            }
-          }
         }
       ]
     },

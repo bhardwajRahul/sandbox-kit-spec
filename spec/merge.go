@@ -697,12 +697,6 @@ func (m *capabilityMerge) instanceKey(reference string, n Capability) (string, e
 			return "", err
 		}
 		return n.Type + "\x00" + AgentSkillName(s), nil
-	case CapabilityAgentSkillsDirectory:
-		var s AgentSkillsDirectory
-		if err := decodeForMerge(reference, n, &s); err != nil {
-			return "", err
-		}
-		return n.Type + "\x00" + s.Path, nil
 	case CapabilityAgentSkills:
 		var s AgentSkills
 		if err := decodeForMerge(reference, n, &s); err != nil {

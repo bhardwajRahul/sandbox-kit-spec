@@ -2,7 +2,7 @@
 schemaVersion: "3"
 kind: mixin
 displayName: Optional agent skills
-description: Marks the store as optional, so skipping an unprovidable entry instead of refusing is observable
+description: An optional discovery destination remains selected even when host sharing is off
 capabilities:
   - type: com.docker.sandbox/agent-skills@1
     optional: true

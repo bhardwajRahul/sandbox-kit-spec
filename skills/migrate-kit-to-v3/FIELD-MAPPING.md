@@ -469,13 +469,12 @@ image directory containing `SKILL.md` and supporting files. Its basename
 becomes the directory name in the agent's skill store, unless `config.name`
 overrides it. The entry's `name` is still only a display label.
 
-Declare `agent-skills-directory@1` on the agent-bearing Kit to identify its
-discovery directory. This is independent of `agent-skills@1`, which requests
-host-shared content. All selected destinations receive all selected bundled
-skills; directory assembly is a runtime concern. A required bundled skill
-without a destination fails, and conflicting effective names cannot silently
-replace one another. These new types leave the existing host-store contract
-unchanged.
+Declare `agent-skills@1` on the agent-bearing Kit to identify its discovery
+directory. The runtime links or otherwise exposes every selected
+`agent-skill@1` bundle at every selected path. The same declaration permits
+host-shared content when available and enabled; there is no separate
+directory capability. A required bundled skill without a destination
+fails, and conflicting effective names cannot silently replace one another.
 
 ### agent-skills@1
 
@@ -483,12 +482,11 @@ Only where the v2 kit already declares or documents the agent's skills
 directory. Do not invent a path. `mode` defaults to `readonly`, and the
 effective access is the narrower of the host's setting and the kit's.
 
-A kit that *names* a skills directory still does not necessarily want this
-capability: it asks the host to **mount** its store at that path, so where the
-path holds content the kit itself ships — a skill pack baked into the image,
-registered command symlinks — the mount would shadow exactly what the kit
-exists to deliver. Declare it for a directory the agent reads from, not for one
-the kit writes to.
+Missing or empty host skills, or disabled host sharing, do not make this
+request unsatisfiable, even when required. Bundled skills remain available
+independently of host sharing. Keep bundled source directories separate
+from discovery paths and declare them with `agent-skill@1`; the runtime
+combines the sources while honoring access bounds and collision rules.
 
 ### Do not add on speculation
 

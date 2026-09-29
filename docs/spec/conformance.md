@@ -64,7 +64,7 @@ An adapter **MUST NOT** require interactive input.
 | Verb | Arguments | stdout | Purpose |
 |---|---|---|---|
 | `capabilities` | — | one capability type per line | What the runtime claims to implement |
-| `create` | `<kit-ref>…`, zero or more `--arg name=value` and `--env name=value`, at most one `--skills-host-mode readonly\|off`, at most one `--ssh-agent <socket>`, at most one `--ssh-known-hosts <file>`, at most one `--git-identity-config <absolute-path>\|off` | one sandbox id | Compose the Kit set and start it |
+| `create` | `<kit-ref>…`, zero or more `--arg name=value` and `--env name=value`, at most one `--skills-host-mode readonly\|off`, at most one `--skills-host-store missing\|empty`, at most one `--ssh-agent <socket>`, at most one `--ssh-known-hosts <file>`, at most one `--git-identity-config <absolute-path>\|off` | one sandbox id | Compose the Kit set and start it |
 | `exec` | `<id> -- <argv>…` | the command's stdout | Run a command inside |
 | `stop` | `<id>` | — | Stop without discarding state |
 | `start` | `<id>` | — | Start a stopped sandbox |
@@ -191,7 +191,7 @@ anything:
 |---|---|
 | `KIT_TCK_HOST_SENTINEL` | A host-side value. A runtime that leaks its own environment into a lifecycle hook leaks this with it, which is how "a hook sees only its declared env" is judged. The adapter does nothing with it beyond letting it be inherited. The suite also decorates baseline variables in the adapter's environment — `TERM`, `HOSTNAME`, `OLDPWD`, `SHLVL`, and `_` carry the sentinel, and `PATH` gains a sentinel component — so a runtime copying a host baseline value into a hook is caught by the same scan; baseline values must derive from the image and sandbox. `HOME` and `PWD` are both: they point through a sentinel-named symlink to the real home, functional for credential helpers and relative paths while still betraying host provenance when copied. |
 | `KIT_TCK_BOUND_SECRET` | The secret the adapter **MUST** bind for the fixture credential service `kit-tck`. The container **MUST NOT** see this value; a proxy-managed credential with a declared name presents a sentinel in that variable, and an inject-only credential (no name) presents nothing at all. |
-| `KIT_TCK_SKILL_NAME` | A skill the adapter **MUST** place in the host's shared skills store before the first `create`, when it claims `com.docker.sandbox/agent-skills@1`. The capability permits no mount when the store is empty or skills are off, so without a known entry the suite cannot tell a mounted store from an empty directory. Before the create rather than before the claim: `capabilities` observes nothing and writes nothing, and a query that seeded a user's store would leave an entry behind on every run that asked what a runtime implements. |
+| `KIT_TCK_SKILL_NAME` | A skill the adapter **MUST** place in the host's shared skills store for each `create` without `--skills-host-store`, when it claims `com.docker.sandbox/agent-skills@1`. The capability permits no mount when the store is empty or skills are off, so without a known entry the suite cannot tell a mounted store from an empty directory. Before the create rather than before the claim: `capabilities` observes nothing and writes nothing, and a query that seeded a user's store would leave an entry behind on every run that asked what a runtime implements. |
 
 An adapter claiming `com.docker.sandbox/agent-skills@1` **MUST** default
 skills to their **most permissive** setting. Access is the narrower of the
@@ -203,11 +203,24 @@ to anyone.
 The host's half is judged separately: when `create` carries
 `--skills-host-mode`, the adapter **MUST** arrange that host setting for
 that sandbox — `readonly` withholds write however much a Kit asked for,
-and `off` withholds the store, which for a required entry means the
-runtime refuses the create, while an optional entry is skipped and the
-sandbox starts without the mount. Without this input the suite could never
-observe host-side narrowing at all. The store the suite uses is its own; a
+and `off` withholds only the host store. Required and optional
+`agent-skills@1` destinations remain selected, and the sandbox starts
+without the host mount. Selected `agent-skill@1` bundles still appear at
+those paths. Without this input the suite could never observe host-side
+narrowing at all. The store the suite uses is its own; a
 runtime **SHOULD NOT** point these fixtures at a store a user depends on.
+
+Store availability is independent of sharing policy. For a `create` with
+`--skills-host-store missing`, the adapter **MUST** arrange a nonexistent
+host store directory; `empty` **MUST** arrange an existing directory with
+no entries. These overrides suppress the marker seeding for that create,
+not host sharing: the suite leaves sharing enabled to exercise the
+runtime's missing/empty-store handling separately from its off setting.
+The adapter **MUST** use isolated test state and preserve existing host
+content, keep the isolated store until that sandbox is removed, and
+restore the ordinary seeded store for subsequent creates without the
+flag. Both required and optional discovery destinations remain selected,
+and selected bundled skills remain available in either scenario.
 
 The workload fixture declares its working directory as
 `/home/agent/workspace`, and the suite reads the agent-context profile

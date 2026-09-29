@@ -164,7 +164,7 @@ func SurfaceOf(d *Descriptor) Surface {
 			// anything; they are not permission surface.
 		case CapabilityLongRunning:
 			// Session-independent lifetime grants no access across the boundary.
-		case CapabilityAgentSkill, CapabilityAgentSkillsDirectory:
+		case CapabilityAgentSkill:
 			// Bundled instructions expose only content already carried by the image.
 		case CapabilityAgentSessions, CapabilityLifecycle, CapabilityAgentContext, CapabilitySbx:
 			// Content-trust declarations, not grants: session verbs,

@@ -136,8 +136,7 @@ often got wrong:
 | `git-identity@1` | commits attributed to the runtime-provided user | Config-less; requests only user.name and user.email, not a configuration-source mount. Requires permission; optional when missing identity is tolerable. Signing/authentication are separate grants. |
 | `sbx@1` | "launch this as an agent" | Workload-only, config-less — and enforced: a mixin declaring it fails validation. |
 | `agent-skill@1` | one bundled skill | `path` names the image directory containing `SKILL.md` and supporting files. The basename is the discovery name unless `config.name` overrides it; the entry-level `name` remains only a display label. |
-| `agent-skills-directory@1` | where an agent discovers bundled skills | Declare on the agent workload or agent mixin. Every selected directory receives every selected bundled skill. This grants no host-store access. |
-| `agent-skills@1` | the host's shared skills store | Only where the agent really reads skills from that path, and never where the kit ships content there — the mount would hide it. |
+| `agent-skills@1` | where an agent discovers skills | Declare on the agent workload or agent mixin. The runtime links or otherwise exposes every selected `agent-skill@1` bundle here, and includes host-shared skills when available and enabled. Missing host skills never block startup; `mode` bounds host-store access only. |
 | `port@1`, `resources@1`, `privileged@1` | inbound ports, limits, elevation | Do not declare on speculation; `privileged@1` is the largest widening available. |
 
 ## Bundled skills
@@ -150,11 +149,14 @@ use a build-phase argument if it varies. Supporting scripts and references retai
 relative paths. An optional `config.name` overrides the source basename
 at discovery destinations; it does not rename or rewrite the source.
 
-Agent Kits declare `agent-skills-directory@1` at their discovery paths.
-Keep `agent-skills@1` separate: it asks for the host's shared store.
-Runtime assembly of these sources is implementation-specific. Different
-source paths claiming one effective name conflict at composition, and an
-existing destination entry makes a skill request unsatisfiable. Without
+Agent Kits declare `agent-skills@1` at their discovery paths. The runtime
+links or otherwise exposes every selected `agent-skill@1` bundle at each
+path, even when the host store is missing, empty, or disabled. The same
+declaration permits host sharing when available, bounded by `mode` and
+host policy; no second directory declaration is needed. Runtime assembly
+of these sources is implementation-specific. Different source paths
+claiming one effective name conflict at composition, and an existing
+destination entry makes a skill request unsatisfiable. Without
 any selected destination, a required skill request fails; optional
 requests are skipped and recorded. Registration does not execute scripts.
 

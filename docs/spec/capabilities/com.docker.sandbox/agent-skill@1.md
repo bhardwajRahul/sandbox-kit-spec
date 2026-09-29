@@ -5,7 +5,8 @@ composed agent's skill directories. A workload or a mixin can supply it.
 
 - **Shape**: instance — keyed by effective skill name.
 - **Permission surface**: no — image content on the entrypoint's trust
-  plane. Host-shared skills remain a separate `agent-skills@1` request.
+  plane. Host sharing is governed by the destination
+  `agent-skills@1` declaration and host policy.
 
 ## Config
 
@@ -48,9 +49,10 @@ expects. The source directory itself may have a different name.
 ## Runtime behavior
 
 Agent-bearing Kits declare destinations with
-[agent-skills-directory@1](agent-skills-directory@1.md). Selected paths
-union across the composition, including agent mixins. Host store access
-is not required to expose bundled content.
+[agent-skills@1](agent-skills@1.md). Selected paths
+union across the composition, including agent mixins. A missing, empty,
+or disabled host store does not prevent bundled content from being
+exposed.
 
 A conforming runtime:
 

@@ -11,12 +11,11 @@ import (
 )
 
 const (
-	capAgentSkill           = spec.CapabilityAgentSkill
-	capAgentSkillsDirectory = spec.CapabilityAgentSkillsDirectory
-	fixtureBundledSkill     = "bundled-skill"
-	fixtureBundledOptional  = "bundled-optional"
-	fixtureBundledReader    = "bundled-reader"
-	fixtureBundledExisting  = "bundled-existing"
+	capAgentSkill          = spec.CapabilityAgentSkill
+	fixtureBundledSkill    = "bundled-skill"
+	fixtureBundledOptional = "bundled-optional"
+	fixtureBundledReader   = "bundled-reader"
+	fixtureBundledExisting = "bundled-existing"
 )
 
 func bundledProbe(ctx context.Context, e *Env, id, mode, want string) []report.Finding {
@@ -35,7 +34,6 @@ func bundledObservation(mode, want string, shared bool) func(context.Context, *E
 		kits := []string{fixtureBundledReader, fixtureBundledSkill}
 		opts := adapter.CreateOptions{SkillsHostMode: "off"}
 		if shared {
-			kits = append(kits, fixtureSkills, fixtureSkillsRW)
 			opts.SkillsHostMode = "readonly"
 		}
 		id, cleanup, err := e.sandboxWith(ctx, kits, opts)
@@ -93,7 +91,7 @@ func bundledUnavailable(ctx context.Context, e *Env) []report.Finding {
 }
 
 func bundledHostConflict(ctx context.Context, e *Env) []report.Finding {
-	id, cleanup, err := e.sandboxWith(ctx, []string{fixtureBundledReader, "bundled-host-conflict", fixtureSkills}, adapter.CreateOptions{SkillsHostMode: "readonly"})
+	id, cleanup, err := e.sandboxWith(ctx, []string{fixtureBundledReader, "bundled-host-conflict"}, adapter.CreateOptions{SkillsHostMode: "readonly"})
 	cleanup()
 	var refused *adapter.RefusedError
 	if !errors.As(err, &refused) {
@@ -113,13 +111,74 @@ func bundledConflict(ctx context.Context, e *Env) []report.Finding {
 }
 
 var bundledSkillChecks = []check{
-	{requirement: "agent-skill@1/host-conflict", capability: capAgentSkill, needs: []string{capAgentSkillsDirectory, capAgentSkills}, run: bundledHostConflict},
-	{requirement: "agent-skill@1/exposed", capability: capAgentSkill, needs: []string{capAgentSkillsDirectory}, run: bundledObservation("exposed", "ready\n", false)},
-	{requirement: "agent-skill@1/before-launch", capability: capAgentSkill, needs: []string{capAgentSkillsDirectory}, run: bundledObservation("launch", "ready\n", false)},
-	{requirement: "agent-skill@1/no-execution", capability: capAgentSkill, needs: []string{capAgentSkillsDirectory}, run: bundledObservation("no-execution", "clean\n", false)},
+	{requirement: "agent-skills@1/host-store-missing", capability: capAgentSkills, run: skillsWithoutStore("missing")},
+	{requirement: "agent-skills@1/host-store-empty", capability: capAgentSkills, run: skillsWithoutStore("empty")},
+	{requirement: "agent-skills@1/bundled-with-missing-store", capability: capAgentSkills, needs: []string{capAgentSkill}, run: bundledWithoutStore("missing")},
+	{requirement: "agent-skills@1/bundled-with-empty-store", capability: capAgentSkills, needs: []string{capAgentSkill}, run: bundledWithoutStore("empty")},
+	{requirement: "agent-skill@1/host-conflict", capability: capAgentSkill, needs: []string{capAgentSkills}, run: bundledHostConflict},
+	{requirement: "agent-skill@1/exposed", capability: capAgentSkill, needs: []string{capAgentSkills}, run: bundledObservation("exposed", "ready\n", false)},
+	{requirement: "agent-skill@1/before-launch", capability: capAgentSkill, needs: []string{capAgentSkills}, run: bundledObservation("launch", "ready\n", false)},
+	{requirement: "agent-skill@1/no-execution", capability: capAgentSkill, needs: []string{capAgentSkills}, run: bundledObservation("no-execution", "clean\n", false)},
 	{requirement: "agent-skill@1/unavailable", capability: capAgentSkill, run: bundledUnavailable},
-	{requirement: "agent-skill@1/existing-conflict", capability: capAgentSkill, needs: []string{capAgentSkillsDirectory}, run: bundledConflict},
-	{requirement: "agent-skills-directory@1/destination", capability: capAgentSkillsDirectory, needs: []string{capAgentSkill, capAgentSkills}, run: bundledObservation("exposed", "ready\n", true)},
+	{requirement: "agent-skill@1/existing-conflict", capability: capAgentSkill, needs: []string{capAgentSkills}, run: bundledConflict},
+	{requirement: "agent-skills@1/destination", capability: capAgentSkills, needs: []string{capAgentSkill}, run: bundledObservation("exposed", "ready\n", true)},
 }
 
 func init() { checks = append(checks, bundledSkillChecks...) }
+
+// No host content must not erase the destination from capability selection.
+func skillsWithoutHost(fixture, path string, opts adapter.CreateOptions) func(context.Context, *Env) []report.Finding {
+	return func(ctx context.Context, e *Env) []report.Finding {
+		id, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, fixture}, opts)
+		if err != nil {
+			return []report.Finding{report.Failf("host skills are unavailable, but the skills destination must remain available: %v", err)}
+		}
+		defer cleanup()
+		res, err := e.Adapter.Exec(ctx, id, "ls", path)
+		if err != nil {
+			return []report.Finding{report.Failf("probe host store: %v", err)}
+		}
+		if res.ExitCode == 0 && listsExactly(res.Stdout, SkillName) {
+			return []report.Finding{report.Failf("host skills are unavailable, but shared skills are visible at %s", path)}
+		}
+		state, err := e.Adapter.Selection(ctx, id)
+		if err != nil {
+			return []report.Finding{report.Failf("read skills selection: %v", err)}
+		}
+		matches := func(r spec.SelectionRecord) bool {
+			return r.Source != nil && (r.Source.Kit == fixture || r.Source.Kit == e.Fixtures(fixture)) && r.Source.Path == "capabilities[0]"
+		}
+		for _, r := range state.Selection.Skipped {
+			if matches(r) {
+				return []report.Finding{report.Failf("host skills are unavailable, but the skills destination must not be skipped")}
+			}
+		}
+		for _, r := range state.Selection.Selected {
+			if matches(r) {
+				return nil
+			}
+		}
+		return []report.Finding{report.Failf("skills destination missing from selected capabilities")}
+	}
+}
+
+// Exercise both selection forms without requiring bundled-skill support.
+func skillsWithoutStore(store string) func(context.Context, *Env) []report.Finding {
+	return func(ctx context.Context, e *Env) []report.Finding {
+		opts := adapter.CreateOptions{SkillsHostStore: store}
+		findings := skillsWithoutHost(fixtureSkills, skillsReadOnlyPath, opts)(ctx, e)
+		return append(findings, skillsWithoutHost(fixtureSkillsOptional, "/home/agent/.kit-tck/skills-opt", opts)(ctx, e)...)
+	}
+}
+
+func bundledWithoutStore(store string) func(context.Context, *Env) []report.Finding {
+	return func(ctx context.Context, e *Env) []report.Finding {
+		id, cleanup, err := e.sandboxWith(ctx, []string{fixtureBundledReader, fixtureBundledSkill}, adapter.CreateOptions{SkillsHostStore: store})
+		if err != nil {
+			return []report.Finding{report.Failf("create with %s host store: %v", store, err)}
+		}
+		defer cleanup()
+		findings := bundledProbe(ctx, e, id, "exposed", "ready\n")
+		return append(findings, bundledProbe(ctx, e, id, "launch", "ready\n")...)
+	}
+}

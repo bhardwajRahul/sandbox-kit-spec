@@ -522,7 +522,6 @@ func validateCapabilityBlock(d *Descriptor) error {
 	seenVolume := map[string]int{}
 	seenSkills := map[string]int{}
 	seenBundledSkills := map[string]int{}
-	seenSkillDirectories := map[string]int{}
 	seenPort := map[string]int{}
 
 	deferCrossChecks := false
@@ -676,16 +675,13 @@ func validateCapabilityBlock(d *Descriptor) error {
 				errs.add(fieldErrorf(path+".config.path", "capabilities[%d]: volume for %q already declared at capabilities[%d]", i, v.Path, prev))
 			}
 			seenVolume[v.Path] = i
-		case CapabilityAgentSkill, CapabilityAgentSkillsDirectory:
+		case CapabilityAgentSkill:
 			key, err := validateBundledSkill(path, n)
 			if err != nil {
 				errs.add(err)
 				continue
 			}
 			seen := seenBundledSkills
-			if n.Type == CapabilityAgentSkillsDirectory {
-				seen = seenSkillDirectories
-			}
 			if prev, dup := seen[key]; dup {
 				errs.add(fieldErrorf(path+".config", "%s %q already declared at capabilities[%d]", n.Type, key, prev))
 			}
