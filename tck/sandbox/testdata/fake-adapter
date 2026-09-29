@@ -345,8 +345,9 @@ create)
     if [ "$broken" = corrupts-git-identity ]; then echo wrong >"$dir/git-identity"; fi
   fi
   if [ -n "$identity_config" ] && [ "$identity_config" != off ]; then printf '%s' "$identity_config" >"$dir/git-source"; fi
-  cat "$dir/git-identity" "$dir/git-identity" >"$dir/git-hooks"
-  if [ "$broken" = late-git-identity ]; then echo missing >"$dir/git-hooks"; fi
+  cp "$dir/git-identity" "$dir/git-install"
+  cp "$dir/git-identity" "$dir/git-startup"
+  if [ "$broken" = late-git-identity ]; then echo missing >"$dir/git-startup"; fi
   if [ "$broken" != git-identity-after-launch ]; then
     cp "$dir/git-identity" "$dir/git-workload"
   fi
@@ -525,8 +526,9 @@ exec)
     case "$2" in
     defaults) cat "$dir/git-identity" ;;
     workload-identity) cat "$dir/git-workload" ;;
-    hooks) cat "$dir/git-hooks" ;;
-    clear-hooks) rm -f "$dir/git-hooks" ;;
+    hooks) cat "$dir/git-install" "$dir/git-startup" ;;
+    startup-hook) cat "$dir/git-startup" ;;
+    clear-hooks) rm -f "$dir/git-startup" ;;
     absent)
       test "$(head -1 "$dir/git-identity")" = 'Image Author'
       test "$(tail -1 "$dir/git-identity")" = image@example.invalid
@@ -860,9 +862,10 @@ selection-policy)
   ;;
 
 recreate)
+  rm -f "$state/$1/git-install" "$state/$1/git-startup"
   if [ "$broken" != skips-identity-recreate-hook ]; then
-    cat "$state/$1/git-identity" "$state/$1/git-identity" >"$state/$1/git-hooks"
-    if [ "$broken" = late-identity-recreate-hook ]; then echo missing >"$state/$1/git-hooks"; fi
+    cp "$state/$1/git-identity" "$state/$1/git-startup"
+    if [ "$broken" = late-identity-recreate-hook ]; then echo missing >"$state/$1/git-startup"; fi
   fi
   if [ "$broken" = rereads-identity-on-recreate ] && [ -f "$state/$1/git-source" ]; then
     git config --file "$(cat "$state/$1/git-source")" --get user.name >"$state/$1/git-identity"
@@ -890,8 +893,8 @@ recreate)
 start)
   dir="$state/$1"
   if [ "$broken" != skips-identity-restart-hook ]; then
-    cat "$dir/git-identity" "$dir/git-identity" >"$dir/git-hooks"
-    if [ "$broken" = late-identity-restart-hook ]; then echo missing >"$dir/git-hooks"; fi
+    cp "$dir/git-identity" "$dir/git-startup"
+    if [ "$broken" = late-identity-restart-hook ]; then echo missing >"$dir/git-startup"; fi
   fi
   if [ "$broken" = loses-git-identity-on-start ]; then echo missing >"$dir/git-identity"; fi
   if [ -f "$dir/group-rejected" ]; then

@@ -40,7 +40,7 @@ func TestGitIdentityChecksAndMutations(t *testing.T) {
 					for _, operation := range []string{"restart", "recreate"} {
 						if strings.HasSuffix(broken, "identity-"+operation+"-hook") {
 							require.Len(t, findings, 1)
-							require.Contains(t, findings[0].Detail, operation+": probe hooks:")
+							require.Contains(t, findings[0].Detail, operation+": probe startup-hook:")
 						}
 					}
 					if strings.HasPrefix(broken, "identity-skip-") {
@@ -96,6 +96,22 @@ func TestGitIdentityProbe(t *testing.T) {
 		t.Helper()
 		require.NoError(t, os.WriteFile(config, []byte(content), 0600))
 	}
+	// Recreation discards install output; only startup is observed again.
+	install := filepath.Join(root, "git-identity-install")
+	startup := filepath.Join(root, "git-identity-startup")
+	require.NoError(t, os.WriteFile(install, []byte("install\n"), 0600))
+	require.NoError(t, os.WriteFile(startup, []byte("startup\n"), 0600))
+	capture, captureErr := run("sh", probe, "hooks")
+	require.NoError(t, captureErr)
+	require.Equal(t, "install\nstartup\n", string(capture))
+	require.NoError(t, os.Remove(install))
+	capture, captureErr = run("sh", probe, "startup-hook")
+	require.NoError(t, captureErr)
+	require.Equal(t, "startup\n", string(capture))
+	_, captureErr = run("sh", probe, "clear-hooks")
+	require.NoError(t, captureErr)
+	_, captureErr = run("sh", probe, "startup-hook")
+	require.Error(t, captureErr)
 	guestAlias := "\n[alias]\n kit-tck-guest = status\n"
 	put("[user]\n name = Image Author\n email = image@example.invalid\n" + guestAlias)
 	out, err := run("sh", probe, "absent")

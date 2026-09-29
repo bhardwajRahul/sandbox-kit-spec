@@ -204,7 +204,7 @@ func gitIdentityBeforeHooks(ctx context.Context, e *Env) []report.Finding {
 			if err := operation.run(ctx, id); err != nil {
 				return []report.Finding{report.Failf("%s: %v", operation.name, err)}
 			}
-			if findings := gitIdentityOutput(ctx, e, id, "hooks", want); len(findings) != 0 {
+			if findings := gitIdentityOutput(ctx, e, id, "startup-hook", gitIdentityName+"\n"+gitIdentityEmail+"\n"); len(findings) != 0 {
 				for i := range findings {
 					findings[i].Detail = operation.name + ": " + findings[i].Detail
 				}

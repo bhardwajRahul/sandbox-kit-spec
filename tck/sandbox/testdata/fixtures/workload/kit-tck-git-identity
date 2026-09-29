@@ -39,6 +39,9 @@ only)
 clear-hooks)
   rm -f "$HOME/git-identity-startup"
   ;;
+startup-hook)
+  cat "$HOME/git-identity-startup"
+  ;;
 hooks)
   cat "$HOME/git-identity-install" "$HOME/git-identity-startup"
   ;;
