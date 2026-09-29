@@ -188,8 +188,8 @@ create)
         ;;
       *long-running-workload*) ;;
       *long-running*) need="com.docker.sandbox/long-running@1" ;;
-      *ssh-agent-optional*) ;;
-      *ssh-agent*) need="com.docker.sandbox/ssh-agent@1" ;;
+      */ssh-agent-optional) ;;
+      */ssh-agent | */ssh-agent-install | */ssh-agent-bounded) need="com.docker.sandbox/ssh-agent@1" ;;
       *skills-optional* | *scoped-egress*) ;;
       # Before the *context* arm, whose name this fixture also carries
       # through its own agent-context profile.
@@ -231,13 +231,13 @@ create)
   agent_config='{"phase":"runtime"}'
   for kit in "${kits[@]}"; do
     case "$kit" in
-    *ssh-agent-install*) agent_phase=install agent_required=1 agent_config='{"phase":"install"}' ;;
-    *ssh-agent-optional*) agent_phase=runtime ;;
-    *ssh-agent-bounded*)
+    */ssh-agent-install) agent_phase=install agent_required=1 agent_config='{"phase":"install"}' ;;
+    */ssh-agent-optional) agent_phase=runtime ;;
+    */ssh-agent-bounded)
       agent_phase=runtime agent_required=1
       agent_config='{"phase":"runtime","unrestricted":false,"sign":["git"],"authenticate":["git@kit-tck.example"]}'
       ;;
-    *ssh-agent*) agent_phase=runtime agent_required=1 ;;
+    */ssh-agent) agent_phase=runtime agent_required=1 ;;
     esac
   done
   if [ -n "$agent_required" ] && [ -z "$offered_agent" ] && [ "$broken" != "ssh-agent-accepts-without-agent" ]; then

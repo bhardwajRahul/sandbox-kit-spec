@@ -34,6 +34,23 @@ func runAgainstFake(t *testing.T, broken string) report.Report {
 	return rep
 }
 
+func TestFakeSSHAgentMatchesFixtureNotParentPath(t *testing.T) {
+	for _, claims := range []string{capSSHAgent, groupVolume} {
+		t.Run(claims, func(t *testing.T) {
+			a := adapter.New(filepath.Join("testdata", "fake-adapter"))
+			a.Env = []string{
+				"KIT_TCK_FAKE_STATE=" + t.TempDir(),
+				"KIT_TCK_FAKE_CLAIMS=" + claims,
+				"KIT_TCK_FAKE_BROKEN=",
+			}
+			kit := filepath.Join(t.TempDir(), "ssh-agent-checkout", "workload")
+			id, err := a.Create(t.Context(), []string{kit}, adapter.CreateOptions{})
+			require.NoError(t, err, "the checkout name must not require an SSH agent for a plain workload")
+			require.NotEmpty(t, id)
+		})
+	}
+}
+
 // The reason unclaimed capabilities skip at all: a runtime implementing
 // one capability well is conforming for that claim. Its checks must run
 // and pass while everything else skips — not fail because a fixture
