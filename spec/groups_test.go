@@ -79,7 +79,7 @@ func TestSelectCapabilitiesAtomicAndOrdered(t *testing.T) {
 	items := []Capability{groupHook("before"), {Group: &CapabilityGroup{Name: "feature", Optional: true, Capabilities: []Capability{{Type: "com.example/feature@1"}, groupHook("inside")}}},
 		{Group: &CapabilityGroup{Name: "feature", Capabilities: []Capability{{Type: CapabilityVolume, Config: map[string]any{"path": "/data"}}}}}}
 	var calls []string
-	selected, err := SelectCapabilities(items, func(c Capability) bool { calls = append(calls, c.Type); return c.Type != "com.example/feature@1" })
+	selected, err := SelectCapabilities(&Descriptor{Kind: KindWorkload, Capabilities: items}, func(c Capability) bool { calls = append(calls, c.Type); return c.Type != "com.example/feature@1" })
 	require.NoError(t, err)
 	require.Len(t, calls, 4, "all members evaluated for rejection diagnostics")
 	require.Len(t, selected.Capabilities, 2)
@@ -90,12 +90,12 @@ func TestSelectCapabilitiesAtomicAndOrdered(t *testing.T) {
 	surface := SurfaceOf(&Descriptor{Capabilities: selected.Capabilities})
 	require.Equal(t, []string{"/data"}, surface.StoragePaths)
 	require.Empty(t, surface.Services)
-	accepted, err := SelectCapabilities(items, Supported(CapabilityLifecycle, CapabilityVolume, "com.example/feature@1"))
+	accepted, err := SelectCapabilities(&Descriptor{Kind: KindWorkload, Capabilities: items}, Supported(CapabilityLifecycle, CapabilityVolume, "com.example/feature@1"))
 	require.NoError(t, err)
 	require.Len(t, accepted.Capabilities, 4)
 	require.Equal(t, CapabilityLifecycle, accepted.Capabilities[2].Type)
 	items[1].Group.Optional = false
-	refused, err := SelectCapabilities(items, Supported(CapabilityLifecycle, CapabilityVolume))
+	refused, err := SelectCapabilities(&Descriptor{Kind: KindWorkload, Capabilities: items}, Supported(CapabilityLifecycle, CapabilityVolume))
 	require.ErrorContains(t, err, "capabilities[1].group.capabilities[0]")
 	require.Len(t, refused.Skipped, 1)
 	require.Len(t, items[1].Group.Capabilities, 2, "selection does not mutate declarations")
@@ -106,11 +106,37 @@ func TestSelectionValidatesBeforeCallingRuntime(t *testing.T) {
 		{Type: CapabilityVolume, Config: map[string]any{"path": "relative"}},
 		{Type: CapabilityPort, Config: map[string]any{"container": "${{ kit.args.port }}"}},
 	} {
-		_, err := SelectCapabilities([]Capability{{Group: &CapabilityGroup{Optional: true, Capabilities: []Capability{c}}}}, func(Capability) bool { t.Fatal("invalid declarations must not reach runtime selection"); return false })
+		_, err := SelectCapabilities(&Descriptor{Kind: KindWorkload, Capabilities: []Capability{{Group: &CapabilityGroup{Optional: true, Capabilities: []Capability{c}}}}}, func(Capability) bool { t.Fatal("invalid declarations must not reach runtime selection"); return false })
 		require.Error(t, err)
 	}
 	_, err := SelectCapabilities(nil, nil)
 	require.Error(t, err)
+}
+
+func TestSelectionValidatesDescriptorKindBeforePolicy(t *testing.T) {
+	for _, member := range []Capability{
+		{Type: CapabilityAgentContext, Config: map[string]any{"filename": "AGENTS.md"}},
+		{Type: CapabilitySbx},
+	} {
+		for _, grouped := range []bool{false, true} {
+			item := member
+			if grouped {
+				item = Capability{Group: &CapabilityGroup{Optional: true, Capabilities: []Capability{member}}}
+			}
+			d := &Descriptor{Kind: KindMixin, Capabilities: []Capability{item}}
+			_, err := SelectCapabilities(d, func(Capability) bool {
+				t.Fatal("invalid mixin declaration reached runtime policy")
+				return false
+			})
+			require.ErrorContains(t, err, "workload")
+			d.Kind = KindWorkload
+			selected, err := SelectCapabilities(d, Supported(member.Type))
+			require.NoError(t, err)
+			require.Len(t, selected.Capabilities, 1)
+		}
+	}
+	_, err := SelectCapabilities(nil, Supported())
+	require.ErrorContains(t, err, "no descriptor")
 }
 
 func TestSelectedCompositionAndPublishedOrder(t *testing.T) {
@@ -130,7 +156,7 @@ func TestSelectedCompositionAndPublishedOrder(t *testing.T) {
 			selector := func(c Capability) bool { return accept || c.Type != "com.example/feature@1" }
 			var direct []Contribution
 			for _, input := range inputs {
-				selection, err := SelectCapabilities(input.Descriptor.Capabilities, selector)
+				selection, err := SelectCapabilities(input.Descriptor, selector)
 				require.NoError(t, err)
 				d := *input.Descriptor
 				d.Capabilities = selection.Capabilities
@@ -138,7 +164,7 @@ func TestSelectedCompositionAndPublishedOrder(t *testing.T) {
 			}
 			merged, err := Compose(direct)
 			require.NoError(t, err)
-			selection, err := SelectCapabilities(decoded.Capabilities, selector)
+			selection, err := SelectCapabilities(decoded, selector)
 			require.NoError(t, err)
 			effective := *decoded
 			effective.Capabilities = selection.Capabilities
@@ -163,7 +189,7 @@ func TestPublishPreservesConditionalContext(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.ContextSources, 2)
 	require.NotEqual(t, result.ContextSources[0].Target, result.ContextSources[1].Target)
-	selection, err := SelectCapabilities(result.Descriptor.Capabilities, Supported(CapabilityAgentContext))
+	selection, err := SelectCapabilities(result.Descriptor, Supported(CapabilityAgentContext))
 	require.NoError(t, err)
 	require.Len(t, selection.Capabilities, 1)
 	require.Equal(t, "/set/context.md.parts/0.md", selection.Capabilities[0].Config["contentFile"])
@@ -174,7 +200,7 @@ func TestPublishPreservesConditionalContext(t *testing.T) {
 func TestGroupConflictNamesOriginalSources(t *testing.T) {
 	file := Capability{Type: CapabilityLifecycle, Config: map[string]any{"files": []any{map[string]any{"path": "/same", "content": "x"}}}}
 	d := &Descriptor{Kind: KindMixin, Capabilities: []Capability{file, {Group: &CapabilityGroup{Capabilities: []Capability{file}}}}}
-	selected, err := SelectCapabilities(d.Capabilities, Supported(CapabilityLifecycle))
+	selected, err := SelectCapabilities(d, Supported(CapabilityLifecycle))
 	require.NoError(t, err)
 	d.Capabilities = selected.Capabilities
 	_, err = Compose([]Contribution{{Reference: "source", Descriptor: d}})
@@ -190,7 +216,7 @@ func TestSelectedContextBodiesRemainSeparate(t *testing.T) {
 	}
 	_, err := AgentContextsOf(items)
 	require.Error(t, err)
-	selected, err := SelectCapabilities(items, Supported(CapabilityAgentContext))
+	selected, err := SelectCapabilities(&Descriptor{Kind: KindWorkload, Capabilities: items}, Supported(CapabilityAgentContext))
 	require.NoError(t, err)
 	bodies, err := AgentContextsOf(selected.Capabilities)
 	require.NoError(t, err)
@@ -205,7 +231,7 @@ func TestGroupContextConflictRetainsOriginalMemberLocations(t *testing.T) {
 	}}
 	published, err := Merge([]Contribution{{Reference: "original-kit", Descriptor: d}}, MergeOptions{})
 	require.NoError(t, err)
-	selected, err := SelectCapabilities(published.Descriptor.Capabilities, Supported(CapabilityAgentContext))
+	selected, err := SelectCapabilities(published.Descriptor, Supported(CapabilityAgentContext))
 	require.NoError(t, err)
 	effective := *published.Descriptor
 	effective.Capabilities = selected.Capabilities
@@ -245,7 +271,7 @@ func TestSelectionIsolatesCallbackOutputsAndOriginals(t *testing.T) {
 					item.Optional = true
 				}
 				var callbackCopy Capability
-				selection, err := SelectCapabilities([]Capability{item}, func(c Capability) bool {
+				selection, err := SelectCapabilities(&Descriptor{Kind: KindWorkload, Capabilities: []Capability{item}}, func(c Capability) bool {
 					callbackCopy = c
 					mutate(c)
 					return accept

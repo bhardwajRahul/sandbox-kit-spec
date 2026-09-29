@@ -324,7 +324,7 @@ func mergeKits(kits []*Kit, args []map[string]string, partial bool, opts ...Reso
 	contributions := make([]spec.Contribution, 0, len(ordered))
 	for i, u := range ordered {
 		original := originals[u.Reference]
-		selected, err := spec.SelectCapabilities(u.Descriptor.Capabilities, options.selector)
+		selected, err := spec.SelectCapabilities(u.Descriptor, options.selector)
 		if err != nil {
 			return nil, spec.WithSource(err, u.Reference, original.Raw)
 		}

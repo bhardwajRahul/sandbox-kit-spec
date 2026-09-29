@@ -282,20 +282,26 @@ func ValidateExpandedDeclarations(raw []byte, d *Descriptor) ([]string, error) {
 	return ValidateEffective(raw, &cp)
 }
 
-// SelectCapabilities validates before calling the selector and flattens only
-// wholly selected constructs. A nil selector is an error, never allow-all.
+// SelectCapabilities validates declarations in their actual descriptor context
+// before calling the selector and flattens only wholly selected constructs.
+// A nil descriptor or selector is an error, never an implicit default.
 // Required rejection returns records alongside the error for diagnostics.
 // Callback inputs, selected capabilities, and source records do not share
 // mutable configuration or provenance with the original declarations.
-func SelectCapabilities(items []CapabilityItem, selectCapability SelectCapability) (Selection, error) {
+func SelectCapabilities(d *Descriptor, selectCapability SelectCapability) (Selection, error) {
 	var result Selection
 	if selectCapability == nil {
 		return result, fmt.Errorf("select capabilities: no selector")
 	}
-	d := &Descriptor{Kind: KindWorkload, Capabilities: items, declarationsOnly: true}
-	if err := validateCapabilityEntries(d); err != nil {
+	if d == nil {
+		return result, fmt.Errorf("select capabilities: no descriptor")
+	}
+	cp := *d
+	cp.declarationsOnly = true
+	if _, err := Validate(&cp); err != nil {
 		return result, err
 	}
+	items := d.Capabilities
 	for _, c := range DeclaredCapabilities(items) {
 		if capabilityIsParameterized(c) {
 			return result, fmt.Errorf("select capabilities: %s still contains unresolved arguments", c.Type)

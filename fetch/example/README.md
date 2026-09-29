@@ -131,6 +131,11 @@ For runtime selection, pass
 expanded config and apply host policy. The default accepts types known
 to this library; it does not inspect host availability.
 
+For already loaded descriptors, use
+`spec.SelectCapabilities(descriptor, selector)`. Selection receives the
+whole descriptor so it can validate kind-specific rules before invoking
+policy, including workload-only capabilities and context profiles.
+
 Persist `Resolved.Descriptor` and `Resolved.Selections` with the sandbox
 and reuse that selection on restart. `Resolved.Kits` contains
 only selected, unmerged contributions; `Selections` retains the original
