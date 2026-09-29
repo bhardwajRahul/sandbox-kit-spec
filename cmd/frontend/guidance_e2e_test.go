@@ -31,6 +31,7 @@ func TestGuidanceBuildsEndToEnd(t *testing.T) {
 		descriptor string
 		file       string
 		args       []string
+		grouped    bool
 	}{
 		{
 			name:       "literal",
@@ -40,12 +41,14 @@ func TestGuidanceBuildsEndToEnd(t *testing.T) {
 		{name: "default", descriptor: guidanceDescriptor, file: "notes-en.md"},
 		{name: "override", descriptor: guidanceDescriptor, file: "notes-fr.md", args: []string{"--build-arg", "file=notes-fr.md"}},
 		{name: "nested", descriptor: guidanceDescriptor, file: "fr/notes.md", args: []string{"--build-arg", "file=fr/notes.md"}},
+		{name: "grouped-descriptor-name", descriptor: groupedGuidanceDescriptor, file: "kit.yaml", grouped: true},
+		{name: "grouped-recipe-name", descriptor: groupedGuidanceDescriptor, file: "kit.dockerfile", grouped: true, args: []string{"--build-arg", "file=kit.dockerfile"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			e := &e2e{t: t, builder: e.builder}
 			dir := t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "demo.yaml"), []byte("# syntax="+frontend+"\n"+tt.descriptor), 0o644))
-			for _, file := range []string{"notes-en.md", "notes-fr.md", "fr/notes.md"} {
+			for _, file := range []string{"notes-en.md", "notes-fr.md", "fr/notes.md", "kit.yaml", "kit.dockerfile"} {
 				name := filepath.Join(dir, "docs", file)
 				require.NoError(t, os.MkdirAll(filepath.Dir(name), 0o755))
 				require.NoError(t, os.WriteFile(name, []byte("Guidance from "+file+".\n"), 0o644))
@@ -63,10 +66,14 @@ func TestGuidanceBuildsEndToEnd(t *testing.T) {
 			for _, artifact := range artifacts {
 				d, err := spec.Decode([]byte(artifact.Annotations()[spec.AnnotationDescriptor]))
 				require.NoError(t, err)
-				ac, err := spec.AgentContextOf(d.Capabilities)
+				ac, err := spec.AgentContextOf(spec.DeclaredCapabilities(d.Capabilities))
 				require.NoError(t, err)
 				require.NotNil(t, ac)
-				require.Equal(t, "/usr/share/sandbox/kit/demo/"+path.Base(tt.file), ac.ContentFile)
+				expectedRoot := "/usr/share/sandbox/kit/demo/"
+				if tt.grouped {
+					expectedRoot += "context-0/"
+				}
+				require.Equal(t, expectedRoot+path.Base(tt.file), ac.ContentFile)
 
 				body, present, err := artifact.ReadFile(t.Context(), ac.ContentFile)
 				require.NoError(t, err)

@@ -28,6 +28,8 @@ var anchorPattern = regexp.MustCompile(`<!-- tck: (.+?) -->`)
 // judges several statements, and one statement is often judged from
 // several angles.
 var covers = map[string][]string{
+	"SPEC-v3 §7.1.1/conflicts":        {"lifecycle@1/shared-paths-avoided"},
+	"SPEC-v3 §7.1.1/atomic-selection": {"SPEC-v3 §7.1.1/order", "SPEC-v3 §7.1.1/provenance"},
 	// Reading the staged body behind the profile's reference judges what
 	// the profile is; full progressive semantics are waived until a
 	// fixture can observe them.
@@ -88,6 +90,8 @@ var kitCovers = map[string][]string{
 	// set that was never merged describes layers it does not have.
 	"descriptor-valid": {
 		"long-running@1/no-config",
+		"SPEC-v3 §7.1.1/group-grammar",
+		"SPEC-v3 §7.1.1/validate-declarations",
 		"SPEC-v3 §9.2/versioned-provides",
 		"SPEC-v3 §3.4/set-kind-never-published",
 	},
@@ -150,6 +154,9 @@ var kitCovers = map[string][]string{
 // with its reason. A waiver is a decision, not a gap: it is reviewed like
 // any other line, and removing one is how coverage grows.
 var waived = map[string]string{
+	"SPEC-v3 §7.1.1/selection-before-application": "the adapter exposes only final files, records, and grants, not an effect trace during selection; effects applied before selection and then rolled back cannot be observed",
+	"SPEC-v3 §7.1.1/conflicts-before-application": "a refused create returns no sandbox ID and the adapter exposes no failed-create effect trace; the suite can observe conflict refusal but cannot inspect files or hooks applied before that refusal",
+	"SPEC-v3 §7.1.1/publishing":                   "publisher ordering, provenance, and separate conditional context staging are judged by spec group publication tests and frontend end-to-end tests; the runtime adapter cannot compare original build inputs with the published artifact",
 	// SPEC-v3: composition is the resolver's contract, judged by the
 	// resolve package's own tests; the gate is host UX over surface
 	// diffs, judged by the spec package's tests; authoring rules are the
@@ -213,7 +220,6 @@ var waived = map[string]string{
 	// Kit-author obligations bind kit authors, not the runtime under
 	// test; there is no runtime behavior to probe.
 	"lifecycle@1/startup-idempotent-authors": "kit-author obligation, not runtime behavior",
-	"lifecycle@1/shared-paths-avoided":       "kit-author obligation, not runtime behavior",
 	"privileged@1/description-says-why":      "kit-author obligation, not runtime behavior",
 	"resources@1/workload-owns-declaration":  "kit-author obligation, not runtime behavior",
 	"agent-context@1/content-neutralized":    "SHOULD; neutralization has no reliable in-sandbox symptom",

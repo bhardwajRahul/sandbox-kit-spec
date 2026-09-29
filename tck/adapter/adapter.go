@@ -60,6 +60,9 @@ func (a *Adapter) Capabilities(ctx context.Context) ([]string, error) {
 
 // CreateOptions shape one create call beyond the kit set itself.
 type CreateOptions struct {
+	// RejectCapabilities arranges false selector answers for these types.
+	RejectCapabilities []string
+
 	// Args are kit argument overrides, passed as --arg name=value.
 	Args map[string]string
 
@@ -75,6 +78,9 @@ type CreateOptions struct {
 // Create composes a kit set into a running sandbox and returns its id.
 func (a *Adapter) Create(ctx context.Context, kits []string, opts CreateOptions) (string, error) {
 	argv := append([]string{"create"}, kits...)
+	for _, typ := range opts.RejectCapabilities {
+		argv = append(argv, "--reject-capability", typ)
+	}
 	if opts.SkillsHostMode != "" {
 		argv = append(argv, "--skills-host-mode", opts.SkillsHostMode)
 	}

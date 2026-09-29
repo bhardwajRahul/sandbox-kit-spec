@@ -77,10 +77,12 @@ func (r *Resolution) Ordered() []*Unit {
 }
 
 // Resolve validates the closed set and derives its composition order.
+// Capabilities must already be selected and flattened; use Dependencies
+// to order declarations that still contain groups before selection.
 // Every violation in the set is reported, not just the first: the caller
 // assembled the set by hand and deserves the full picture in one pass.
 func Resolve(units []*Unit) (*Resolution, error) {
-	return resolve(units, false)
+	return resolve(units, false, true)
 }
 
 // ResolvePartial is Resolve for a set that does not have to be runnable:
@@ -97,10 +99,17 @@ func Resolve(units []*Unit) (*Resolution, error) {
 // The returned Resolution's Workload is nil for a partial set, so
 // Ordered() yields the mixins alone.
 func ResolvePartial(units []*Unit) (*Resolution, error) {
-	return resolve(units, true)
+	return resolve(units, true, true)
 }
 
-func resolve(units []*Unit, partial bool) (*Resolution, error) {
+// Dependencies validates Kit relationships and derives declaration order before
+// capability selection. Capability coherence is checked on selected entries by
+// Resolve/ResolvePartial or spec.Compose, never on rejected contributions.
+func Dependencies(units []*Unit, partial bool) (*Resolution, error) {
+	return resolve(units, partial, false)
+}
+
+func resolve(units []*Unit, partial, capabilities bool) (*Resolution, error) {
 	if len(units) == 0 {
 		return nil, fmt.Errorf("resolve: empty kit set")
 	}
@@ -118,7 +127,16 @@ func resolve(units []*Unit, partial bool) (*Resolution, error) {
 	workload := checkOneWorkload(units, addProblem, partial)
 	provides := providesIndex(units, addProblem)
 	checkOneProviderPerName(provides, addProblem)
-	checkOneCredentialOwner(units, addProblem)
+	if capabilities {
+		for _, u := range units {
+			for i, c := range u.Descriptor.Capabilities {
+				if c.Group != nil {
+					addProblem("%s capabilities[%d]: select groups before capability-coherent resolution; use Dependencies to order declarations before selection", u.Reference, i)
+				}
+			}
+		}
+		checkOneCredentialOwner(units, addProblem)
+	}
 	checkRequires(units, provides, addProblem)
 	checkIntegrates(units, provides, addProblem)
 	checkConflicts(units, provides, addProblem)

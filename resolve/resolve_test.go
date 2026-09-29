@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -452,4 +453,34 @@ func TestTopologicalKeepsTheWorkloadInGraphOrder(t *testing.T) {
 		"layers: the workload is the filesystem the overlay lands on")
 	require.Equal(t, []*Unit{node, workload}, r.Topological(),
 		"declarations: the provider the workload requires comes first")
+}
+
+func TestCapabilityResolutionRequiresSelectedGroups(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		for _, optional := range []bool{false, true} {
+			t.Run(fmt.Sprintf("partial=%t/optional=%t", partial, optional), func(t *testing.T) {
+				credential := spec.Capability{Type: spec.CapabilityCredential, Config: map[string]any{"service": "github.com", "phase": "runtime"}}
+				grouped := unit("grouped", spec.KindMixin, func(d *spec.Descriptor) {
+					d.Capabilities = []spec.Capability{{Group: &spec.CapabilityGroup{Optional: optional, Capabilities: []spec.Capability{credential}}}}
+				})
+				ordinary := unit("ordinary", spec.KindMixin, func(d *spec.Descriptor) { d.Capabilities = []spec.Capability{credential} })
+				units := []*Unit{grouped, ordinary}
+				resolveSelected := ResolvePartial
+				if !partial {
+					units = append(units, unit("base", spec.KindWorkload))
+					resolveSelected = Resolve
+				}
+				_, err := Dependencies(units, partial)
+				require.NoError(t, err)
+				_, err = resolveSelected(units)
+				require.ErrorContains(t, err, "grouped capabilities[0]: select groups")
+				grouped.Descriptor.Capabilities = []spec.Capability{credential}
+				_, err = resolveSelected(units)
+				require.ErrorContains(t, err, "one credential, one owner")
+				grouped.Descriptor.Capabilities = nil
+				_, err = resolveSelected(units)
+				require.NoError(t, err)
+			})
+		}
+	}
 }

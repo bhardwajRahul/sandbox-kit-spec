@@ -1,0 +1,15 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+args:
+  group_path:
+    default: /var/tmp/group-expanded
+capabilities:
+  - group:
+      optional: true
+      capabilities:
+        - type: com.docker.sandbox/lifecycle@1
+          config:
+            files:
+              - path: "${{ kit.args.group_path }}"
+                content: selected

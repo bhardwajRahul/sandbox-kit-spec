@@ -72,7 +72,7 @@ func CapabilityWithConfig(n Capability, config any) (*Capability, error) {
 func CapabilityTypes(capabilities []Capability) string {
 	seen := make(map[string]bool, len(capabilities))
 	types := make([]string, 0, len(capabilities))
-	for _, c := range capabilities {
+	for _, c := range DeclaredCapabilities(capabilities) {
 		if seen[c.Type] {
 			continue
 		}
@@ -372,4 +372,25 @@ func AgentSessionsOf(needs []Capability) (*AgentSessions, error) {
 		return &a, nil
 	}
 	return nil, nil
+}
+
+// AgentContextsOf reads all selected context contributions of one Kit. Unlike
+// AgentContextOf (for an effective singleton), it retains separate bodies from
+// selected groups for contributor-specific runtime guidance handlers.
+func AgentContextsOf(capabilities []Capability) ([]AgentContext, error) {
+	var result []AgentContext
+	for _, c := range capabilities {
+		if c.Group != nil {
+			return nil, fmt.Errorf("agent contexts: select groups first")
+		}
+		if c.Type != CapabilityAgentContext {
+			continue
+		}
+		var context AgentContext
+		if err := DecodeCapabilityConfig(c, &context); err != nil {
+			return nil, err
+		}
+		result = append(result, context)
+	}
+	return result, nil
 }

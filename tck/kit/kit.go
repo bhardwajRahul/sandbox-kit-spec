@@ -505,37 +505,42 @@ var checks = []check{
 		name:        "agent-context-staged",
 		requirement: "agent-context@1",
 		run: func(ctx context.Context, s *state) []report.Finding {
-			ac, err := spec.AgentContextOf(s.descriptor.Capabilities)
-			if err != nil || ac == nil || ac.ContentFile == "" {
-				return nil
-			}
-			if s.stem == "" {
-				return skip("no staged kit root to resolve the context against")
-			}
-			// Beside this kit's own sources, not merely somewhere under
-			// the root: pointing at another kit's directory would make the
-			// body something this artifact does not carry.
-			own := path.Join(StagedKitRoot, s.stem) + "/"
-			clean := path.Clean(ac.ContentFile)
-			if !strings.HasPrefix(clean, own) || clean != ac.ContentFile {
-				return fail("published contentFile is %q; publishing rewrites it to a path directly under %s", ac.ContentFile, own)
-			}
-			// The staged descriptor and recipe paths are reserved: a
-			// contentFile claiming one would collide with what staging
-			// itself writes, and the file existing proves the collision
-			// rather than the context. Only the two direct source paths
-			// collide — a nested docs/kit.yaml is an ordinary name. The
-			// frontend refuses this at build; the shared rule has to
-			// refuse it for artifacts the frontend never saw.
-			if clean == own+stagedDescriptorName || clean == own+stagedRecipeName {
-				return fail("contentFile %q is reserved for staged kit sources", clean)
-			}
-			present, err := hasFile(ctx, s.artifact, ac.ContentFile)
-			if err != nil {
-				return fail("read staged context: %v", err)
-			}
-			if !present {
-				return fail("contentFile points at %q, which the image does not carry", ac.ContentFile)
+			for _, entry := range spec.DeclaredCapabilities(s.descriptor.Capabilities) {
+				ac, err := spec.AgentContextOf([]spec.Capability{entry})
+				if err != nil {
+					return fail("decode context: %v", err)
+				}
+				if ac == nil || ac.ContentFile == "" {
+					continue
+				}
+				if s.stem == "" {
+					return skip("no staged kit root to resolve the context against")
+				}
+				// Beside this kit's own sources, not merely somewhere under
+				// the root: pointing at another kit's directory would make the
+				// body something this artifact does not carry.
+				own := path.Join(StagedKitRoot, s.stem) + "/"
+				clean := path.Clean(ac.ContentFile)
+				if !strings.HasPrefix(clean, own) || clean != ac.ContentFile {
+					return fail("published contentFile is %q; publishing rewrites it to a path directly under %s", ac.ContentFile, own)
+				}
+				// The staged descriptor and recipe paths are reserved: a
+				// contentFile claiming one would collide with what staging
+				// itself writes, and the file existing proves the collision
+				// rather than the context. Only the two direct source paths
+				// collide — a nested docs/kit.yaml is an ordinary name. The
+				// frontend refuses this at build; the shared rule has to
+				// refuse it for artifacts the frontend never saw.
+				if clean == own+stagedDescriptorName || clean == own+stagedRecipeName {
+					return fail("contentFile %q is reserved for staged kit sources", clean)
+				}
+				present, err := hasFile(ctx, s.artifact, ac.ContentFile)
+				if err != nil {
+					return fail("read staged context: %v", err)
+				}
+				if !present {
+					return fail("contentFile points at %q, which the image does not carry", ac.ContentFile)
+				}
 			}
 			return nil
 		},
@@ -617,7 +622,7 @@ var checks = []check{
 		name:        "sbx-platform-floor",
 		requirement: "sbx@1",
 		run: func(ctx context.Context, s *state) []report.Finding {
-			if !spec.HasCapability(s.descriptor.Capabilities, spec.CapabilitySbx) {
+			if !spec.HasCapability(spec.DeclaredCapabilities(s.descriptor.Capabilities), spec.CapabilitySbx) {
 				return nil
 			}
 			if s.descriptor.Kind != spec.KindWorkload {
@@ -690,7 +695,7 @@ var checks = []check{
 		name:        "sbx-persistent-env",
 		requirement: "sbx@1",
 		run: func(ctx context.Context, s *state) []report.Finding {
-			if !spec.HasCapability(s.descriptor.Capabilities, spec.CapabilitySbx) ||
+			if !spec.HasCapability(spec.DeclaredCapabilities(s.descriptor.Capabilities), spec.CapabilitySbx) ||
 				s.descriptor.Kind != spec.KindWorkload {
 				return nil
 			}

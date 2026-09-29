@@ -398,6 +398,9 @@ func typedScalar(v string) any {
 // reference would become literal policy.
 func ValidateEffective(raw []byte, d *Descriptor) ([]string, error) {
 	var errs ValidationErrors
+	if !d.declarationsOnly && HasGroups(d.Capabilities) {
+		errs.add(fieldErrorf("capabilities", "effective descriptor still contains unselected groups"))
+	}
 	if refs := ReferencedArgs(raw); len(refs) > 0 {
 		errs.add(fieldErrorf("", "effective descriptor still references kit args %v; expansion did not run or a value did not resolve", refs))
 	}

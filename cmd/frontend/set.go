@@ -310,7 +310,7 @@ func readContextSources(ctx context.Context, c gwclient.Client, kits []resolvedK
 		if err != nil {
 			return nil, fmt.Errorf("read agent context %s from %s: %w", source.Path, source.Reference, err)
 		}
-		out = append(out, spec.ContextSource{Reference: source.Reference, Content: string(raw)})
+		out = append(out, spec.ContextSource{Reference: source.Reference, Content: string(raw), Target: source.Target})
 	}
 	return out, nil
 }
@@ -367,35 +367,31 @@ func setOwnDescriptor(ctx context.Context, c gwclient.Client, d *spec.Descriptor
 	// result separately (checkAuthoredKind).
 	own.Kind = spec.KindMixin
 
-	context, err := spec.AgentContextOf(own.Capabilities)
-	if err != nil {
-		return nil, err
-	}
-	if context == nil || context.ContentFile == "" {
-		return &own, nil
-	}
-	body, err := readContextFile(ctx, c, strings.TrimPrefix(context.ContentFile, "./"))
-	if err != nil {
-		return nil, fmt.Errorf("agent-context contentFile %s: %w", context.ContentFile, err)
-	}
-
-	inlined := *context
-	inlined.ContentFile = ""
-	inlined.Content = string(body)
-	capabilities := make([]spec.Capability, 0, len(own.Capabilities))
-	for _, n := range own.Capabilities {
+	var err error
+	own.Capabilities, err = spec.MapCapabilities(own.Capabilities, func(n spec.Capability) (spec.Capability, error) {
 		if n.Type != spec.CapabilityAgentContext {
-			capabilities = append(capabilities, n)
-			continue
+			return n, nil
 		}
-		replaced, err := spec.CapabilityWithConfig(n, &inlined)
+		var ac spec.AgentContext
+		if err := spec.DecodeCapabilityConfig(n, &ac); err != nil {
+			return n, err
+		}
+		if ac.ContentFile == "" {
+			return n, nil
+		}
+		body, err := readContextFile(ctx, c, strings.TrimPrefix(ac.ContentFile, "./"))
 		if err != nil {
-			return nil, err
+			return n, fmt.Errorf("agent-context contentFile %s: %w", ac.ContentFile, err)
 		}
-		capabilities = append(capabilities, *replaced)
-	}
-	own.Capabilities = capabilities
-	return &own, nil
+		ac.ContentFile = ""
+		ac.Content = string(body)
+		replaced, err := spec.CapabilityWithConfig(n, &ac)
+		if err != nil {
+			return n, err
+		}
+		return *replaced, nil
+	})
+	return &own, err
 }
 
 // orderContributions sorts the set's own declarations together with
@@ -920,7 +916,7 @@ func kitDeclarations(published *spec.Descriptor, k spec.Kit, setArgs map[string]
 	// every check, and the merge could normalize away an invalid pair
 	// before anything saw it.
 	if len(spec.ReferencedArgs(expanded)) == 0 {
-		if _, err := spec.ValidateEffective(expanded, d); err != nil {
+		if _, err := spec.ValidateExpandedDeclarations(expanded, d); err != nil {
 			return nil, nil, fmt.Errorf("declarations are invalid once its args resolve: %w", err)
 		}
 	} else if _, err := spec.Validate(d); err != nil {
@@ -977,7 +973,7 @@ func orderKits(kits []resolvedKit, own *spec.Descriptor) ([]resolvedKit, error) 
 	}}
 	units = append(units, setUnit)
 
-	resolution, err := resolve.ResolvePartial(units)
+	resolution, err := resolve.Dependencies(units, true)
 	if err != nil {
 		return nil, err
 	}
@@ -1249,15 +1245,28 @@ func soleContract(kits []resolvedKit) ocispecs.ImageConfig {
 	return stated[0]
 }
 
-// stageSetContext concatenates the collected agent-context bodies into
-// the merged kit's one staged body.
-//
-// The type is a singleton because a sandbox surfaces one instruction
-// profile, so a set has to render its kits' guidance as one document.
-// Each section is headed by the kit it came from: an agent reading the
-// merged body can tell which tool a paragraph is about, and a human
-// diffing it can see which kit changed.
+// stageSetContext stages conditional bodies separately, or concatenates
+// unconditional bodies with headings identifying their contributing Kits.
 func stageSetContext(ctx context.Context, c gwclient.Client, ref gwclient.Reference, plat *ocispecs.Platform, staged string, sources []spec.ContextSource) (gwclient.Reference, error) {
+	// Create-time expansion only reaches the descriptor, never staged layers.
+	// Validate every body before writing either separate or combined content.
+	for _, source := range sources {
+		if names := spec.ReferencedArgs([]byte(source.Content)); len(names) > 0 {
+			return nil, fmt.Errorf("the agent context from %s references %v, and a set stages its kits' guidance into files, which create-phase expansion never reaches; pin the value in that kit's args, or drop the reference from the body",
+				source.Reference, names)
+		}
+	}
+	if len(sources) > 0 && sources[0].Target != "" {
+		for _, source := range sources {
+			var err error
+			ref, err = stageGuidance(ctx, c, ref, plat, source.Target, []byte(source.Content))
+			if err != nil {
+				return nil, err
+			}
+		}
+		return ref, nil
+	}
+
 	if len(sources) == 0 {
 		return ref, nil
 	}
@@ -1267,17 +1276,6 @@ func stageSetContext(ctx context.Context, c gwclient.Client, ref gwclient.Refere
 		// resolves every path before the layers merge, because
 		// afterwards there is no telling whose file a path holds.
 		content := source.Content
-		// Merging several bodies into one document means staging it,
-		// and a staged file is content rather than declaration: create
-		// expands the descriptor, never the layers. A body that was
-		// inline in its own kit would have been expanded there, so
-		// carrying it into a set unchanged would turn a resolved value
-		// into the literal ${{ … }} an agent reads. Refused rather
-		// than silently downgraded.
-		if names := spec.ReferencedArgs([]byte(content)); len(names) > 0 {
-			return nil, fmt.Errorf("the agent context from %s references %v, and a set stages its kits' guidance as one file, which create-phase expansion never reaches; pin the value in that kit's args, or drop the reference from the body",
-				source.Reference, names)
-		}
 		if strings.TrimSpace(content) == "" {
 			continue
 		}

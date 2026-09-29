@@ -84,6 +84,8 @@ const (
 // the same declarations with build-phase arg references (${{ kit.args.* }}
 // for args with buildArg:) expanded, re-serialized as compact JSON.
 type Descriptor struct {
+	declarationsOnly bool
+
 	// SchemaVersion must be "3".
 	SchemaVersion string `json:"schemaVersion" yaml:"schemaVersion"`
 
@@ -167,7 +169,7 @@ type Descriptor struct {
 	// here — resource grants and engine-executed behaviors alike
 	// (lifecycle hooks, agent context) — so a host answers the whole ask
 	// through one mechanism, or refuses the parts it does not know.
-	Capabilities []Capability `json:"capabilities,omitempty" yaml:"capabilities,omitempty"`
+	Capabilities []CapabilityItem `json:"capabilities,omitempty" yaml:"capabilities,omitempty"`
 
 	// Args declares installer-supplied values, keyed by arg name. Private
 	// by default: an arg reaches the container only via env:, and the
@@ -249,9 +251,19 @@ type Kit struct {
 // when the type's config schema does — capabilities evolve without a
 // descriptor schema-major bump.
 type Capability struct {
+	// Group is the alternative to an ordinary entry. It is not a capability
+	// type and must be selected before typed accessors are used.
+	Group *CapabilityGroup `json:"group,omitempty" yaml:"group,omitempty"`
+
+	// Source preserves publisher attribution. It is untrusted diagnostic
+	// metadata; the consuming artifact still determines trust.
+	Source      *CapabilitySource `json:"source,omitempty" yaml:"source,omitempty"`
+	optionalSet bool
+	groupSet    bool
+
 	// Type names the capability and its config-schema version, e.g.
 	// "com.docker.sandbox/network-policy@1".
-	Type string `json:"type" yaml:"type"`
+	Type string `json:"type,omitempty" yaml:"type,omitempty"`
 
 	// Name is a display label, not identity: duplicate labels are allowed
 	// and renaming a request changes neither its grants nor its merge key.
@@ -299,6 +311,18 @@ func (c *Capability) UnmarshalYAML(unmarshal func(any) error) error {
 		return fmt.Errorf("capability name must be a string")
 	}
 	_, c.configSet = keys["config"]
+	_, c.optionalSet = keys["optional"]
+	_, c.groupSet = keys["group"]
+	if _, stated := keys["source"]; stated && c.Source == nil {
+		return fmt.Errorf("capability source must be an object")
+	}
+	if c.groupSet {
+		for _, key := range []string{"type", "name", "description", "optional", "config"} {
+			if _, ok := keys[key]; ok {
+				return fmt.Errorf("group item must not state %s", key)
+			}
+		}
+	}
 	return nil
 }
 
@@ -320,6 +344,18 @@ func (c *Capability) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("capability name must be a string")
 	}
 	_, c.configSet = keys["config"]
+	_, c.optionalSet = keys["optional"]
+	_, c.groupSet = keys["group"]
+	if _, stated := keys["source"]; stated && c.Source == nil {
+		return fmt.Errorf("capability source must be an object")
+	}
+	if c.groupSet {
+		for _, key := range []string{"type", "name", "description", "optional", "config"} {
+			if _, ok := keys[key]; ok {
+				return fmt.Errorf("group item must not state %s", key)
+			}
+		}
+	}
 	return nil
 }
 

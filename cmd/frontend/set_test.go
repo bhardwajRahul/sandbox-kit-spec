@@ -537,3 +537,35 @@ capabilities:
 	require.ErrorContains(t, err, "declarations are invalid once the set's args are applied")
 	require.ErrorContains(t, err, "empty methods list")
 }
+
+func TestStageSetContextRejectsReExportedBodyBeforeWriting(t *testing.T) {
+	for _, grouped := range []bool{false, true} {
+		name := "combined"
+		if grouped {
+			name = "separate"
+		}
+		t.Run(name, func(t *testing.T) {
+			entry := spec.Capability{Type: spec.CapabilityAgentContext, Config: map[string]any{"content": "Team: ${{ kit.args.team }}"}}
+			if grouped {
+				entry = spec.Capability{Group: &spec.CapabilityGroup{Optional: true, Capabilities: []spec.Capability{entry}}}
+			}
+			published := &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindMixin,
+				Args: map[string]spec.Arg{"team": {Required: true}}, Capabilities: []spec.Capability{entry}}
+			declarations, _, err := kitDeclarations(published, spec.Kit{Args: map[string]string{"team": "${{ kit.args.target }}"}}, map[string]spec.Arg{"target": {Required: true}})
+			require.NoError(t, err)
+			merged, err := spec.Merge([]spec.Contribution{{Reference: "source-kit", Descriptor: declarations}}, spec.MergeOptions{ContextPath: "/set/context.md"})
+			require.NoError(t, err)
+			require.Len(t, merged.ContextSources, 1)
+			// A valid body first proves validation completes before any staging.
+			first := spec.ContextSource{Reference: "first-kit", Content: "already resolved"}
+			if grouped {
+				first.Target = "/set/first.md"
+				require.NotEmpty(t, merged.ContextSources[0].Target)
+			}
+			sources := append([]spec.ContextSource{first}, merged.ContextSources...)
+			_, err = stageSetContext(t.Context(), nil, nil, nil, "/set/context.md", sources)
+			require.ErrorContains(t, err, "source-kit references [target]")
+			require.ErrorContains(t, err, "create-phase expansion never reaches")
+		})
+	}
+}
