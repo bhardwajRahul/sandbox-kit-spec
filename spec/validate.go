@@ -458,6 +458,7 @@ var needType = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?/[a-z0-9]([a-z
 // once per thing requested and dedup on their own key; unknown types
 // dedup on the exact request (type + config).
 var singletonCapabilities = map[string]bool{
+	CapabilityGitIdentity:     true,
 	CapabilityNetworkPolicy:   true,
 	CapabilityNetworkPolicyV2: true,
 	CapabilityResources:       true,
@@ -483,6 +484,7 @@ func argvContains(argv []string, sub string) bool {
 
 // configlessCapabilities take no config at all: present or absent.
 var configlessCapabilities = map[string]bool{
+	CapabilityGitIdentity: true,
 	CapabilityPrivileged:  true,
 	CapabilityKitRegistry: true,
 	CapabilitySbx:         true,
@@ -515,6 +517,7 @@ func validateCapabilityBlock(d *Descriptor) error {
 	seenSingleton := map[string]int{}
 	seenExact := map[string]int{}
 	seenCredential := map[string]int{}
+	seenSSHAgent := map[string]int{}
 	seenVolume := map[string]int{}
 	seenSkills := map[string]int{}
 	seenPort := map[string]int{}
@@ -563,6 +566,24 @@ func validateCapabilityBlock(d *Descriptor) error {
 		// descriptor pass here and fail schema validation.
 		if configlessCapabilities[n.Type] && n.ConfigStated() {
 			errs.add(fieldErrorf(path+".config", "capabilities[%d]: %s takes no config", i, n.Type))
+		}
+
+		// Record literal phases before deferring parameterized values. A
+		// merge can otherwise union overlapping entries and erase the error.
+		if n.Type == CapabilitySSHAgent {
+			var phaseOnly SSHAgent
+			phaseConfig := Capability{Type: n.Type, Config: map[string]any{"phase": n.Config["phase"]}}
+			if DecodeCapabilityConfig(phaseConfig, &phaseOnly) == nil {
+				for _, phase := range phaseOnly.Phase {
+					if ContainsArgRef(phase) {
+						continue
+					}
+					if prev, dup := seenSSHAgent[phase]; dup && prev != i {
+						errs.add(fieldErrorf(path+".config.phase", "capabilities[%d]: ssh-agent for phase %q already declared at capabilities[%d]", i, phase, prev))
+					}
+					seenSSHAgent[phase] = i
+				}
+			}
 		}
 
 		// A parameterized entry — its config references a kit arg — defers
@@ -614,6 +635,13 @@ func validateCapabilityBlock(d *Descriptor) error {
 				errs.add(fieldErrorf(path+".config.service", "capabilities[%d]: credential for service %q phase %q already declared at capabilities[%d]", i, c.Service, c.Phase, prev))
 			}
 			seenCredential[key] = i
+		case CapabilitySSHAgent:
+			_, err := validateSSHAgentNeed(path, i, n)
+			if err != nil {
+				errs.add(err)
+				continue
+			}
+
 		case CapabilityVolume:
 			var v Volume
 			if err := DecodeCapabilityConfig(n, &v); err != nil {
@@ -945,6 +973,26 @@ func validatePresenceRules(path string, i int, n Capability) error {
 			}
 		}
 		return errs.err()
+	}
+	if n.Type == CapabilitySSHAgent {
+		if err := validateSSHAgentNulls(path, i, n); err != nil {
+			return err
+		}
+		// Only the boolean placeholder prevents typed decoding. Choose a
+		// presence-compatible value in a copy; expansion still judges the
+		// actual boolean, while literal siblings and duplicates are checked now.
+		if v, ok := n.Config["unrestricted"].(string); ok && ContainsArgRef(v) {
+			config := make(map[string]any, len(n.Config))
+			for k, v := range n.Config {
+				config[k] = v
+			}
+			_, sign := config["sign"]
+			_, authenticate := config["authenticate"]
+			config["unrestricted"] = !sign && !authenticate
+			n.Config = config
+		}
+		_, err := validateSSHAgentNeed(path, i, n)
+		return err
 	}
 	if n.Type != CapabilityAgentContext {
 		return errs.err()

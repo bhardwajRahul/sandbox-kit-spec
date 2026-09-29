@@ -75,6 +75,11 @@ marker_line="Placed by tck/adapters/sbx"
 #   them; they are skipped either way, and claiming a type nothing can
 #   judge states more than a report can support.
 #
+#   ssh-agent@1 is absent because sbx neither reads the type from a kit
+#   nor filters what its agent relay passes: forwarding is a daemon-wide
+#   setting, and the relay carries every request to the agent. create
+#   refuses --ssh-agent below rather than take it for a kit reference.
+#
 #   sbx@1 is present for the opposite reason: it is the platform contract
 #   this runtime is named for, so a duty it does not meet is a finding
 #   worth reading rather than a type to pass over.
@@ -492,6 +497,13 @@ create)
 		--skills-host-mode)
 			skills_mode="$2"
 			shift 2
+			;;
+		--ssh-agent | --ssh-known-hosts)
+			# Only sent to runtimes claiming ssh-agent@1, which this one
+			# does not; failing plainly beats creating a sandbox that
+			# ignored the agent it was handed.
+			echo "sbx adapter: ssh-agent@1 is not claimed, so $1 cannot be honored" >&2
+			exit 1
 			;;
 		*)
 			kits+=("$1")

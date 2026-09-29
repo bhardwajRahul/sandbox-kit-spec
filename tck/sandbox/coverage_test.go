@@ -28,8 +28,10 @@ var anchorPattern = regexp.MustCompile(`<!-- tck: (.+?) -->`)
 // judges several statements, and one statement is often judged from
 // several angles.
 var covers = map[string][]string{
-	"SPEC-v3 §7.1.1/conflicts":        {"lifecycle@1/shared-paths-avoided"},
-	"SPEC-v3 §7.1.1/atomic-selection": {"SPEC-v3 §7.1.1/order", "SPEC-v3 §7.1.1/provenance"},
+	"git-identity@1/global-defaults":              {"git-identity@1/runtime-provided"},
+	"git-identity@1/unavailable-refuses-required": {"git-identity@1/runtime-provided"},
+	"SPEC-v3 §7.1.1/conflicts":                    {"lifecycle@1/shared-paths-avoided"},
+	"SPEC-v3 §7.1.1/atomic-selection":             {"SPEC-v3 §7.1.1/order", "SPEC-v3 §7.1.1/provenance"},
 	// Reading the staged body behind the profile's reference judges what
 	// the profile is; full progressive semantics are waived until a
 	// fixture can observe them.
@@ -49,6 +51,10 @@ var covers = map[string][]string{
 
 	// The check requires a non-empty sentinel where the secret is absent.
 	"credential@1/secret-absent-in-sandbox": {"credential@1/sentinel-not-empty"},
+
+	// The login check binds a session to a server whose host key the
+	// runtime was never given, validly signed: only matching bindings to
+	// keys from outside the sandbox refuses that login.
 
 	// The hook env check judges names against the declared set and values
 	// against the host sentinel; the files fixture's content is an arg
@@ -90,6 +96,7 @@ var kitCovers = map[string][]string{
 	// set that was never merged describes layers it does not have.
 	"descriptor-valid": {
 		"long-running@1/no-config",
+		"git-identity@1/no-config",
 		"SPEC-v3 §7.1.1/group-grammar",
 		"SPEC-v3 §7.1.1/validate-declarations",
 		"SPEC-v3 §9.2/versioned-provides",
@@ -154,6 +161,7 @@ var kitCovers = map[string][]string{
 // with its reason. A waiver is a decision, not a gap: it is reviewed like
 // any other line, and removing one is how coverage grows.
 var waived = map[string]string{
+	"git-identity@1/source-private":               "the adapter supplies an identity binding but exposes no mapping from its host source or translated backend to guest paths; effective Git probes cannot detect a readable copy at an arbitrary unconfigured path, and a bounded guest scan cannot prove its absence",
 	"SPEC-v3 §7.1.1/selection-before-application": "the adapter exposes only final files, records, and grants, not an effect trace during selection; effects applied before selection and then rolled back cannot be observed",
 	"SPEC-v3 §7.1.1/conflicts-before-application": "a refused create returns no sandbox ID and the adapter exposes no failed-create effect trace; the suite can observe conflict refusal but cannot inspect files or hooks applied before that refusal",
 	"SPEC-v3 §7.1.1/publishing":                   "publisher ordering, provenance, and separate conditional context staging are judged by spec group publication tests and frontend end-to-end tests; the runtime adapter cannot compare original build inputs with the published artifact",
@@ -254,6 +262,13 @@ var waived = map[string]string{
 	"credential@1/oauth-token-endpoint-intercepted": "needs an OAuth fixture service the suite does not run yet",
 	"credential@1/phase-scoped":                     "needs an install-phase credential probe; the fixture binds runtime only",
 	"credential@1/required-without-binding-fails":   "the contract has the adapter bind the fixture secret, so the unbound path never occurs in-suite",
+
+	"ssh-agent@1/key-material-outside-sandbox": "non-observable: a key copied somewhere in the sandbox has no symptom a probe could search for; the relay filter check shows keys cannot be added or exported through the agent",
+	"ssh-agent@1/grant-names-scope":            "SHOULD; consent wording, not sandbox behavior",
+	"ssh-agent@1/keys-selectable":              "SHOULD; a user-side setting the adapter contract offers no input for",
+	"ssh-agent@1/confirmation-offered":         "SHOULD; asks the user, which a non-interactive suite cannot answer",
+	"ssh-agent@1/grant-expiry-offered":         "SHOULD; a user-side setting the adapter contract offers no input for",
+	"ssh-agent@1/signatures-observable":        "SHOULD; where a runtime records signatures is host-side and unspecified",
 
 	"kit-registry@1/no-route-unless-requested": "the facade is reference-implementation infrastructure, not portable behavior",
 	"kit-registry@1/endpoint-announced":        "the facade is reference-implementation infrastructure, not portable behavior",

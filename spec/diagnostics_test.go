@@ -40,6 +40,22 @@ args:
 			paths: []string{"iconUrl", "provides[0]", "provides[1]", "args.alpha", "args.alpha.env", "args.alpha.buildArg", "args.zebra.pattern"},
 		},
 		{
+			name: "ssh agent errors preserve sibling diagnostics",
+			body: `capabilities:
+  - type: com.docker.sandbox/volume@1
+    config: {path: relative}
+  - type: com.docker.sandbox/ssh-agent@1
+    config: {phase: null}
+  - type: com.docker.sandbox/ssh-agent@1
+    config: {phase: runtime}
+  - type: com.docker.sandbox/ssh-agent@1
+    config: {phase: runtime, unrestricted: false, sign: [git]}
+  - type: com.docker.sandbox/port@1
+    config: {container: 0}
+`,
+			paths: []string{"capabilities[0].config.path", "capabilities[1].config.phase", "capabilities[3].config.phase", "capabilities[4].config.container"},
+		},
+		{
 			name: "fields within and across capabilities",
 			body: `capabilities:
   - type: com.docker.sandbox/volume@1

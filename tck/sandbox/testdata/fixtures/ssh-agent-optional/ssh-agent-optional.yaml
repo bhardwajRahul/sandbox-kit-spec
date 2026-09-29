@@ -1,0 +1,10 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+displayName: Optional SSH agent
+description: Asks for an SSH agent optionally, so skipping the entry when no backing agent is available is observable
+capabilities:
+  - type: com.docker.sandbox/ssh-agent@1
+    optional: true
+    config:
+      phase: runtime

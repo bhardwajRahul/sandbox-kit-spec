@@ -1,0 +1,19 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+displayName: SSH agent
+description: Requires an SSH agent at runtime, so reaching the backing agent, what the relay passes, and refusing the kit when none is available are observable
+capabilities:
+  - type: com.docker.sandbox/ssh-agent@1
+    config:
+      phase: runtime
+  - type: com.docker.sandbox/lifecycle@1
+    optional: true
+    config:
+      startup:
+        - command: >-
+            sh -c 'printf "%s" "$SSH_AUTH_SOCK" > /var/tmp/kit-tck-startup-ssh-sock;
+            kit-tck-ssh-agent observe > /var/tmp/kit-tck-startup-ssh-sock-proof.tmp 2>&1 || true;
+            mv /var/tmp/kit-tck-startup-ssh-sock-proof.tmp /var/tmp/kit-tck-startup-ssh-sock-proof'
+          env: [SSH_AUTH_SOCK]
+          description: Records the startup socket and proves its agent can list keys and sign

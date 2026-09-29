@@ -2,8 +2,10 @@ package sandbox
 
 import (
 	"context"
+	"net"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -30,6 +32,23 @@ func runAgainstFake(t *testing.T, broken string) report.Report {
 	})
 	require.NoError(t, err, "the suite must run even when the runtime is wrong")
 	return rep
+}
+
+func TestFakeSSHAgentMatchesFixtureNotParentPath(t *testing.T) {
+	for _, claims := range []string{capSSHAgent, groupVolume} {
+		t.Run(claims, func(t *testing.T) {
+			a := adapter.New(filepath.Join("testdata", "fake-adapter"))
+			a.Env = []string{
+				"KIT_TCK_FAKE_STATE=" + t.TempDir(),
+				"KIT_TCK_FAKE_CLAIMS=" + claims,
+				"KIT_TCK_FAKE_BROKEN=",
+			}
+			kit := filepath.Join(t.TempDir(), "ssh-agent-checkout", "workload")
+			id, err := a.Create(t.Context(), []string{kit}, adapter.CreateOptions{})
+			require.NoError(t, err, "the checkout name must not require an SSH agent for a plain workload")
+			require.NotEmpty(t, id)
+		})
+	}
 }
 
 // The reason unclaimed capabilities skip at all: a runtime implementing
@@ -143,6 +162,29 @@ func TestAConformingRuntimePasses(t *testing.T) {
 	require.False(t, rep.Failed(), "conforming fake reported failures:\n%s", rep)
 }
 
+func TestBackingAgentCloseWithIdleClient(t *testing.T) {
+	a, err := startBackingAgent()
+	require.NoError(t, err)
+	conn, err := net.Dial("unix", a.Socket())
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	// The server must have accepted this client before Close, otherwise
+	// the test would only exercise closing a listener with no handlers.
+	require.Eventually(t, func() bool {
+		a.connsMu.Lock()
+		defer a.connsMu.Unlock()
+		return len(a.conns) == 1
+	}, time.Second, time.Millisecond)
+	done := make(chan error, 1)
+	go func() { done <- a.Close() }()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("closing the backing agent blocked on an idle client")
+	}
+}
+
 // Each of these breaks one behavior, so a check that never fails would be
 // caught here rather than by trusting it.
 // mutations maps a way of breaking the fake runtime to the requirements
@@ -150,22 +192,116 @@ func TestAConformingRuntimePasses(t *testing.T) {
 // requirement — the two network-policy versions state the same duty about
 // the host lists — and dropping it has to fail every one of them.
 var mutations = map[string][]string{
-	"group-invalid-env-expanded":       {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
-	"group-skips-invalid-env-expanded": {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
-	"group-invalid-expanded":           {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
-	"group-skips-invalid-expanded":     {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
-	"group-reselect-skipped-restart":   {"SPEC-v3 §7.1.1/lifetime"},
-	"group-never-admits-recreate":      {"SPEC-v3 §7.1.1/lifetime"},
-	"group-ignore-required-lifecycle":  {"SPEC-v3 §7.1.1/atomic-selection"},
-	"group-ignore-optional-lifecycle":  {"SPEC-v3 §7.1.1/atomic-selection"},
-	"group-selected-member-sources":    {"SPEC-v3 §7.1.1/atomic-selection"},
-	"group-skipped-member-sources":     {"SPEC-v3 §7.1.1/atomic-selection"},
-	"group-member-sources-local":       {"SPEC-v3 §7.1.1/atomic-selection"},
-	"group-wrong-source-path":          {"SPEC-v3 §7.1.1/atomic-selection"},
-	"group-wrong-source-kit":           {"SPEC-v3 §7.1.1/atomic-selection"},
-	"group-accepted-rejection":         {"SPEC-v3 §7.1.1/atomic-selection"},
-	"group-extra-rejection":            {"SPEC-v3 §7.1.1/atomic-selection"},
-	"group-required-no-kit":            {"SPEC-v3 §7.1.1/atomic-selection"},
+	"ssh-agent-create-workload-forward-refused-sign": {"ssh-agent@1/signatures-bounded"},
+	"ssh-agent-restart-startup-forward-refused-sign": {"ssh-agent@1/signatures-bounded"},
+
+	"ssh-agent-create-workload-unfiltered-sign":        {"ssh-agent@1/signatures-bounded"},
+	"ssh-agent-create-workload-unfiltered-operations":  {"ssh-agent@1/operations-restricted"},
+	"ssh-agent-create-startup-unfiltered-sign":         {"ssh-agent@1/signatures-bounded"},
+	"ssh-agent-create-startup-unfiltered-operations":   {"ssh-agent@1/operations-restricted"},
+	"ssh-agent-restart-workload-unfiltered-sign":       {"ssh-agent@1/signatures-bounded"},
+	"ssh-agent-restart-workload-unfiltered-operations": {"ssh-agent@1/operations-restricted"},
+	"ssh-agent-restart-startup-unfiltered-sign":        {"ssh-agent@1/signatures-bounded"},
+	"ssh-agent-restart-startup-unfiltered-operations":  {"ssh-agent@1/operations-restricted"},
+	"ssh-agent-install-unfiltered-operations":          {"ssh-agent@1/operations-restricted"},
+	"ssh-agent-install-unfiltered-sign":                {"ssh-agent@1/signatures-bounded"},
+	"ssh-agent-install-forward-refused-sign":           {"ssh-agent@1/signatures-bounded"},
+	"ssh-agent-dual-unfiltered-runtime":                {"ssh-agent@1/signatures-bounded"},
+	"ssh-agent-dual-runtime-only":                      {"ssh-agent@1/signatures-bounded"},
+	"ssh-agent-dual-install-only":                      {"ssh-agent@1/signatures-bounded"},
+	"install-socket-still-reachable":                   {"ssh-agent@1/phase-scoped"},
+
+	"ssh-agent-restart-missing-workload-env": {"ssh-agent@1/every-boot"},
+	"ssh-agent-restart-missing-startup-env":  {"ssh-agent@1/every-boot"},
+	"ssh-agent-stale-boot-proofs":            {"ssh-agent@1/every-boot"},
+	"ssh-agent-refusal-unnamed":              {"ssh-agent@1/unavailable-refuses-required"},
+	"restricts-host-only-user":               {"ssh-agent@1/logins-bounded"},
+
+	"ignores-ssh-agent":                     {"ssh-agent@1/agent-reachable", "ssh-agent@1/operations-restricted", "ssh-agent@1/every-boot"},
+	"ssh-agent-drops-sign":                  {"ssh-agent@1/agent-reachable"},
+	"ssh-agent-missing-workload-env":        {"ssh-agent@1/agent-reachable"},
+	"ssh-agent-missing-startup-env":         {"ssh-agent@1/agent-reachable"},
+	"ssh-agent-bogus-workload-socket":       {"ssh-agent@1/agent-reachable"},
+	"ssh-agent-bogus-startup-socket":        {"ssh-agent@1/agent-reachable"},
+	"ssh-agent-forwards-constrained-rsa":    {"ssh-agent@1/operations-restricted"},
+	"ssh-agent-relays-everything":           {"ssh-agent@1/operations-restricted"},
+	"ssh-agent-forwards-refused":            {"ssh-agent@1/operations-restricted"},
+	"ssh-agent-initial-without-grant":       {"ssh-agent@1/absent-without-grant"},
+	"ssh-agent-initial-optional-leak":       {"ssh-agent@1/unavailable-skips-optional"},
+	"ssh-agent-without-grant":               {"ssh-agent@1/absent-without-grant"},
+	"ssh-agent-install-missing":             {"ssh-agent@1/phase-scoped"},
+	"leaves-install-ssh-agent-open":         {"ssh-agent@1/phase-scoped"},
+	"leaks-install-ssh-agent-to-entrypoint": {"ssh-agent@1/phase-scoped"},
+	"ssh-agent-first-boot-only":             {"ssh-agent@1/every-boot"},
+	"ssh-agent-accepts-without-agent":       {"ssh-agent@1/unavailable-refuses-required"},
+	"ssh-agent-refuses-optional":            {"ssh-agent@1/unavailable-skips-optional"},
+	"ignores-sign-bounds":                   {"ssh-agent@1/signatures-bounded"},
+	"drops-bound-signature":                 {"ssh-agent@1/signatures-bounded"},
+	"forwards-unclassified":                 {"ssh-agent@1/signatures-bounded"},
+	"ignores-login-bounds":                  {"ssh-agent@1/logins-bounded", "ssh-agent@1/binding-verified"},
+	"drops-bound-login":                     {"ssh-agent@1/logins-bounded", "ssh-agent@1/binding-verified"},
+	"ignores-hostbound-key":                 {"ssh-agent@1/logins-bounded"},
+	"trusts-invalid-login-key":              {"ssh-agent@1/logins-bounded"},
+	"ignores-login-user":                    {"ssh-agent@1/logins-bounded"},
+	"ignores-session-id":                    {"ssh-agent@1/logins-bounded"},
+	"trusts-sandbox-known-hosts":            {"ssh-agent@1/destination-keys-outside-sandbox"},
+	"trusts-any-host-key":                   {"ssh-agent@1/logins-bounded"},
+	"trusts-unverified-binding":             {"ssh-agent@1/binding-verified"},
+	"trusts-forwarding-binding":             {"ssh-agent@1/binding-verified"},
+	"identity-selected-null-source":         {"git-identity@1/unavailable-refuses-required"},
+	"identity-selected-wrong-kit":           {"git-identity@1/unavailable-refuses-required"},
+	"identity-selected-bad-workload":        {"git-identity@1/unavailable-refuses-required"},
+	"identity-selected-missing-members":     {"git-identity@1/unavailable-refuses-required"},
+	"leaks-identity-env":                    {"git-identity@1/absent-without-grant", "git-identity@1/unavailable-refuses-required"},
+	"imports-effective-git-settings":        {"git-identity@1/identity-only"},
+	"late-identity-workload-start":          {"git-identity@1/pinned-selection"},
+	"late-identity-workload-recreate":       {"git-identity@1/pinned-selection"},
+	"late-identity-restart-hook":            {"git-identity@1/before-hooks"},
+	"late-identity-recreate-hook":           {"git-identity@1/before-hooks"},
+	"skips-identity-restart-hook":           {"git-identity@1/before-hooks"},
+	"skips-identity-recreate-hook":          {"git-identity@1/before-hooks"},
+	"imports-identity-include":              {"git-identity@1/identity-only"},
+	"imports-identity-filter":               {"git-identity@1/identity-only"},
+	"imports-identity-signing-program":      {"git-identity@1/identity-only"},
+	"imports-identity-signing-key":          {"git-identity@1/identity-only"},
+	"identity-skip-wrong-path":              {"git-identity@1/unavailable-refuses-required"},
+	"identity-skip-wrong-source-path":       {"git-identity@1/unavailable-refuses-required"},
+	"identity-skip-missing-member-sources":  {"git-identity@1/unavailable-refuses-required"},
+	"identity-skip-wrong-member-kit":        {"git-identity@1/unavailable-refuses-required"},
+	"identity-skip-wrong-member-path":       {"git-identity@1/unavailable-refuses-required"},
+	"ignores-git-identity":                  {"git-identity@1/global-defaults"},
+	"corrupts-git-identity":                 {"git-identity@1/global-defaults"},
+	"git-identity-after-launch":             {"git-identity@1/global-defaults"},
+	"late-git-identity":                     {"git-identity@1/before-hooks"},
+	"forces-git-identity":                   {"git-identity@1/local-precedence"},
+	"imports-source-git-settings":           {"git-identity@1/identity-only"},
+	"clobbers-guest-git-settings":           {"git-identity@1/identity-only"},
+	"edits-identity-source":                 {"git-identity@1/source-unchanged"},
+	"rereads-identity-on-recreate":          {"git-identity@1/pinned-selection"},
+	"loses-git-identity-on-start":           {"git-identity@1/pinned-selection"},
+	"imports-unrequested-identity":          {"git-identity@1/absent-without-grant"},
+	"accepts-missing-identity":              {"git-identity@1/unavailable-refuses-required"},
+	"refuses-optional-identity":             {"git-identity@1/unavailable-refuses-required"},
+	"imports-unavailable-identity":          {"git-identity@1/unavailable-refuses-required"},
+	"drops-identity-skip-record":            {"git-identity@1/unavailable-refuses-required"},
+	"selects-unavailable-identity":          {"git-identity@1/unavailable-refuses-required"},
+	"selects-and-skips-identity":            {"git-identity@1/unavailable-refuses-required"},
+	"group-invalid-env-expanded":            {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
+	"group-skips-invalid-env-expanded":      {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
+	"group-invalid-expanded":                {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
+	"group-skips-invalid-expanded":          {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
+	"group-reselect-skipped-restart":        {"SPEC-v3 §7.1.1/lifetime"},
+	"group-never-admits-recreate":           {"SPEC-v3 §7.1.1/lifetime"},
+	"group-ignore-required-lifecycle":       {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-ignore-optional-lifecycle":       {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-selected-member-sources":         {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-skipped-member-sources":          {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-member-sources-local":            {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-wrong-source-path":               {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-wrong-source-kit":                {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-accepted-rejection":              {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-extra-rejection":                 {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-required-no-kit":                 {"SPEC-v3 §7.1.1/atomic-selection"},
 
 	"ordinary-ignore-optional-rejection": {"SPEC-v3 §7.1.1/atomic-selection"},
 	"ordinary-ignore-required-rejection": {"SPEC-v3 §7.1.1/atomic-selection"},
@@ -332,4 +468,43 @@ func TestAFailingCreateIsNotMistakenForARefusal(t *testing.T) {
 	rep := runAgainstFake(t, "refusal-as-error")
 	require.Contains(t, failedRequirements(rep), "SPEC-v3 §7.3/unknown-required-refused",
 		"a create that fails for unrelated reasons must not count as a refusal:\n%s", rep)
+}
+
+func TestSSHAgentReachabilityWithoutLifecycle(t *testing.T) {
+	for _, broken := range []string{"", "ssh-agent-missing-workload-env", "ssh-agent-bogus-workload-socket"} {
+		t.Run(broken, func(t *testing.T) {
+			a := adapter.New(filepath.Join("testdata", "fake-adapter"))
+			a.Env = []string{
+				"KIT_TCK_FAKE_STATE=" + t.TempDir(),
+				"KIT_TCK_FAKE_CLAIMS=" + capSSHAgent,
+				"KIT_TCK_FAKE_BROKEN=" + broken,
+			}
+			rep, err := Run(t.Context(), &Env{Adapter: a, Fixtures: Fixtures(FixtureDir)})
+			require.NoError(t, err)
+			found := false
+			for _, f := range rep.Findings {
+				if f.Requirement == "ssh-agent@1/agent-reachable" {
+					found = true
+					require.Equal(t, report.Fail, f.Severity)
+				}
+			}
+			require.Equal(t, broken != "", found, "%s", rep)
+			if broken == "" {
+				require.False(t, rep.Failed(), "%s", rep)
+			}
+		})
+	}
+}
+
+func TestGitIdentityNeedsNoHelperCapabilities(t *testing.T) {
+	a := adapter.New(filepath.Join("testdata", "fake-adapter"))
+	a.Env = []string{"KIT_TCK_FAKE_STATE=" + t.TempDir(), "KIT_TCK_FAKE_CLAIMS=" + capGitIdentity, "KIT_TCK_FAKE_BROKEN="}
+	rep, err := Run(context.Background(), &Env{Adapter: a, Fixtures: Fixtures(FixtureDir)})
+	require.NoError(t, err)
+	require.False(t, rep.Failed(), "git-identity alone must be testable:\n%s", rep)
+	for _, f := range rep.Findings {
+		if f.Requirement != "git-identity@1/before-hooks" {
+			require.NotContains(t, f.Requirement, "git-identity@1", "%s", f)
+		}
+	}
 }

@@ -335,6 +335,25 @@
           "if": {
             "properties": {
               "type": {
+                "const": "com.docker.sandbox/ssh-agent@1"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "config": {
+                "$ref": "capabilities/com.docker.sandbox/ssh-agent@1.schema.json"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
                 "const": "com.docker.sandbox/agent-skills@1"
               }
             },
@@ -558,6 +577,25 @@
             "properties": {
               "config": {
                 "$ref": "capabilities/com.docker.sandbox/long-running@1.schema.json"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "com.docker.sandbox/git-identity@1"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "config": {
+                "$ref": "capabilities/com.docker.sandbox/git-identity@1.schema.json"
               }
             }
           }

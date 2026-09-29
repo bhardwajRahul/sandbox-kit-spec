@@ -125,7 +125,18 @@ func installPhaseScoped(fixture string) func(context.Context, *Env) []report.Fin
 	}
 }
 
-var checks = []check{
+var checks = append(gitIdentityChecks, []check{
+	{requirement: "ssh-agent@1/destination-keys-outside-sandbox", capability: capSSHAgent, run: sshAgentDestinationKeys},
+	{requirement: "ssh-agent@1/agent-reachable", capability: capSSHAgent, run: sshAgentReachable},
+	{requirement: "ssh-agent@1/operations-restricted", capability: capSSHAgent, run: sshAgentRestricted},
+	{requirement: "ssh-agent@1/signatures-bounded", capability: capSSHAgent, run: sshAgentSignaturesBounded},
+	{requirement: "ssh-agent@1/logins-bounded", capability: capSSHAgent, run: sshAgentLoginsBounded},
+	{requirement: "ssh-agent@1/binding-verified", capability: capSSHAgent, run: sshAgentBindingVerified},
+	{requirement: "ssh-agent@1/absent-without-grant", capability: capSSHAgent, run: sshAgentAbsentWithoutGrant},
+	{requirement: "ssh-agent@1/phase-scoped", capability: capSSHAgent, needs: []string{capLifecycle}, run: sshAgentPhaseScoped},
+	{requirement: "ssh-agent@1/every-boot", capability: capSSHAgent, run: sshAgentEveryBoot},
+	{requirement: "ssh-agent@1/unavailable-refuses-required", capability: capSSHAgent, run: sshAgentRequiredRefused},
+	{requirement: "ssh-agent@1/unavailable-skips-optional", capability: capSSHAgent, run: sshAgentOptionalSkipped},
 	{requirement: "SPEC-v3 §7.1.1/validate-expanded-declarations", capability: capLifecycle, run: groupExpandedValidation},
 	{requirement: "SPEC-v3 §7.1.1/atomic-selection", run: atomicSelection},
 	{requirement: "SPEC-v3 §7.1.1/conflicts", capability: capLifecycle, run: groupConflicts},
@@ -190,10 +201,12 @@ var checks = []check{
 			}{
 				{capability: capSbx, fixture: fixtureSbxWorkload, alone: true},
 				{capability: capLongRunning, fixture: fixtureLongRunning},
+				{capability: capGitIdentity, fixture: fixtureGitIdentity},
 				{capLifecycle, fixtureHooks, false},
 				{capNetworkPolicy, fixtureEgress, false},
 				{capNetworkPolicyV2, fixtureHTTPEgress, false},
 				{capCredential, fixtureCredential, false},
+				{capSSHAgent, fixtureSSHAgent, false},
 				{capAgentContext, fixtureContext, false},
 				{capVolume, fixtureVolume, false},
 				{capResources, fixtureResources, false},
@@ -845,7 +858,7 @@ var checks = []check{
 			return nil
 		},
 	},
-}
+}...)
 
 // envVars parses `env` output into a name-to-value map.
 func envVars(environ string) map[string]string {

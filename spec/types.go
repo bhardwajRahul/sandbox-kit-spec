@@ -378,10 +378,18 @@ const (
 	// one bounds the other.
 	CapabilityNetworkPolicyV2 = "com.docker.sandbox/network-policy@2"
 
+	// CapabilityGitIdentity shares runtime-provided Git attribution, not credentials.
+	CapabilityGitIdentity = "com.docker.sandbox/git-identity@1"
+
 	// CapabilityCredential is one service the workload authenticates to;
 	// config decodes to Credential. Instance-shaped, keyed by
 	// (service, phase).
 	CapabilityCredential = "com.docker.sandbox/credential@1"
+
+	// CapabilitySSHAgent exposes an SSH agent to one phase, relaying to a
+	// backing agent of the runtime's choosing; config decodes to SSHAgent.
+	// Instance-shaped, keyed by phase.
+	CapabilitySSHAgent = "com.docker.sandbox/ssh-agent@1"
 
 	// CapabilityVolume is one persistent (or tmpfs) path; config decodes to
 	// Volume. Instance-shaped, keyed by path.
@@ -602,6 +610,44 @@ type Credential struct {
 	// OAuth configures proxy-managed OAuth token interception.
 	OAuth *OAuth `json:"oauth,omitempty" yaml:"oauth,omitempty"`
 }
+
+// SSHAgent is CapabilitySSHAgent's config. Phase accepts one phase or a
+// non-empty list; each phase gets the same signing rules.
+type SSHAgent struct {
+	Phase SSHAgentPhases `json:"phase" yaml:"phase"`
+	// Unrestricted defaults to true. False requires at least one bound.
+	Unrestricted *bool    `json:"unrestricted,omitempty" yaml:"unrestricted,omitempty"`
+	Sign         []string `json:"sign,omitempty" yaml:"sign,omitempty"`
+	Authenticate []string `json:"authenticate,omitempty" yaml:"authenticate,omitempty"`
+}
+
+// SSHAgentPhases accepts a scalar or list, preserving the scalar spelling
+// when encoding a single-phase entry.
+type SSHAgentPhases []string
+
+func (p *SSHAgentPhases) UnmarshalJSON(data []byte) error {
+	var one string
+	if err := json.Unmarshal(data, &one); err == nil {
+		*p = []string{one}
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(data, &many); err != nil {
+		return fmt.Errorf("ssh-agent phase must be a string or list of strings: %w", err)
+	}
+	*p = many
+	return nil
+}
+
+func (p SSHAgentPhases) MarshalJSON() ([]byte, error) {
+	if len(p) == 1 {
+		return json.Marshal(p[0])
+	}
+	return json.Marshal([]string(p))
+}
+
+// Bounded reports whether the entry limits signatures to named purposes.
+func (a SSHAgent) Bounded() bool { return a.Unrestricted != nil && !*a.Unrestricted }
 
 // APIKey configures proxy injection of an API key on outbound requests.
 type APIKey struct {

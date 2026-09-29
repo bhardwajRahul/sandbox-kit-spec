@@ -557,7 +557,7 @@ declaration block (ordinary top-level entries or one group), and in the
 effective merged descriptor:
 `network-policy@1`, `network-policy@2`, `resources@1`, `privileged@1`,
 `kit-registry@1`, `agent-sessions@1`, `lifecycle@1`, `agent-context@1`,
-`sbx@1`, `long-running@1`.
+`sbx@1`, `long-running@1`, `git-identity@1`.
 
 The two `network-policy` versions are additionally **exclusive of each
 other**: a descriptor states one of them, never both. They describe the
@@ -566,7 +566,8 @@ other.
 
 **Instance-shaped types appear once per thing requested**, deduplicated on
 their own key: `credential@1` on (service, phase), `volume@1` on path,
-`agent-skills@1` on path, `port@1` on (container, transport).
+`agent-skills@1` on path, `port@1` on (container, transport),
+`ssh-agent@1` on each phase it names.
 `usb-device@1` is instance-shaped with no dedup key beyond the exact
 entry.
 
@@ -667,6 +668,7 @@ behavior** for a runtime supporting the type:
 | `com.docker.sandbox/network-policy@1` | [network-policy@1](capabilities/com.docker.sandbox/network-policy@1.md) | singleton |
 | `com.docker.sandbox/network-policy@2` | [network-policy@2](capabilities/com.docker.sandbox/network-policy@2.md) | singleton, exclusive with `@1` |
 | `com.docker.sandbox/credential@1` | [credential@1](capabilities/com.docker.sandbox/credential@1.md) | per (service, phase) |
+| `com.docker.sandbox/ssh-agent@1` | [ssh-agent@1](capabilities/com.docker.sandbox/ssh-agent@1.md) | per phase (one entry may name both) |
 | `com.docker.sandbox/volume@1` | [volume@1](capabilities/com.docker.sandbox/volume@1.md) | per path |
 | `com.docker.sandbox/port@1` | [port@1](capabilities/com.docker.sandbox/port@1.md) | per (container, transport) |
 | `com.docker.sandbox/usb-device@1` | [usb-device@1](capabilities/com.docker.sandbox/usb-device@1.md) | instance |
@@ -677,6 +679,7 @@ behavior** for a runtime supporting the type:
 | `com.docker.sandbox/agent-context@1` | [agent-context@1](capabilities/com.docker.sandbox/agent-context@1.md) | singleton |
 | `com.docker.sandbox/agent-sessions@1` | [agent-sessions@1](capabilities/com.docker.sandbox/agent-sessions@1.md) | singleton |
 | `com.docker.sandbox/agent-skills@1` | [agent-skills@1](capabilities/com.docker.sandbox/agent-skills@1.md) | per path |
+| `com.docker.sandbox/git-identity@1` | [git-identity@1](capabilities/com.docker.sandbox/git-identity@1.md) | singleton, config-less |
 | `com.docker.sandbox/kit-registry@1` | [kit-registry@1](capabilities/com.docker.sandbox/kit-registry@1.md) | singleton, config-less |
 | `com.docker.sandbox/sbx@1` | [sbx@1](capabilities/com.docker.sandbox/sbx@1.md) | singleton, config-less |
 
@@ -694,7 +697,8 @@ pages above.
 
 A descriptor projects onto a **permission surface**: the normalized
 (sorted, deduplicated) set of everything the host must grant — phased
-network allow/deny lists, credentials by phase, storage paths, skills
+network allow/deny lists, credentials by phase, what the SSH agent may
+sign by phase, storage paths, skills
 paths, ports, USB matches, privileged, plus one `type+config-digest` entry
 for every other request. The projection input is the **effective descriptor** — published
 declarations with this installation's create-phase arg values expanded
@@ -706,7 +710,8 @@ candidate's against it:
 - Version movement whose surface stays within the granted one **MAY** apply
   silently.
 - Any **widening** — a new allow entry, a **removed deny entry** (the deny
-  was part of what made the grant acceptable), a new credential, path,
+  was part of what made the grant acceptable), a new credential, a wider
+  SSH agent grant, path,
   port, USB match, privileged, write access over a skills path already
   granted read, or any config change on an other-typed request — **MUST** <!-- tck: SPEC-v3 §7.4/widenings-gate -->
   stop for approval.
@@ -719,6 +724,9 @@ candidate's against it:
   workload a particular way and to read an identity the image already
   states (see their pages). `long-running@1` likewise grants no access;
   it keeps the workload running independently of attached sessions.
+- `git-identity@1` contributes its type to the service surface: it
+  discloses runtime-provided name/email values, unlike the image-defined
+  process identity honored by `sbx@1`.
 
 ---
 
@@ -1045,7 +1053,8 @@ The spec library enforces, beyond per-field rules stated above:
 - **capabilities**: type matches
   `^[a-z0-9]([a-z0-9.-]*[a-z0-9])?/[a-z0-9]([a-z0-9-]*[a-z0-9])?@[1-9][0-9]*$`;
   singleton and dedup arity per [§7.1](#71-arity); config-less types
-  (`privileged@1`, `kit-registry@1`, `sbx@1`, `long-running@1`) reject any
+  (`privileged@1`, `kit-registry@1`, `sbx@1`, `long-running@1`,
+  `git-identity@1`) reject any
   config; well-known configs decode strictly (unknown keys are errors)
   and pass their per-type rules
   (see the capability pages); **cross-entry**: every credential inject
