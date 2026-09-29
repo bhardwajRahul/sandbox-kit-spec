@@ -74,6 +74,7 @@ func gitIdentityDefaults(ctx context.Context, e *Env) []report.Finding {
 				return []report.Finding{report.Failf("create %s: %v", fixture, err)}
 			}
 			findings = append(findings, gitIdentityOutput(ctx, e, id, "defaults", gitIdentityName+"\n"+gitIdentityEmail+"\n")...)
+			findings = append(findings, gitIdentityOutput(ctx, e, id, "workload-identity", gitIdentityName+"\n"+gitIdentityEmail+"\n")...)
 			cleanup()
 		}
 		return findings

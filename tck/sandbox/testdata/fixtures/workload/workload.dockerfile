@@ -144,7 +144,7 @@ PRIV
 ENV KIT_TCK_CANARY=image-baseline
 
 WORKDIR /home/agent/workspace
-ENTRYPOINT ["sleep", "infinity"]
+ENTRYPOINT ["kit-tck-git-identity", "workload", "sleep", "infinity"]
 
 COPY --chmod=0755 kit-tck-git-identity /usr/local/bin/kit-tck-git-identity
 RUN git config --global user.name "Image Author" \

@@ -36,6 +36,14 @@ func TestGitIdentityChecksAndMutations(t *testing.T) {
 					a := adapter.New(filepath.Join("testdata", "fake-adapter"))
 					a.Env = []string{"KIT_TCK_FAKE_STATE=" + t.TempDir(), "KIT_TCK_FAKE_BROKEN=" + broken, "KIT_TCK_FAKE_CLAIMS=" + capGitIdentity + "," + capLifecycle}
 					findings := c.run(ctx, &Env{Adapter: a, Fixtures: Fixtures(FixtureDir)})
+					if broken == "git-identity-after-launch" {
+						// Both required and optional grants must fail on the
+						// startup capture even though their exec defaults pass.
+						require.Len(t, findings, 2)
+						for _, finding := range findings {
+							require.Contains(t, finding.Detail, "probe workload-identity:")
+						}
+					}
 					failed := false
 					for _, finding := range findings {
 						if finding.Severity == report.Fail {
@@ -77,6 +85,8 @@ func TestGitIdentityProbe(t *testing.T) {
 	out, err := run("sh", probe, "absent")
 	require.NoError(t, err, "%s", out)
 	require.Equal(t, "absent\n", string(out))
+	out, err = run("sh", probe, "workload", "true")
+	require.NoError(t, err, "%s", out)
 
 	// Source settings are bait: selecting an identity must copy only the
 	// pair, not this entire config. Verify the probe detects the latter.
@@ -94,6 +104,13 @@ func TestGitIdentityProbe(t *testing.T) {
 		require.Equal(t, want+"\n", string(out))
 	}
 	put(strings.Split(gitIdentityConfig(gitIdentityName, gitIdentityEmail), "[alias]")[0] + guestAlias)
+	// A late write changes exec defaults but cannot repair what the
+	// workload saw when it started.
+	out, err = run("sh", probe, "workload-identity")
+	require.NoError(t, err, "%s", out)
+	require.Equal(t, "Image Author\nimage@example.invalid\n", string(out))
+	out, err = run("sh", probe, "workload", "true")
+	require.NoError(t, err, "%s", out)
 	for _, mode := range []string{"defaults", "only", "local", "edit"} {
 		out, err = run("sh", probe, mode)
 		require.NoError(t, err, "probe %s: %s", mode, out)
@@ -101,6 +118,9 @@ func TestGitIdentityProbe(t *testing.T) {
 			require.Equal(t, gitIdentityName+"\n"+gitIdentityEmail+"\n", string(out))
 		}
 	}
+	out, err = run("sh", probe, "workload-identity")
+	require.NoError(t, err, "%s", out)
+	require.Equal(t, gitIdentityName+"\n"+gitIdentityEmail+"\n", string(out))
 }
 
 func TestGitIdentityRequiredUnclaimedIsRefused(t *testing.T) {

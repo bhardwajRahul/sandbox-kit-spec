@@ -1,6 +1,25 @@
 #!/bin/sh
 set -eu
 case "${1:?probe mode required}" in
+workload)
+  # Capture once at entrypoint, before a late runtime write can make an
+  # exec probe pass. Publish atomically so exec cannot read half a pair.
+  "$0" defaults > "$HOME/git-identity-workload.tmp" || :
+  mv "$HOME/git-identity-workload.tmp" "$HOME/git-identity-workload"
+  shift
+  exec "$@"
+  ;;
+workload-identity)
+  # Create can return before the entrypoint is scheduled. Wait only for
+  # its capture, never for the current Git config to acquire the pair.
+  attempts=0
+  until [ -f "$HOME/git-identity-workload" ]; do
+    attempts=$((attempts + 1))
+    [ "$attempts" -le 10 ] || { echo 'workload identity capture missing' >&2; exit 1; }
+    sleep 1
+  done
+  cat "$HOME/git-identity-workload"
+  ;;
 defaults)
   git config --global --get user.name
   git config --global --get user.email

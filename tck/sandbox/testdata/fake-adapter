@@ -162,6 +162,9 @@ create)
   mkdir -p "$dir"
   echo running >"$dir/status"
   printf '%s\n' 'Image Author' image@example.invalid >"$dir/git-identity"
+  if [ "$broken" = git-identity-after-launch ]; then
+    cp "$dir/git-identity" "$dir/git-workload"
+  fi
   if [ -n "$identity_requested" ] || [ "$broken" = imports-unrequested-identity ]; then
     if [ "$broken" != ignores-git-identity ]; then
       printf '%s\n%s\n' "$identity_name" "$identity_email" >"$dir/git-identity"
@@ -171,6 +174,9 @@ create)
   if [ -n "$identity_config" ] && [ "$identity_config" != off ]; then printf '%s' "$identity_config" >"$dir/git-source"; fi
   cat "$dir/git-identity" "$dir/git-identity" >"$dir/git-hooks"
   if [ "$broken" = late-git-identity ]; then echo missing >"$dir/git-hooks"; fi
+  if [ "$broken" != git-identity-after-launch ]; then
+    cp "$dir/git-identity" "$dir/git-workload"
+  fi
   for kit in "${kits[@]}"; do
     if [[ "$kit" == */long-running ]]; then : >"$dir/long-running-mixin"; fi
   done
@@ -316,6 +322,7 @@ exec)
   kit-tck-git-identity)
     case "$2" in
     defaults) cat "$dir/git-identity" ;;
+    workload-identity) cat "$dir/git-workload" ;;
     hooks) cat "$dir/git-hooks" ;;
     absent)
       test "$(head -1 "$dir/git-identity")" = 'Image Author'

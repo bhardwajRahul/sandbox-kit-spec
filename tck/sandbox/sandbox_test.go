@@ -119,6 +119,7 @@ func TestAConformingRuntimePasses(t *testing.T) {
 var mutations = map[string][]string{
 	"ignores-git-identity":              {"git-identity@1/global-defaults"},
 	"corrupts-git-identity":             {"git-identity@1/global-defaults"},
+	"git-identity-after-launch":         {"git-identity@1/global-defaults"},
 	"late-git-identity":                 {"git-identity@1/before-hooks"},
 	"forces-git-identity":               {"git-identity@1/local-precedence"},
 	"imports-source-git-settings":       {"git-identity@1/identity-only"},
