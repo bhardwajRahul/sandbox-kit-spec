@@ -505,6 +505,9 @@ func hostLookup(root *fsNode, d string) dirResult {
 func stack(lower, upper *fsNode) {
 	if upper.opaque {
 		lower.children = map[string]*fsNode{}
+		// Retain the hiding boundary for callers composing this whole overlay
+		// onto another filesystem; its own erased entries alone cannot show it.
+		lower.opaque = true
 	}
 	if upper.explicit {
 		lower.explicit, lower.uid, lower.gid, lower.mode = true, upper.uid, upper.gid, upper.mode
@@ -516,7 +519,11 @@ func stack(lower, upper *fsNode) {
 		}
 		l := lower.children[name]
 		if l == nil || l.kind != nodeDir {
+			replaced := l != nil
 			l = newDir()
+			// A directory above a lower file or whiteout does not resurrect
+			// directories hidden beneath that intervening non-directory.
+			l.opaque = replaced
 			lower.children[name] = l
 		}
 		stack(l, u)
@@ -583,4 +590,32 @@ func pushPath(pending []string, p string) []string {
 		pending = append(pending, segs[i])
 	}
 	return pending
+}
+
+// Entry is a path's final effect when the model is placed over another Kit.
+// Whiteouts and opaque directories retain deletions, even when there was
+// nothing to delete in this Kit's own layers. Paths are clean and absolute.
+type Entry struct {
+	Path      string
+	Directory bool
+	Whiteout  bool
+	Opaque    bool
+}
+
+func (o *FS) Entries() []Entry {
+	var out []Entry
+	var walk func(*fsNode, string)
+	walk = func(n *fsNode, at string) {
+		if at != "/" || n.opaque {
+			out = append(out, Entry{Path: at, Directory: n.kind == nodeDir, Whiteout: n.kind == nodeWhiteout, Opaque: n.opaque})
+		}
+		if n.kind == nodeDir {
+			for name, child := range n.children {
+				walk(child, path.Join(at, name))
+			}
+		}
+	}
+	walk(o.root, "/")
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
 }

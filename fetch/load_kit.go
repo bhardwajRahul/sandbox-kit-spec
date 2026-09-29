@@ -12,7 +12,7 @@ import (
 // KitLoader supplies verified metadata for the requested reference. It owns
 // authentication, platform selection, and its backing store. The returned
 // digest pins the requested manifest or index, not a subsequently moved tag.
-// Assemble validates declarations and verifies every layer stream it reads.
+// Assemble validates declarations and verifies both blob digests and diff IDs.
 type KitLoader func(context.Context, string) (*LoadedKit, error)
 
 // LoadedKit keeps descriptor identity and image metadata together. Its data

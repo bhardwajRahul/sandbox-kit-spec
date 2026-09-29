@@ -62,10 +62,15 @@ Supply the complete dependency set, containing exactly one workload.
 `Assemble` does not discover missing dependencies or publish an image.
 It loads verified metadata, resolves arguments and capability decisions,
 composes image defaults, reads layer inventories, and rejects files
-contributed by multiple Kits. Directories may overlap. A layer shared
-by multiple inputs is read once, but each Kit retains its file ownership
-for the collision check. Skipping capabilities removes neither layers
-nor argument environment exports.
+contributed by multiple Kits. Collision checks resolve each Kit's layers
+with the shared overlay filesystem model before comparing them in image
+order: cleaned paths, symlink aliases, whiteouts, opaque directories,
+and file/directory replacements are included. Directories may overlap.
+Files deleted within a Kit no longer claim paths, but its surviving
+deletion effects cannot erase another Kit's content. A layer shared by
+multiple inputs with the same expected diff ID is read once, but each
+Kit retains its file ownership for the collision check. Skipping
+capabilities removes neither layers nor argument environment exports.
 
 The program prints the result plus its computed manifest:
 
@@ -123,9 +128,11 @@ result, err := fetch.Assemble(ctx, requests, fetch.Options{
 For anonymous registries use `fetch.New()`. For a local content store,
 supply a loader that opens blobs from that store. `OpenLayer` returns
 fresh streams in the manifest's original compression and honors the
-provided context. Assembly accepts tar, gzip, and zstd. Every opened
-stream is closed on success or failure; read and close errors fail the
-operation.
+provided context. Assembly accepts tar, gzip, and zstd. It verifies both
+the manifest's stored-blob digest and the config's uncompressed diff ID,
+including archive padding and compression trailers. Every opened stream
+is closed on success or failure; read and close errors fail the operation.
+An archive entry the shared extractor model refuses fails assembly.
 
 `OnProgress` receives serialized stage transitions on the calling
 goroutine: `started`, `completed`, or `failed`. The stages are `load`,

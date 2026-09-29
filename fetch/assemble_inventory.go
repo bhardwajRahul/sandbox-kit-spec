@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"strings"
 
 	"github.com/docker/sandbox-kit-spec/v3/assemble"
 	"github.com/docker/sandbox-kit-spec/v3/resolve"
@@ -15,17 +14,27 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
-func inventoryKits(ctx context.Context, kits []*resolve.Unit, loaded map[string]*LoadedKit, report func(Progress)) ([]assemble.Inventory, error) {
+type kitInventory struct {
+	reference string
+	layers    [][]tar.Header
+}
+
+func inventoryKits(ctx context.Context, kits []*resolve.Unit, loaded map[string]*LoadedKit, report func(Progress)) ([]kitInventory, error) {
+	// Descriptors are dependency-ordered; filesystem effects are workload-first.
+	resolution, err := resolve.Resolve(kits)
+	if err != nil {
+		return nil, err
+	}
 	type blobKey struct {
 		digest digest.Digest
 		size   int64
 		diffID digest.Digest
 	}
-	cache := map[blobKey][]string{}
-	inventories := make([]assemble.Inventory, 0, len(kits))
-	for _, kit := range kits {
+	cache := map[blobKey][]tar.Header{}
+	inventories := make([]kitInventory, 0, len(kits))
+	for _, kit := range resolution.Ordered() {
 		input := loaded[kit.Reference]
-		inventory := assemble.Inventory{Kit: kit.Reference}
+		inventory := kitInventory{reference: kit.Reference}
 		for index, layer := range input.Manifest.Layers {
 			if err := ctx.Err(); err != nil {
 				return nil, err
@@ -44,14 +53,14 @@ func inventoryKits(ctx context.Context, kits []*resolve.Unit, loaded map[string]
 				}
 				cache[key] = files
 			}
-			inventory.Files = append(inventory.Files, files...)
+			inventory.layers = append(inventory.layers, files)
 		}
 		inventories = append(inventories, inventory)
 	}
 	return inventories, nil
 }
 
-func readLayerInventory(ctx context.Context, input *LoadedKit, layer ocispec.Descriptor, diffID digest.Digest) (files []string, retErr error) {
+func readLayerInventory(ctx context.Context, input *LoadedKit, layer ocispec.Descriptor, diffID digest.Digest) (files []tar.Header, retErr error) {
 	if layer.Size == math.MaxInt64 {
 		return nil, fmt.Errorf("layer size is too large")
 	}
@@ -69,9 +78,10 @@ func readLayerInventory(ctx context.Context, input *LoadedKit, layer ocispec.Des
 	verifier := layer.Digest.Verifier()
 	verified := io.TeeReader(limited, verifier)
 	err = assemble.WalkLayerVerified(verified, diffID, func(hdr *tar.Header) error {
-		if hdr.Typeflag != tar.TypeDir {
-			files = append(files, strings.TrimPrefix(strings.TrimPrefix(hdr.Name, "./"), "/"))
-		}
+		// Keep only extraction metadata, never bodies or extended attributes.
+		files = append(files, tar.Header{Name: hdr.Name, Typeflag: hdr.Typeflag,
+			Linkname: hdr.Linkname, Mode: hdr.Mode, Uid: hdr.Uid, Gid: hdr.Gid,
+			Devmajor: hdr.Devmajor, Devminor: hdr.Devminor})
 		return nil
 	})
 	if err != nil {

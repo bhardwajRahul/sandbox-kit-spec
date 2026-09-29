@@ -50,7 +50,7 @@ type Result struct {
 }
 
 // Assemble loads a closed set of OCI Kit references, resolves and selects
-// declarations, composes image metadata, and checks layer file collisions.
+// declarations, composes image metadata, and checks resolved filesystem collisions.
 // It does not publish blobs, create a container, or apply capabilities.
 // Image.Manifest and Image.WriteMetadata serialize consistent image metadata;
 // Environment and WorkingDir are applied separately at container creation.
@@ -144,7 +144,7 @@ func Assemble(ctx context.Context, requests []Request, options Options) (*Result
 		return nil, err
 	}
 	err = progressStep(ctx, options.OnProgress, Progress{Stage: StageCollisions}, func() error {
-		return assemble.CheckCollisions(inventories)
+		return checkFileCollisions(ctx, inventories)
 	})
 	if err != nil {
 		return nil, err
