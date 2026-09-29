@@ -447,7 +447,7 @@ func argExports(decls map[string]spec.Arg, values map[string]string) (map[string
 			continue
 		}
 		if held, exists := env[decl.Env]; exists && held != value {
-			return nil, fmt.Errorf("args export %s as %q and %q; supply values that agree", decl.Env, held, value)
+			return nil, fmt.Errorf("args export different values for %s; supply values that agree", decl.Env)
 		}
 		env[decl.Env] = value
 	}
@@ -471,7 +471,7 @@ func combineExports(kits []*Kit, exports []map[string]string) (map[string]string
 		for name, value := range env {
 			if held, ok := bound[name]; ok {
 				if held.value != value {
-					return nil, fmt.Errorf("%s and %s both export %s, as %q and %q", held.owner, kits[i].Reference, name, held.value, value)
+					return nil, fmt.Errorf("%s and %s export different values for %s", held.owner, kits[i].Reference, name)
 				}
 				continue
 			}

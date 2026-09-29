@@ -1,9 +1,9 @@
-# Resolve Kits and assemble an image through the Go API
+# Assemble Kits through the Go API
 
 [main.go](main.go) is a complete runnable consumer. It reads OCI
 references and per-Kit create arguments from stdin, authenticates using
-Docker's credential store, selects capabilities through an explicit
-callback, resolves validated declarations, and assembles image metadata.
+Docker's credential store, selects capabilities, composes the image and
+declarations, and checks file collisions across the Kits' layers.
 
 From the repository root, substitute references you can read. The tool
 Kit below is assumed to declare a create-phase `team` argument; use the
@@ -29,117 +29,151 @@ its lifecycle configuration file. A required rejected entry or group
 fails resolution. These flags control the preview; it does not inspect
 the host or apply capabilities.
 
-The core API flow is:
+## One-call API
 
 ```go
-client, err := fetch.New(fetch.WithDockerCredentials())
+result, err := fetch.Assemble(ctx, requests, fetch.Options{
+    CapabilitySelector: spec.Supported(claimedTypes...),
+    Overrides: fetch.Overrides{
+        Env: map[string]string{"WORKSPACE_DIR": "/workspace"},
+    },
+    OnProgress: func(p fetch.Progress) {
+        // Render p.Stage, p.State, p.Reference, and p.Layer in the UI.
+    },
+})
 if err != nil {
     return err
 }
-// Replace the preview's list and policy with the runtime's own decisions.
-supported := spec.Supported(spec.KnownCapabilities()...)
-allowVolumes := false
-selectCapability := func(capability spec.Capability) bool {
-    if !supported(capability) {
-        return false
-    }
-    if capability.Type == spec.CapabilityVolume {
-        return allowVolumes
-    }
-    return true
-}
-resolved, err := client.Resolve(ctx, requests,
-    fetch.WithCapabilitySelector(selectCapability))
-if err != nil {
-    return err
-}
-image, err := assemble.Assemble(ctx, resolved.Kits, client.LoadImage)
-if err != nil {
-    return err
-}
-manifest, err := image.Manifest()
+manifest, err := result.Image.Manifest()
 if err != nil {
     return err
 }
 ```
 
-`Resolve` reads descriptor annotations, strictly decodes and validates
-them, resolves create arguments, expands and validates each descriptor,
-resolves the dependency set, calls the selector on expanded entries,
-selects whole groups, flattens and composes in dependency order, and
-validates the final descriptor. Supply all required Kits: resolution does not
-discover missing dependencies. Exactly one Kit is a workload.
-`ResolvePartial` allows a mixin-only set and still performs every check.
-Image assembly requires a workload.
+`fetch.Options{}` is sufficient for registry loading and acceptance of
+all capability types the library knows. That default is not a claim that
+a runtime implements every type: supply its actual supported types or a
+policy callback. Selection sees expanded configurations and must not
+apply effects. The library validates even skipped declarations, selects
+groups atomically, and validates the selected composition. Conflicts
+fail; optional groups are not dropped to repair them.
 
-The client defaults to Linux on the caller's architecture. Pass
-`fetch.WithPlatform` to select another platform. Public registries can
-use `fetch.New()` without credentials.
+Supply the complete dependency set, containing exactly one workload.
+`Assemble` does not discover missing dependencies or publish an image.
+It loads verified metadata, resolves arguments and capability decisions,
+composes image defaults, reads layer inventories, and rejects files
+contributed by multiple Kits. Collision checks resolve each Kit's layers
+with the shared overlay filesystem model before comparing them in image
+order: cleaned paths, symlink aliases, whiteouts, opaque directories,
+and file/directory replacements are included. Directories may overlap.
+Files deleted within a Kit no longer claim paths, but its surviving
+deletion effects cannot erase another Kit's content. A layer shared by
+multiple inputs with the same expected diff ID is read once, but each
+Kit retains its file ownership for the collision check. Skipping
+capabilities removes neither layers nor argument environment exports.
 
-The program prints three values:
+The entire assembly is limited to 4,096 layer occurrences, 250,000
+archive entries, 250,000 path components, and 32 MiB of combined path
+and link-name bytes across all Kits. Components in both entry names and
+link targets count before path cleaning, limiting implied directory
+creation as well as retained strings. Repeated entries and cached layer
+replays count toward every allowance; empty archives still consume the
+layer allowance. Assembly fails when a limit is exceeded and closes any
+open layer stream. Inventories retain compact extraction metadata rather
+than full tar headers. These
+limits prevent additional layers or Kits from multiplying the inventory
+allowance.
 
-- `Resolved`: the selected, merged `Descriptor`, dependency-ordered
-  selected `Kits`, original declarations and records in `Selections`,
-  `ContainerEnv`, and validation `Warnings`. Each selected Kit retains its
-  reference, digest-pinned image, expanded descriptor, and resolved
-  arguments including defaults.
+The program prints the result plus its computed manifest:
+
+- `Resolved`: the selected `Descriptor`, dependency-ordered per-Kit
+  `Kits`, original declarations and decisions in `Selections`, argument
+  `ContainerEnv` exports, and validation `Warnings`.
 - `Image`: typed OCI `Config` and ordered `Layers`. The workload's
   layers come first, followed by mixins in dependency order.
-- `Manifest`: an OCI manifest computed from the current image config
-  and layer references.
+- `Environment`: the complete container environment, combining image
+  defaults, argument exports, and `Overrides.Env`, in that precedence.
+- `WorkingDir`: the workload image's working directory, or the explicit
+  absolute `Overrides.WorkingDir` when supplied.
+- `Manifest`: a snapshot computed from the image defaults and layers.
 
-Use `Resolved.Descriptor` for reconciled capabilities. Handlers that
-need attribution can inspect each input in `Resolved.Kits`. Preserve
-those inputs when serializing the result: some per-Kit declarations
-cannot fit into a reconciled singleton entry.
-
-`Resolved.ContainerEnv` contains resolved arguments explicitly exported
-with `env:`. Apply these as overrides when creating the container,
-after image environment defaults. Assembly leaves them separate from
-`Image.Config`. Conflicting Kit exports are errors; identical values
-coalesce. Arguments without `env:` only expand the descriptor.
-
-`LoadImage` reads the platform manifests and config blobs using the same
-credentials and platform as resolution. Assembly uses the pinned image
-references, so moving a tag after resolution does not change its inputs.
-A local runtime can supply its own `assemble.ImageLoader` instead.
-
-`image.Manifest()` computes the config digest and size internally.
-After changing `image.Config`, call it again to obtain a fresh snapshot.
-For storage, `image.WriteMetadata(ctx, destination)` accepts an ORAS
-`content.Pusher` and writes the config and manifest from one
-serialization snapshot, returning the manifest's OCI descriptor.
-Consumers do not handle a separate serialized config field.
-
-Neither resolution nor image assembly downloads filesystem layers.
-The runtime supplies layer transfer, filesystem collision checks,
-image naming/import, and container creation. A metadata destination
-must have access to the referenced layers; `WriteMetadata` does not
-copy them.
-
-Validation is always enabled. Errors retain their structured causes,
-and descriptor validation errors include locations and source excerpts,
-so print the returned error directly.
-
-Publishing a flattened Kit remains `spec.Merge`'s job. Its
-`MergeOptions.ContextPath` belongs to the publisher that stages the
-combined body; runtime consumers do not choose a publishing path.
-
-For runtime selection, pass
-`fetch.WithCapabilitySelector(spec.Supported(claimedTypes...))` to
-`Resolve` or `ResolvePartial`. A custom callback can also inspect each
-expanded config and apply host policy. The default accepts types known
-to this library; it does not inspect host availability.
-
-For already loaded descriptors, use
-`spec.SelectCapabilities(descriptor, selector)`. Selection receives the
-whole descriptor so it can validate kind-specific rules before invoking
-policy, including workload-only capabilities and context profiles.
+Environment and working-directory overrides do not modify the reusable
+image. Apply the returned container settings at creation. Empty
+variable values remain empty; missing override keys retain their values.
+Values are literal: this API does not evaluate shell expressions or
+`${{ kit.env.* }}` placeholders. Those placeholders are not supported.
 
 Persist `Resolved.Descriptor` and `Resolved.Selections` with the sandbox
-and reuse that selection on restart. `Resolved.Kits` contains
-only selected, unmerged contributions; `Selections` retains the original
-declarations for diagnostics. Apply hooks from `Resolved.Descriptor`,
-and use `spec.AgentContextsOf(kit.Descriptor.Capabilities)` to enumerate
-all selected per-Kit guidance bodies. Do not apply the original
-unselected declarations on startup or during image assembly.
+and reuse the decision on restart. A recreation selects afresh. Apply
+hooks from `Resolved.Descriptor`; use
+`spec.AgentContextsOf(kit.Descriptor.Capabilities)` for each selected
+Kit's guidance bodies. Do not execute original, unselected declarations.
+Use `resolve.Resolve(result.Resolved.Kits)` with the existing lock/gate
+APIs to judge permissions before applying the result.
+
+## Loading and progress
+
+`Options.Loader` accepts a `fetch.KitLoader`. Its `LoadedKit` contains
+verified digest identity, manifest, config, and a lazy `OpenLayer`
+function. `Descriptor` optionally carries the original annotation from
+an index; otherwise the platform manifest's annotation is used. A loader
+must resolve metadata consistently to the returned digest and select a
+platform. Assembly validates the metadata and declarations; it streams,
+verifies, and closes layer blobs without buffering their bodies.
+
+The default loader uses Docker credentials and Linux on the caller's
+architecture. Customize registry behavior with the existing client:
+
+```go
+client, err := fetch.New(
+    fetch.WithDockerCredentials(),
+    fetch.WithPlatform(platform),
+)
+if err != nil {
+    return err
+}
+result, err := fetch.Assemble(ctx, requests, fetch.Options{
+    Loader: client.LoadKit,
+})
+```
+
+For anonymous registries use `fetch.New()`. For a local content store,
+supply a loader that opens blobs from that store. `OpenLayer` returns
+fresh streams in the manifest's original compression and honors the
+provided context. Assembly accepts tar, gzip, and zstd. It verifies both
+the manifest's stored-blob digest and the config's uncompressed diff ID,
+including archive padding and compression trailers. Every opened stream
+is closed on success or failure; read and close errors fail the operation.
+An archive entry the shared extractor model refuses fails assembly.
+
+`OnProgress` receives serialized stage transitions on the calling
+goroutine: `started`, `completed`, or `failed`. The stages are `load`,
+`resolve` (including argument expansion, selection, and descriptor
+validation), `compose`, `inventory`, and `collisions`. Kit references and
+layer digests identify individual work. Inventory events include cached
+layer replays, which consume the operation budget without reopening
+blobs. Callbacks should return promptly; use the context to cancel. The
+returned error remains authoritative, and events never contain
+configuration values or file contents.
+
+## Storage and lower-level APIs
+
+`result.Image.Manifest()` computes the config digest and size internally.
+After changing the image config, call it again for a fresh snapshot.
+`Image.WriteMetadata(ctx, destination)` accepts an ORAS `content.Pusher`
+and writes config and manifest from one serialization snapshot. The
+caller supplies layer transfer, naming/import, and container creation;
+the destination must have access to all referenced layers.
+
+For callers orchestrating those steps themselves, `Client.Resolve` and
+`ResolvePartial` resolve only declarations. `Client.LoadImage` and
+`assemble.Assemble` load and compose image metadata without downloading
+layers. These existing APIs remain available. The one-call API also
+checks layer inventories, so it reads more data than metadata-only
+assembly.
+
+Errors retain structured causes. Descriptor errors include original
+locations and source excerpts; print the returned error directly.
+Publishing a flattened Kit remains `spec.Merge`'s job, with staged
+context bodies owned by the publisher. Runtime composition uses
+`spec.Compose` and preserves each selected context source separately.
