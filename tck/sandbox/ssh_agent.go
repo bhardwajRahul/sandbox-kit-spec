@@ -270,38 +270,8 @@ func initialProcessRestrictions(ctx context.Context, e *Env, id string, a *backi
 			return f
 		}
 		for path, proof := range proofs {
-			fields := agentProbeFields(proof)
-			for _, kind := range sshAgentMutatingRequests {
-				if fields[fmt.Sprintf("raw-%d", kind)] != "1" {
-					return failing("%s on boot %d did not refuse operation %d", path, boot+1, kind)
-				}
-			}
-			for _, extension := range []string{"query", "kit-tck-unknown@example.com"} {
-				if fields["extension-"+extension] != "1" {
-					return failing("%s on boot %d did not refuse extension %s", path, boot+1, extension)
-				}
-			}
-			want := "0"
-			if bounded {
-				want = "1"
-			}
-			for _, probe := range []string{"other", "file", "login"} {
-				if fields["probe-"+probe] != want {
-					return failing("%s on boot %d: signing probe %s returned %q, want %s", path, boot+1, probe, fields["probe-"+probe], want)
-				}
-			}
-		}
-		// These probes send only forbidden extensions, never session bindings.
-		for _, kind := range append(append([]int{}, sshAgentMutatingRequests...), 27) {
-			if count := a.RequestsOfType(byte(kind)); count != 0 {
-				return failing("initial processes forwarded %d request(s) of type %d on boot %d", count, kind, boot+1)
-			}
-		}
-		if bounded {
-			for _, request := range a.Signed() {
-				if request != "sshsig git" {
-					return failing("initial processes forwarded forbidden signing request %s on boot %d", request, boot+1)
-				}
+			if f := agentProofRestrictions(a, proof, bounded); f != nil {
+				return failing("%s on boot %d: %s", path, boot+1, f.Detail)
 			}
 		}
 		previous = proofs
@@ -312,7 +282,7 @@ func initialProcessRestrictions(ctx context.Context, e *Env, id string, a *backi
 // sshAgentRestricted sends every request that would change the backing
 // agent, and extensions nothing grants, through an unbounded entry: even
 // the widest grant is a grant to use keys, not to manage the agent.
-func sshAgentRestricted(ctx context.Context, e *Env) []report.Finding {
+func sshAgentRestrictedRuntime(ctx context.Context, e *Env) []report.Finding {
 	return withBackingAgent(func(a *backingAgent) []report.Finding {
 		id, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, fixtureSSHAgent}, adapter.CreateOptions{SSHAgent: a.Socket()})
 		if err != nil {
@@ -360,7 +330,7 @@ func sshAgentRestricted(ctx context.Context, e *Env) []report.Finding {
 
 // sshAgentSignaturesBounded judges the sign bound on the bounded fixture,
 // which admits namespace git and logins as git to the suite's server.
-func sshAgentSignaturesBounded(ctx context.Context, e *Env) []report.Finding {
+func sshAgentSignaturesBoundedRuntime(ctx context.Context, e *Env) []report.Finding {
 	return withBackingAgent(func(a *backingAgent) []report.Finding {
 		id, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, fixtureSSHAgentBounded}, adapter.CreateOptions{SSHAgent: a.Socket()})
 		if err != nil {
@@ -679,4 +649,95 @@ func sshAgentDestinationKeys(ctx context.Context, e *Env) []report.Finding {
 			loginCase{"externally trusted host key", sshTestUser, sid, trusted, ""},
 			[]loginCase{{"host key trusted only by sandbox known_hosts", sshTestUser, sid, untrusted, ""}})
 	})
+}
+
+func sshAgentRestricted(ctx context.Context, e *Env) []report.Finding {
+	findings := sshAgentRestrictedRuntime(ctx, e)
+	if e.Claimed[capLifecycle] {
+		findings = append(findings, sshAgentInstallRestrictions(ctx, e, false)...)
+	}
+	return findings
+}
+
+func sshAgentSignaturesBounded(ctx context.Context, e *Env) []report.Finding {
+	findings := sshAgentSignaturesBoundedRuntime(ctx, e)
+	if e.Claimed[capLifecycle] {
+		findings = append(findings, sshAgentInstallRestrictions(ctx, e, true)...)
+	}
+	return findings
+}
+
+// The dual-phase fixture uses one bounded entry, so dropping either phase
+// or applying different rules to its install hook cannot pass.
+func sshAgentInstallRestrictions(ctx context.Context, e *Env, bounded bool) []report.Finding {
+	return withBackingAgent(func(a *backingAgent) []report.Finding {
+		fixture := fixtureSSHAgentInstall
+		if bounded {
+			fixture = "ssh-agent-dual"
+		}
+		id, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, fixture}, adapter.CreateOptions{SSHAgent: a.Socket()})
+		if err != nil {
+			return []report.Finding{report.Failf("create install probe: %v", err)}
+		}
+		defer cleanup()
+		proof, f := execOutput(ctx, e, id, "cat", "/var/tmp/ssh-agent-at-install")
+		if f != nil {
+			return []report.Finding{*f}
+		}
+		if !strings.Contains(proof, a.PublicKey()) || verifyAgentSignature(a, proof) != nil {
+			return []report.Finding{report.Failf("install hook did not list and sign with the backing agent")}
+		}
+		if f := agentProofRestrictions(a, proof, bounded); f != nil {
+			return []report.Finding{*f}
+		}
+		if bounded {
+			if f := initialProcessRestrictions(ctx, e, id, a, true); f != nil {
+				return []report.Finding{*f}
+			}
+			if f := expectSigned(ctx, e, id, a, "sshsig git", "sshsig", "git", a.PublicKey()); f != nil {
+				return []report.Finding{*f}
+			}
+			if f := expectRefused(ctx, e, id, a, "dual-phase out-of-bound signature", "sign", a.PublicKey()); f != nil {
+				return []report.Finding{*f}
+			}
+		}
+		return nil
+	})
+}
+
+func agentProofRestrictions(a *backingAgent, proof string, bounded bool) *report.Finding {
+	fields := agentProbeFields(proof)
+	for _, kind := range sshAgentMutatingRequests {
+		if fields[fmt.Sprintf("raw-%d", kind)] != "1" {
+			return failing("agent probe did not refuse operation %d", kind)
+		}
+	}
+	for _, extension := range []string{"query", "kit-tck-unknown@example.com"} {
+		if fields["extension-"+extension] != "1" {
+			return failing("agent probe did not refuse extension %s", extension)
+		}
+	}
+	want := "0"
+	if bounded {
+		want = "1"
+	}
+	for _, probe := range []string{"other", "file", "login"} {
+		if fields["probe-"+probe] != want {
+			return failing("agent probe: signing probe %s returned %q, want %s", probe, fields["probe-"+probe], want)
+		}
+	}
+	// These probes send only forbidden extensions, never session bindings.
+	for _, kind := range append(append([]int{}, sshAgentMutatingRequests...), 27) {
+		if count := a.RequestsOfType(byte(kind)); count != 0 {
+			return failing("initial processes forwarded %d request(s) of type %d", count, kind)
+		}
+	}
+	if bounded {
+		for _, request := range a.Signed() {
+			if request != "sshsig git" {
+				return failing("initial processes forwarded forbidden signing request %s", request)
+			}
+		}
+	}
+	return nil
 }

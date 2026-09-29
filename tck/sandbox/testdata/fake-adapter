@@ -246,7 +246,7 @@ create)
       *long-running-workload*) ;;
       *long-running*) need="com.docker.sandbox/long-running@1" ;;
       */ssh-agent-optional) ;;
-      */ssh-agent | */ssh-agent-install | */ssh-agent-bounded) need="com.docker.sandbox/ssh-agent@1" ;;
+      */ssh-agent | */ssh-agent-install | */ssh-agent-bounded | */ssh-agent-dual) need="com.docker.sandbox/ssh-agent@1" ;;
       *skills-optional* | *scoped-egress*) ;;
       # Before the *context* arm, whose name this fixture also carries
       # through its own agent-context profile.
@@ -288,6 +288,7 @@ create)
   agent_config='{"phase":"runtime"}'
   for kit in "${kits[@]}"; do
     case "$kit" in
+    */ssh-agent-dual) agent_phase=dual agent_required=1 agent_config='{"phase":["install","runtime"],"unrestricted":false,"sign":["git"]}' ;;
     */ssh-agent-install) agent_phase=install agent_required=1 agent_config='{"phase":"install"}' ;;
     */ssh-agent-optional) agent_phase=runtime ;;
     */ssh-agent-bounded)
@@ -409,13 +410,17 @@ create)
   # The agent a runtime grant reaches. Only the socket's presence matters
   # inside the sandbox; every process probe reaches it through the relay.
   if [ -n "$offered_agent" ]; then
-    if [ "$agent_phase" = install ]; then
+    if [ "$agent_phase" = install ] || [ "$agent_phase" = dual ]; then
       # The install hook runs with the agent granted and records what it
       # offered, through the workload probe and the relay.
-      if [ "$broken" = "ssh-agent-install-missing" ]; then
+      if [ "$broken" = "ssh-agent-install-missing" ] || { [ "$agent_phase" = dual ] && [ "$broken" = ssh-agent-dual-runtime-only ]; }; then
         echo "Could not open a connection to your authentication agent." >"$dir/ssh-agent-at-install"
       else
-        run_ssh_probe "$dir" "$offered_agent" "$broken" list >"$dir/ssh-agent-at-install" 2>&1 || true
+        install_broken="$broken"
+        if [ "$broken" = ssh-agent-install-unfiltered-operations ]; then install_broken=ssh-agent-forwards-constrained-rsa; fi
+        if [ "$broken" = ssh-agent-install-unfiltered-sign ]; then install_broken=ssh-agent-unfiltered-sign; fi
+        if [ "$broken" = ssh-agent-install-forward-refused-sign ]; then install_broken=ssh-agent-sign-forwards-refused; fi
+        run_ssh_probe "$dir" "$offered_agent" "$install_broken" observe >"$dir/ssh-agent-at-install" 2>&1 || true
       fi
       printf '%s' /run/kit-tck/install-agent.sock >"$dir/install-ssh-sock"
       printf '%s' "$offered_agent" >"$dir/install-agent"
@@ -428,6 +433,12 @@ create)
     elif [ -z "$agent_phase" ] && [ "$broken" = "ssh-agent-without-grant" ]; then
       printf '%s' "$offered_agent" >"$dir/ssh-agent"
     fi
+  fi
+  if [ "$agent_phase" = dual ] && [ "$broken" != ssh-agent-dual-install-only ]; then
+    if [ "$broken" = ssh-agent-dual-unfiltered-runtime ]; then
+      printf '%s' '{"unrestricted":true}' >"$dir/ssh-agent.json"
+    fi
+    printf '%s' "$offered_agent" >"$dir/ssh-agent"
   fi
   if [ -f "$dir/ssh-agent" ]; then
     record_ssh_processes "$dir" create

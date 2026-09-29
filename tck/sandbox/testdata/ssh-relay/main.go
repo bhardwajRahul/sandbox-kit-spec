@@ -34,7 +34,6 @@ const (
 )
 
 type config struct {
-	Phase        string   `json:"phase"`
 	Unrestricted *bool    `json:"unrestricted"`
 	Sign         []string `json:"sign"`
 	Authenticate []string `json:"authenticate"`

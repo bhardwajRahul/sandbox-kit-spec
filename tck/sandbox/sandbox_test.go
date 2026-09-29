@@ -203,6 +203,12 @@ var mutations = map[string][]string{
 	"ssh-agent-restart-workload-unfiltered-operations": {"ssh-agent@1/operations-restricted"},
 	"ssh-agent-restart-startup-unfiltered-sign":        {"ssh-agent@1/signatures-bounded"},
 	"ssh-agent-restart-startup-unfiltered-operations":  {"ssh-agent@1/operations-restricted"},
+	"ssh-agent-install-unfiltered-operations":          {"ssh-agent@1/operations-restricted"},
+	"ssh-agent-install-unfiltered-sign":                {"ssh-agent@1/signatures-bounded"},
+	"ssh-agent-install-forward-refused-sign":           {"ssh-agent@1/signatures-bounded"},
+	"ssh-agent-dual-unfiltered-runtime":                {"ssh-agent@1/signatures-bounded"},
+	"ssh-agent-dual-runtime-only":                      {"ssh-agent@1/signatures-bounded"},
+	"ssh-agent-dual-install-only":                      {"ssh-agent@1/signatures-bounded"},
 	"install-socket-still-reachable":                   {"ssh-agent@1/phase-scoped"},
 
 	"ssh-agent-restart-missing-workload-env": {"ssh-agent@1/every-boot"},
