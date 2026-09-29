@@ -2,8 +2,8 @@
 schemaVersion: "3"
 displayName: GitHub over SSH
 description: >-
-  Lets git fetch from and push to GitHub over SSH with the user's key, and
-  sign commits with it, through the SSH agent the runtime exposes. The
+  Lets git fetch from and push to GitHub over SSH and sign commits through
+  the same SSH agent the runtime exposes. The
   agent logs in to github.com as git and signs git signatures; it signs
   nothing else.
 

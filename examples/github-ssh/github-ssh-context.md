@@ -2,7 +2,8 @@
 
 git can fetch from and push to GitHub over SSH (`git@github.com:owner/repo`)
 with the user's key, through the agent at `$SSH_AUTH_SOCK`. Commits and
-tags you make are signed with the same key.
+tags you make are signed through the same agent; Git may select a
+different key from the one GitHub accepts for authentication.
 
 - The agent logs in to github.com as `git` and makes git signatures. It
   refuses every other server, account, and kind of signature, so `ssh` to
