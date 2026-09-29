@@ -120,6 +120,19 @@ func TestGitIdentityProbe(t *testing.T) {
 	require.Contains(t, string(out), "kit-tck-source-signing-key")
 	out, err = run("git", "config", "--global", "--unset", "user.signingKey")
 	require.NoError(t, err, "%s", out)
+	// A selective import must fail independently of every other bait key.
+	for _, key := range []string{
+		"user.signingKey", "alias.kit-tck-source", "credential.helper", "http.extraHeader",
+		"core.hooksPath", "include.path", "filter.kit-tck-source.clean", "gpg.program",
+	} {
+		out, err = run("git", "config", "--global", key, "kit-tck-leaked-setting")
+		require.NoError(t, err, "%s", out)
+		out, err = run("sh", probe, "only")
+		require.Error(t, err, "leaked %s: %s", key, out)
+		require.Contains(t, string(out), "kit-tck-leaked-setting")
+		out, err = run("git", "config", "--global", "--unset", key)
+		require.NoError(t, err, "%s", out)
+	}
 	// A late write changes exec defaults but cannot repair what the
 	// workload saw when it started.
 	out, err = run("sh", probe, "workload-identity")

@@ -40,6 +40,12 @@ func gitIdentityConfig(name, email string) string {
  extraHeader = X-Kit-TCK: source-only
 [core]
  hooksPath = /kit-tck-source-hooks
+[include]
+ path = /kit-tck-source-include
+[filter "kit-tck-source"]
+ clean = kit-tck-source-filter
+[gpg]
+ program = kit-tck-source-signing-program
 `
 }
 

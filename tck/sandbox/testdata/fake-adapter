@@ -531,6 +531,7 @@ exec)
       test "$(tail -1 "$dir/git-identity")" = image@example.invalid
       echo absent ;;
     only)
+      case "$broken" in imports-identity-include | imports-identity-filter | imports-identity-signing-program) exit 1 ;; esac
       if [ "$broken" = imports-identity-signing-key ]; then exit 1; fi
       if [ "$broken" = imports-source-git-settings ] || [ "$broken" = clobbers-guest-git-settings ]; then exit 1; fi
       echo only ;;
