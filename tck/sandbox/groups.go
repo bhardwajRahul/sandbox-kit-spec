@@ -29,6 +29,16 @@ func atomicSelection(ctx context.Context, e *Env) []report.Finding {
 			return findings
 		}
 	}
+	rejectedMember := "capabilities[0].group.capabilities[1]"
+	if lifecycle {
+		rejectedMember = "capabilities[0].group.capabilities[0]"
+	}
+	_, requiredCleanup, requiredErr := e.sandbox(ctx, []string{fixtureWorkload, "groups-required"}, nil)
+	requiredCleanup()
+	var refused *adapter.RefusedError
+	if !errors.As(requiredErr, &refused) || !strings.Contains(refused.Detail, "groups-required") || !strings.Contains(refused.Detail, rejectedMember) {
+		return []report.Finding{report.Failf("partially supported required group must refuse and identify %s: %v", rejectedMember, requiredErr)}
+	}
 	// One member is supported, the other is not: neither may be applied.
 	id, cleanup, err := e.sandbox(ctx, []string{fixtureWorkload, "groups-partial"}, nil)
 	defer cleanup()

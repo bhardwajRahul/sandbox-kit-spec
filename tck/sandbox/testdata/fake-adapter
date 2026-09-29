@@ -221,6 +221,14 @@ create)
       fi
       ;;
     */groups-required)
+      if [[ ",$claims," != *",com.docker.sandbox/volume@1,"* ]] && [ "$broken" != partial-required-skips-volume ]; then
+        echo "groups-required capabilities[0].group.capabilities[0]: unclaimed" >&2
+        exit 2
+      fi
+      if [[ ",$claims," != *",com.docker.sandbox/lifecycle@1,"* ]] && [ "$broken" != partial-required-skips-lifecycle ]; then
+        echo "groups-required capabilities[0].group.capabilities[1]: unclaimed" >&2
+        exit 2
+      fi
       if [ "$lifecycle_rejected" = yes ] && [ "$broken" != group-ignore-required-lifecycle ]; then
         echo "groups-required capabilities[0].group.capabilities[1]: rejected" >&2
         exit 2

@@ -67,6 +67,8 @@ func TestAtomicSelectionForPartialRuntimes(t *testing.T) {
 		{capLifecycle, "ordinary-ignore-optional-rejection"},
 		{capLifecycle, "ordinary-ignore-required-rejection"},
 		{capLifecycle, "partial-group-applies-lifecycle"},
+		{capLifecycle, "partial-required-skips-volume"},
+		{groupVolume, "partial-required-skips-lifecycle"},
 		{groupVolume, "partial-group-applies-volume"},
 	} {
 		t.Run(tc.claim+"/"+tc.broken, func(t *testing.T) {
