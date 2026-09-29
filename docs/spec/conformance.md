@@ -64,7 +64,7 @@ An adapter **MUST NOT** require interactive input.
 | Verb | Arguments | stdout | Purpose |
 |---|---|---|---|
 | `capabilities` | — | one capability type per line | What the runtime claims to implement |
-| `create` | `<kit-ref>…`, zero or more `--arg name=value`, at most one `--skills-host-mode readonly\|off`, at most one `--ssh-agent <socket>`, at most one `--ssh-known-hosts <file>`, at most one `--git-identity-config <absolute-path>\|off` | one sandbox id | Compose the Kit set and start it |
+| `create` | `<kit-ref>…`, zero or more `--arg name=value` and `--env name=value`, at most one `--skills-host-mode readonly\|off`, at most one `--ssh-agent <socket>`, at most one `--ssh-known-hosts <file>`, at most one `--git-identity-config <absolute-path>\|off` | one sandbox id | Compose the Kit set and start it |
 | `exec` | `<id> -- <argv>…` | the command's stdout | Run a command inside |
 | `stop` | `<id>` | — | Stop without discarding state |
 | `start` | `<id>` | — | Start a stopped sandbox |
@@ -72,6 +72,15 @@ An adapter **MUST NOT** require interactive input.
 | `rm` | `<id>` | — | Discard the sandbox |
 | `wait-idle` | `<id>` | — | Disconnect the final client session and wait beyond the normal auto-stop grace period |
 | `status` | `<id>` | `running` or `stopped` | Observe sandbox state without starting it or attaching a session |
+
+`create --env name=value` supplies a container environment override.
+Adapters **MUST** apply it after image defaults and Kit argument exports,
+before expanding `${{ kit.env.NAME }}` references. An empty value is a
+present override; values are literal and are not shell-expanded. These
+flags do not change the adapter process's own environment. The
+`SPEC-v3 §6/env-expanded` check compares a declared file's content with
+its final environment value, including a distinct runtime override and
+an empty override.
 
 `capabilities` is what makes a partial implementation testable: the suite
 skips the types a runtime does not claim, and asserts that a Kit
