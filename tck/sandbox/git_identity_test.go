@@ -37,6 +37,12 @@ func TestGitIdentityChecksAndMutations(t *testing.T) {
 					a := adapter.New(filepath.Join("testdata", "fake-adapter"))
 					a.Env = []string{"KIT_TCK_FAKE_STATE=" + t.TempDir(), "KIT_TCK_FAKE_BROKEN=" + broken, "KIT_TCK_FAKE_CLAIMS=" + capGitIdentity + "," + capLifecycle}
 					findings := c.run(ctx, &Env{Adapter: a, Fixtures: Fixtures(FixtureDir)})
+					for _, operation := range []string{"restart", "recreate"} {
+						if strings.HasSuffix(broken, "identity-"+operation+"-hook") {
+							require.Len(t, findings, 1)
+							require.Contains(t, findings[0].Detail, operation+": probe hooks:")
+						}
+					}
 					if strings.HasPrefix(broken, "identity-skip-") {
 						require.Len(t, findings, 1)
 						require.Contains(t, findings[0].Detail, "optional identity skip record incomplete:")

@@ -146,9 +146,11 @@ The fixture workload ships Git and `kit-tck-git-identity`, with distinct
 image identity defaults and an unrelated sandbox alias. Its probe checks
 global values, repository-local precedence through a real commit,
 preservation of sandbox settings, exclusion of unrelated source settings,
-and hook-time captures. Required and optional fixtures exercise missing
-values and withheld identity. The suite never needs the user's real
-name, email or signing keys.
+and hook-time captures at creation, stop/start and recreation. Repeated
+hook checks clear the startup capture first so an old observation cannot
+hide a missing hook. Required and optional fixtures exercise missing
+values and withheld identity. The suite never needs the user's real name,
+email or signing keys.
 
 An adapter claiming this capability also supports `selection <id>` using
 the record format below. The suite checks that an unavailable optional

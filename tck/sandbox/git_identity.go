@@ -171,6 +171,50 @@ func gitIdentitySkipped(ctx context.Context, e *Env, id string) []report.Finding
 	return nil
 }
 
+func gitIdentityBeforeHooks(ctx context.Context, e *Env) []report.Finding {
+	return withGitIdentity(func(file, _ string) []report.Finding {
+		id, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, fixtureGitIdentity, fixtureGitIdentityHooks}, adapter.CreateOptions{GitIdentityConfig: file})
+		if err != nil {
+			return []report.Finding{report.Failf("create: %v", err)}
+		}
+		defer cleanup()
+		want := strings.Repeat(fmt.Sprintf("%s\n%s\n", gitIdentityName, gitIdentityEmail), 2)
+		if findings := gitIdentityOutput(ctx, e, id, "hooks", want); len(findings) != 0 {
+			return findings
+		}
+		if err := os.WriteFile(file, []byte(gitIdentityConfig("Changed Identity", "changed@example.invalid")), 0600); err != nil {
+			return []report.Finding{report.Failf("change runtime identity: %v", err)}
+		}
+		for _, operation := range []struct {
+			name string
+			run  func(context.Context, string) error
+		}{
+			{"restart", func(ctx context.Context, id string) error {
+				if err := e.Adapter.Stop(ctx, id); err != nil {
+					return err
+				}
+				return e.Adapter.Start(ctx, id)
+			}},
+			{"recreate", e.Adapter.Recreate},
+		} {
+			// A missing repeated hook must not pass on the initial capture.
+			if findings := gitIdentityOutput(ctx, e, id, "clear-hooks", ""); len(findings) != 0 {
+				return findings
+			}
+			if err := operation.run(ctx, id); err != nil {
+				return []report.Finding{report.Failf("%s: %v", operation.name, err)}
+			}
+			if findings := gitIdentityOutput(ctx, e, id, "hooks", want); len(findings) != 0 {
+				for i := range findings {
+					findings[i].Detail = operation.name + ": " + findings[i].Detail
+				}
+				return findings
+			}
+		}
+		return nil
+	})
+}
+
 func gitIdentityPersistence(ctx context.Context, e *Env) []report.Finding {
 	return withGitIdentity(func(file, _ string) []report.Finding {
 		id, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, fixtureGitIdentity}, adapter.CreateOptions{GitIdentityConfig: file})
@@ -229,7 +273,7 @@ func gitIdentitySourceUnchanged(ctx context.Context, e *Env) []report.Finding {
 
 var gitIdentityChecks = []check{
 	{requirement: "git-identity@1/global-defaults", capability: capGitIdentity, run: gitIdentityDefaults},
-	{requirement: "git-identity@1/before-hooks", capability: capGitIdentity, needs: []string{capLifecycle}, run: gitIdentityObservation("hooks", strings.Repeat(fmt.Sprintf("%s\n%s\n", gitIdentityName, gitIdentityEmail), 2), fixtureGitIdentity, fixtureGitIdentityHooks)},
+	{requirement: "git-identity@1/before-hooks", capability: capGitIdentity, needs: []string{capLifecycle}, run: gitIdentityBeforeHooks},
 	{requirement: "git-identity@1/local-precedence", capability: capGitIdentity, run: gitIdentityObservation("local", "local\n", fixtureGitIdentity)},
 	{requirement: "git-identity@1/identity-only", capability: capGitIdentity, run: gitIdentityObservation("only", "only\n", fixtureGitIdentity)},
 	{requirement: "git-identity@1/source-unchanged", capability: capGitIdentity, run: gitIdentitySourceUnchanged},
