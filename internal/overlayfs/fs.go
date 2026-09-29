@@ -592,30 +592,40 @@ func pushPath(pending []string, p string) []string {
 	return pending
 }
 
-// Entry is a path's final effect when the model is placed over another Kit.
-// Whiteouts and opaque directories retain deletions, even when there was
-// nothing to delete in this Kit's own layers. Paths are clean and absolute.
+// Entry is a node's final effect when the model is placed over another Kit.
+// Name is one path component; the root has an empty name and depth zero.
+// Whiteouts and opaque directories retain deletions even when this Kit's own
+// layers had nothing to delete.
 type Entry struct {
-	Path      string
+	Name      string
+	Depth     int
 	Directory bool
 	Whiteout  bool
 	Opaque    bool
 }
 
-func (o *FS) Entries() []Entry {
-	var out []Entry
-	var walk func(*fsNode, string)
-	walk = func(n *fsNode, at string) {
-		if at != "/" || n.opaque {
-			out = append(out, Entry{Path: at, Directory: n.kind == nodeDir, Whiteout: n.kind == nodeWhiteout, Opaque: n.opaque})
+// Walk visits nodes in deterministic preorder without materializing full paths
+// for every implied directory. This avoids quadratic path storage for deep trees.
+func (o *FS) Walk(fn func(Entry) error) error {
+	var walk func(*fsNode, string, int) error
+	walk = func(n *fsNode, name string, depth int) error {
+		if err := fn(Entry{Name: name, Depth: depth, Directory: n.kind == nodeDir,
+			Whiteout: n.kind == nodeWhiteout, Opaque: n.opaque}); err != nil {
+			return err
 		}
 		if n.kind == nodeDir {
-			for name, child := range n.children {
-				walk(child, path.Join(at, name))
+			names := make([]string, 0, len(n.children))
+			for child := range n.children {
+				names = append(names, child)
+			}
+			sort.Strings(names)
+			for _, child := range names {
+				if err := walk(n.children[child], child, depth+1); err != nil {
+					return err
+				}
 			}
 		}
+		return nil
 	}
-	walk(o.root, "/")
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
-	return out
+	return walk(o.root, "", 0)
 }

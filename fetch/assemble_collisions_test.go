@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/docker/sandbox-kit-spec/v3/spec"
@@ -77,6 +79,8 @@ func TestAssembleChecksFilesystemEffects(t *testing.T) {
 		{"same layer whiteout retains written file", [][]tar.Header{{file("dir/foo"), file("dir/.wh.foo")}}, [][]tar.Header{{file("dir/foo")}}, "/dir/foo"},
 		{"shared directories", [][]tar.Header{{directory("dir"), file("dir/base")}}, [][]tar.Header{{directory("dir"), file("dir/tool")}}, ""},
 		{"whiteout absent lower path", [][]tar.Header{{file("dir/base")}}, [][]tar.Header{{file("dir/.wh.absent")}}, ""},
+		{"whiteout sibling prefix", [][]tar.Header{{file("directory/base")}}, [][]tar.Header{{file(".wh.dir")}}, ""},
+		{"opaque sibling prefix", [][]tar.Header{{file("directory/base")}}, [][]tar.Header{{file("dir/.wh..wh..opq")}}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			base := layerFixture(t, spec.KindWorkload, "base", tc.lower...)
@@ -92,6 +96,57 @@ func TestAssembleChecksFilesystemEffects(t *testing.T) {
 			require.ErrorContains(t, err, tc.collision)
 			require.ErrorContains(t, err, fixtureRequests(2)[0].Reference)
 			require.ErrorContains(t, err, fixtureRequests(2)[1].Reference)
+		})
+	}
+}
+
+func TestAssembleCollisionsRetainOwnersAcrossKits(t *testing.T) {
+	base := layerFixture(t, spec.KindWorkload, "base", []tar.Header{file("dir/z")})
+	first := layerFixture(t, spec.KindMixin, "first", []tar.Header{file("dir/a")})
+	second := layerFixture(t, spec.KindMixin, "second", []tar.Header{file("dir/.wh..wh..opq")})
+	result, err := Assemble(t.Context(), fixtureRequests(3), Options{Loader: fixtureLoader(base, first, second)})
+	require.Nil(t, result)
+	require.ErrorContains(t, err, "/dir/z")
+	require.ErrorContains(t, err, fixtureRequests(3)[0].Reference)
+	require.ErrorContains(t, err, fixtureRequests(3)[2].Reference)
+}
+
+func TestCollisionsWalkDeepDirectoryPrefixes(t *testing.T) {
+	name := strings.Repeat("d/", 1000) + "file"
+	inventories := []kitInventory{
+		{reference: "base", layers: [][]inventoryEntry{{{name: name, typeflag: tar.TypeReg}}}},
+		{reference: "empty", layers: [][]inventoryEntry{nil}},
+	}
+	require.NoError(t, checkFileCollisions(t.Context(), inventories))
+	inventories = append(inventories, kitInventory{reference: "upper", layers: [][]inventoryEntry{{{name: strings.Repeat("d/", 1000) + ".wh.file", typeflag: tar.TypeReg}}}})
+	err := checkFileCollisions(t.Context(), inventories)
+	require.ErrorContains(t, err, "/"+name)
+	require.ErrorContains(t, err, "upper replaces or deletes a path contributed by base")
+}
+
+// Exercise the full allowed owner set followed by the maximum empty-Kit tail.
+// Runtime should be dominated by building the first Kit's filesystem, not by
+// repeatedly sorting its paths for every following Kit. No timing assertion:
+// the benchmark makes scaling measurable without a machine-dependent test.
+func BenchmarkCollisionsWithEmptyKits(b *testing.B) {
+	for _, emptyKits := range []int{0, maxInventoryLayers - 1} {
+		b.Run(fmt.Sprintf("empty-kits-%d", emptyKits), func(b *testing.B) {
+			entries := make([]inventoryEntry, maxInventoryEntries)
+			for i := range entries {
+				entries[i] = inventoryEntry{name: fmt.Sprintf("file-%06d", i), typeflag: tar.TypeReg}
+			}
+			inventories := make([]kitInventory, emptyKits+1)
+			inventories[0] = kitInventory{reference: "base", layers: [][]inventoryEntry{entries}}
+			for i := 1; i < len(inventories); i++ {
+				inventories[i] = kitInventory{reference: fmt.Sprintf("empty-%d", i), layers: [][]inventoryEntry{nil}}
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				if err := checkFileCollisions(b.Context(), inventories); err != nil {
+					b.Fatal(err)
+				}
+			}
 		})
 	}
 }
