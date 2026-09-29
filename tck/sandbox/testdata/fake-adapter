@@ -87,7 +87,9 @@ create)
   if [ "$broken" != "accepts-required-unclaimed" ]; then
     for kit in "${kits[@]}"; do
       need=""
-      case "$kit" in
+      # Match the fixture name, not a checkout directory that happens to
+      # contain a capability name (for example, git-identity).
+      case "${kit##*/}" in
       *git-identity-optional*) ;;
       *git-identity-hooks*) need="com.docker.sandbox/lifecycle@1" ;;
       *git-identity*) need="com.docker.sandbox/git-identity@1" ;;
