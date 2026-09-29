@@ -9,6 +9,10 @@ exposed)
     test "$(cat "$dir/review/SKILL.md")" = "$(cat "$root/usr/share/kit-tck/bundled/review/SKILL.md")"
     test "$(cat "$dir/renamed/SKILL.md")" = "$(cat "$root/usr/share/kit-tck/bundled/source-name/SKILL.md")"
     test ! -e "$dir/source-name"
+    # Check the execution sentinel as content without running it.
+    test -f "$dir/review/scripts/register.sh"
+    test -x "$dir/review/scripts/register.sh"
+    cmp -s "$dir/review/scripts/register.sh" "$root/usr/share/kit-tck/bundled/review/scripts/register.sh"
     test -x "$dir/review/scripts/read.sh"
     test "$("$dir/review/scripts/read.sh")" = 'bundled reference'
   done

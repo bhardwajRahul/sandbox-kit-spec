@@ -749,6 +749,11 @@ create)
         if [ "$broken" = bundle-ignores-name ]; then name=source-name; fi
         cp -R "$source/source-name" "$dest/$name"
         case "$broken" in
+        bundle-drops-register) rm "$dest/review/scripts/register.sh" ;;
+        bundle-corrupts-register) printf 'corrupted\n' >>"$dest/review/scripts/register.sh" ;;
+        bundle-register-not-executable)
+          if [ "$target" = skills-rw ]; then chmod 644 "$dest/review/scripts/register.sh"; fi
+          ;;
         bundle-drops-support) rm "$dest/review/references/value.txt" ;;
         bundle-loses-executable) chmod 644 "$dest/review/scripts/read.sh" ;;
         bundle-corrupts) echo wrong >"$dest/review/SKILL.md" ;;
