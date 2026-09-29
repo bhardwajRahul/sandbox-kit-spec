@@ -639,6 +639,10 @@ create)
       if [ "$phase" = credential-phases-both ] && [ "$broken" = credential-last-phase-only ]; then install_value=; fi
       if [ "$broken" = credential-phase-leaks-secret ]; then install_value="$KIT_TCK_BOUND_SECRET"; fi
       printf '%s' "$install_value" >"$dir/credential-at-install"
+      entrypoint_value=sentinel-token
+      if [ "$phase" = credential-phases-install ] && [ "$broken" != credential-install-at-entrypoint ]; then entrypoint_value=; fi
+      if [ "$broken" = credential-missing-at-entrypoint ]; then entrypoint_value=; fi
+      printf '%s' "$entrypoint_value" >"$dir/workload-credential"
       ;;
     esac
   done
@@ -770,6 +774,7 @@ exec)
     /var/tmp/install-egress) cat "$dir/install-egress" ;;
     /var/tmp/hook.env) cat "$dir/hook.env" ;;
     /var/tmp/credential-at-install) cat "$dir/credential-at-install" ;;
+    /var/tmp/kit-tck-workload-credential) cat "$dir/workload-credential" ;;
     /var/tmp/kit-tck-workload-ssh-sock) cat "$dir/workload-ssh-sock" ;;
     /var/tmp/kit-tck-startup-ssh-sock) cat "$dir/startup-ssh-sock" ;;
     /var/tmp/kit-tck-workload-ssh-sock-proof) cat "$dir/workload-ssh-sock-proof" ;;

@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/docker/sandbox-kit-spec/v3/tck/report"
 )
@@ -28,6 +29,10 @@ func credentialPhaseScoped(ctx context.Context, e *Env) []report.Finding {
 			if f != nil {
 				return []report.Finding{*f}
 			}
+			entrypoint, f := credentialEntrypoint(ctx, e, id)
+			if f != nil {
+				return []report.Finding{*f}
+			}
 			runtime, err := e.Adapter.Exec(ctx, id, "printenv", "KIT_TCK_PHASE_TOKEN")
 			if err != nil {
 				return []report.Finding{report.Failf("read runtime credential: %v", err)}
@@ -38,7 +43,7 @@ func credentialPhaseScoped(ctx context.Context, e *Env) []report.Finding {
 			for _, phase := range []struct {
 				name, value string
 				granted     bool
-			}{{"install", install, tc.install}, {"runtime", runtime.Stdout, tc.runtime}} {
+			}{{"install", install, tc.install}, {"workload entrypoint", entrypoint, tc.runtime}, {"runtime exec", runtime.Stdout, tc.runtime}} {
 				value := strings.TrimSpace(phase.value)
 				if (value != "") != phase.granted {
 					return []report.Finding{report.Failf("%s: credential presence during %s does not match its phase grant", tc.fixture, phase.name)}
@@ -54,4 +59,22 @@ func credentialPhaseScoped(ctx context.Context, e *Env) []report.Finding {
 		}
 	}
 	return nil
+}
+
+// Create may return before the workload starts. Wait for its own atomic
+// record: a later exec's environment cannot prove what the entrypoint saw.
+func credentialEntrypoint(ctx context.Context, e *Env, id string) (string, *report.Finding) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	for {
+		value, f := execOutput(ctx, e, id, "cat", "/var/tmp/kit-tck-workload-credential")
+		if f == nil {
+			return value, nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", failing("read workload entrypoint's credential record: %s", f.Detail)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }

@@ -362,6 +362,8 @@ var mutations = map[string][]string{
 	"credential-install-at-runtime":         {"credential@1/phase-scoped"},
 	"credential-runtime-at-install":         {"credential@1/phase-scoped"},
 	"credential-phase-leaks-secret":         {"credential@1/phase-scoped"},
+	"credential-install-at-entrypoint":      {"credential@1/phase-scoped"},
+	"credential-missing-at-entrypoint":      {"credential@1/phase-scoped"},
 	"no-credential":                         {"credential@1/secret-absent-in-sandbox"},
 	"leaks-inject-only-env":                 {"credential@1/inject-only-no-env"},
 	"hides-inject-only-in-existing-env":     {"credential@1/inject-only-no-env"},
