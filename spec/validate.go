@@ -575,7 +575,7 @@ func validateCapabilityBlock(d *Descriptor) error {
 			phaseConfig := Capability{Type: n.Type, Config: map[string]any{"phase": n.Config["phase"]}}
 			if DecodeCapabilityConfig(phaseConfig, &phaseOnly) == nil {
 				for _, phase := range phaseOnly.Phase {
-					if ContainsArgRef(phase) {
+					if ContainsArgRef(phase) || ContainsEnvRef(phase) {
 						continue
 					}
 					if prev, dup := seenSSHAgent[phase]; dup && prev != i {
