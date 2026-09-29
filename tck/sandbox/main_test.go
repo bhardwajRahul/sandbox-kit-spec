@@ -6,7 +6,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
+
+// Go's ./... discovery excludes testdata, but the relay's protocol parser
+// must accept valid inputs as well as the suite's mutation probes.
+func TestSSHRelayProtocol(t *testing.T) {
+	cmd := exec.CommandContext(t.Context(), "go", "test", "./testdata/ssh-relay")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+}
 
 // TestMain builds the fake runtime's SSH agent relay once for every test
 // that drives the fake: the relay has to verify session-binding

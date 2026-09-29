@@ -330,7 +330,7 @@ func parseLogin(data, requestedKey []byte, trustInvalid bool) (login, bool) {
 			return login{}, false
 		}
 		publicKey, err := ssh.ParsePublicKey(key)
-		if err != nil || string(algorithm) != publicKey.Type() {
+		if err != nil || !loginAlgorithmMatches(string(algorithm), publicKey.Type()) {
 			return login{}, false
 		}
 	}
@@ -342,6 +342,22 @@ func parseLogin(data, requestedKey []byte, trustInvalid bool) (login, bool) {
 		}
 	}
 	return l, len(rest) == 0
+}
+
+// RFC 8332 keeps the ssh-rsa key encoding for RSA SHA-2 signatures;
+// the userauth algorithm is not necessarily the key blob's type.
+func loginAlgorithmMatches(algorithm, keyType string) bool {
+	if algorithm == keyType {
+		return true
+	}
+	switch keyType {
+	case ssh.KeyAlgoRSA:
+		return algorithm == ssh.KeyAlgoRSASHA256 || algorithm == ssh.KeyAlgoRSASHA512
+	case ssh.CertAlgoRSAv01:
+		return algorithm == ssh.CertAlgoRSASHA256v01 || algorithm == ssh.CertAlgoRSASHA512v01
+	default:
+		return false
+	}
 }
 
 func sshString(b []byte) (value, rest []byte, ok bool) {
