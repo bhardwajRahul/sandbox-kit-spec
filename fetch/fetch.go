@@ -3,9 +3,11 @@ package fetch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
+	"regexp"
 
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -469,6 +471,8 @@ func resolveKitArgs(k *Kit, args map[string]string) (map[string]string, map[stri
 	return values, env, nil
 }
 
+var expandedCapabilityPath = regexp.MustCompile(`^capabilities\[[0-9]+\](?:\.group\.capabilities\[[0-9]+\])?`)
+
 func expandResolvedKit(k *Kit, values, exports, environment map[string]string) (*expandedKit, error) {
 	expanded, err := spec.ExpandCreateArgs(k.Raw, k.Descriptor.Args, values)
 	if err != nil {
@@ -493,7 +497,15 @@ func expandResolvedKit(k *Kit, values, exports, environment map[string]string) (
 		if hadEnvironment {
 			// Expanded values may be secrets. Neither validator details nor source
 			// excerpts from the expanded document are safe to include in errors.
-			return nil, fmt.Errorf("%s: invalid capability configuration after environment expansion", k.Reference)
+			at := ""
+			var field *spec.FieldError
+			if errors.As(err, &field) {
+				// Keep only declaration indices, never config keys or values.
+				if member := expandedCapabilityPath.FindString(field.Path); member != "" {
+					at = member + ": "
+				}
+			}
+			return nil, fmt.Errorf("%s: %sinvalid capability configuration after environment expansion", k.Reference, at)
 		}
 		return nil, spec.WithSource(err, k.Reference+" (expanded descriptor)", expanded)
 	}

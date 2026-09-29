@@ -4,6 +4,9 @@ kind: mixin
 args:
   group_path:
     default: /var/tmp/group-expanded
+  env_group_path:
+    default: /var/tmp/env-group-expanded
+    env: KIT_GROUP_PATH
 capabilities:
   - group:
       optional: true
@@ -13,3 +16,5 @@ capabilities:
             files:
               - path: "${{ kit.args.group_path }}"
                 content: selected
+              - path: "${{ kit.env.KIT_GROUP_PATH }}"
+                content: selected from environment

@@ -222,8 +222,8 @@ Atomic-selection checks observe final state, so they cannot detect effects
 applied during selection and rolled back before observation. The separate
 `selection-before-application` duty has an explicit coverage waiver until
 an adapter effect trace can judge it. `groups-expanded` checks validation
-after create-time argument expansion, including when policy would reject
-the optional member. Lifetime checks exercise both initial acceptance and
+after create-time argument and environment expansion, including when
+policy would reject the optional member. Lifetime checks exercise both initial acceptance and
 initial rejection: restart retains the decision and recreation uses the
 new policy. Calling `selection-policy <id>` without rejection flags clears
 future rejections, allowing the inverse transition.

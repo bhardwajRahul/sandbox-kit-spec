@@ -108,13 +108,14 @@ create)
   kits=()
   greeting=""
   group_path=/var/tmp/group-expanded
+  env_group_path=/var/tmp/env-group-expanded
   hostmode="readwrite"
   group_rejected=no
   lifecycle_rejected=no
   while [ $# -gt 0 ]; do
     case "$1" in
     --arg)
-      case "$2" in greeting=*) greeting="${2#greeting=}" ;; group_path=*) group_path="${2#group_path=}" ;; esac
+      case "$2" in greeting=*) greeting="${2#greeting=}" ;; group_path=*) group_path="${2#group_path=}" ;; env_group_path=*) env_group_path="${2#env_group_path=}" ;; esac
       shift 2
       ;;
     --reject-capability)
@@ -216,6 +217,12 @@ create)
   for kit in "${kits[@]}"; do
     case "$kit" in
     */groups-expanded)
+      if [ "$env_group_path" = relative ]; then
+        if [ "$broken" != group-invalid-env-expanded ] && { [ "$lifecycle_rejected" = no ] || [ "$broken" != group-skips-invalid-env-expanded ]; }; then
+          echo "groups-expanded capabilities[0].group.capabilities[0].config.files[1].path: must be absolute" >&2
+          exit 2
+        fi
+      fi
       if [ "$group_path" = relative ]; then
         if [ "$broken" != group-invalid-expanded ] && { [ "$lifecycle_rejected" = no ] || [ "$broken" != group-skips-invalid-expanded ]; }; then
           echo "groups-expanded capabilities[0].group.capabilities[0].config.files[0].path: must be absolute" >&2

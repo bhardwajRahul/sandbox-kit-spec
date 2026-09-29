@@ -212,3 +212,20 @@ func TestResolvePreservesOriginalEnvironmentReferencesBesideArguments(t *testing
 	require.NoError(t, err)
 	require.Equal(t, "é-prefix:public:suffixpublic", lc.Files[0].Content)
 }
+
+func TestResolveInvalidEnvironmentGroupKeepsMemberLocation(t *testing.T) {
+	d := &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindMixin,
+		Capabilities: []spec.Capability{{Group: &spec.CapabilityGroup{Optional: true, Capabilities: []spec.Capability{
+			{Type: spec.CapabilityLifecycle, Config: map[string]any{"files": []any{map[string]any{"path": "${{kit.env.PATH}}", "content": "data"}}}},
+		}}}},
+	}
+	raw := kitJSON(t, d)
+	kit := &Kit{Reference: "example.com/tool:1.0.0", Digest: digest.FromBytes(raw).String(), Descriptor: d, Raw: raw}
+	for _, accept := range []bool{false, true} {
+		_, err := mergeKits([]*Kit{kit}, []map[string]string{nil}, true,
+			WithEnvironment(map[string]string{"PATH": "private-relative-path"}, nil),
+			WithCapabilitySelector(func(spec.Capability) bool { t.Fatal("invalid group reached selection"); return accept }))
+		require.ErrorContains(t, err, "capabilities[0].group.capabilities[0]")
+		require.NotContains(t, err.Error(), "private-relative-path")
+	}
+}

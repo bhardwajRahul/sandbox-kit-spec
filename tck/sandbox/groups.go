@@ -426,23 +426,25 @@ func groupExecution(ctx context.Context, e *Env) []report.Finding {
 // A publish-valid path becomes invalid only after create-time expansion.
 // Even rejecting the optional member must not hide that invalid declaration.
 func groupExpandedValidation(ctx context.Context, e *Env) []report.Finding {
-	for _, reject := range []bool{false, true} {
-		for _, path := range []string{"/var/tmp/group-expanded", "relative"} {
-			opts := adapter.CreateOptions{Args: map[string]string{"group_path": path}}
-			if reject {
-				opts.RejectCapabilities = []string{capLifecycle}
-			}
-			_, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, "groups-expanded"}, opts)
-			cleanup()
-			if path != "relative" {
-				if err != nil {
-					return []report.Finding{report.Failf("valid expanded group rejected: %v", err)}
+	for _, argument := range []string{"group_path", "env_group_path"} {
+		for _, reject := range []bool{false, true} {
+			for _, path := range []string{"/var/tmp/" + argument + "-valid", "relative"} {
+				opts := adapter.CreateOptions{Args: map[string]string{argument: path}}
+				if reject {
+					opts.RejectCapabilities = []string{capLifecycle}
 				}
-				continue
-			}
-			var refused *adapter.RefusedError
-			if !errors.As(err, &refused) || !strings.Contains(refused.Detail, "capabilities[0].group.capabilities[0]") {
-				return []report.Finding{report.Failf("invalid expanded group must refuse and identify its member (reject=%t): %v", reject, err)}
+				_, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, "groups-expanded"}, opts)
+				cleanup()
+				if path != "relative" {
+					if err != nil {
+						return []report.Finding{report.Failf("valid expanded group rejected (%s): %v", argument, err)}
+					}
+					continue
+				}
+				var refused *adapter.RefusedError
+				if !errors.As(err, &refused) || !strings.Contains(refused.Detail, "capabilities[0].group.capabilities[0]") {
+					return []report.Finding{report.Failf("invalid expanded group must refuse and identify its member (%s, reject=%t): %v", argument, reject, err)}
+				}
 			}
 		}
 	}
