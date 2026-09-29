@@ -565,7 +565,8 @@ same grant, so a host given both would have to guess which bounds the
 other.
 
 **Instance-shaped types appear once per thing requested**, deduplicated on
-their own key: `credential@1` on (service, phase), `volume@1` on path,
+their own key: `credential@1` on (service, phase), with each listed phase
+participating independently, `volume@1` on path,
 `agent-skills@1` on path, `port@1` on (container, transport),
 `ssh-agent@1` on each phase it names.
 `usb-device@1` is instance-shaped with no dedup key beyond the exact

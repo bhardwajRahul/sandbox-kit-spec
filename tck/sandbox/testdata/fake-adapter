@@ -629,6 +629,19 @@ create)
     if [[ "$kit" == *credential-inject-only-plain* ]]; then : >"$dir/inject-only-plain"; fi
     if [[ "$kit" == *credential-inject-only-install* ]]; then : >"$dir/inject-only-install"; fi
   done
+  for kit in "${kits[@]}"; do
+    case "${kit##*/}" in
+    credential-phases-install | credential-phases-runtime | credential-phases-both)
+      phase="${kit##*/}"
+      printf '%s' "$phase" >"$dir/credential-phases"
+      install_value=sentinel-token
+      if [ "$phase" = credential-phases-runtime ] && [ "$broken" != credential-runtime-at-install ]; then install_value=; fi
+      if [ "$phase" = credential-phases-both ] && [ "$broken" = credential-last-phase-only ]; then install_value=; fi
+      if [ "$broken" = credential-phase-leaks-secret ]; then install_value="$KIT_TCK_BOUND_SECRET"; fi
+      printf '%s' "$install_value" >"$dir/credential-at-install"
+      ;;
+    esac
+  done
   # The host's shared store is one directory at state level, seeded once
   # with the contract's marker. Every declared path is a view of it — a
   # per-sandbox copy would satisfy every listing while violating "every
@@ -756,6 +769,7 @@ exec)
       ;;
     /var/tmp/install-egress) cat "$dir/install-egress" ;;
     /var/tmp/hook.env) cat "$dir/hook.env" ;;
+    /var/tmp/credential-at-install) cat "$dir/credential-at-install" ;;
     /var/tmp/kit-tck-workload-ssh-sock) cat "$dir/workload-ssh-sock" ;;
     /var/tmp/kit-tck-startup-ssh-sock) cat "$dir/startup-ssh-sock" ;;
     /var/tmp/kit-tck-workload-ssh-sock-proof) cat "$dir/workload-ssh-sock-proof" ;;
@@ -877,6 +891,13 @@ exec)
     ;;
 
   printenv)
+    if [ "$2" = KIT_TCK_PHASE_TOKEN ] && [ -f "$dir/credential-phases" ]; then
+      phase=$(cat "$dir/credential-phases")
+      if [ "$phase" = credential-phases-install ] && [ "$broken" != credential-install-at-runtime ]; then exit 1; fi
+      if [ "$phase" = credential-phases-both ] && [ "$broken" = credential-first-phase-only ]; then exit 1; fi
+      echo sentinel-token
+      exit 0
+    fi
     if [ "$2" = HOME ]; then
       if [ -f "$dir/sbx" ] && [ "$broken" != "assumes-uid-1000" ]; then
         echo /home/sbxagent

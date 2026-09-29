@@ -108,10 +108,12 @@ func SurfaceOf(d *Descriptor) Surface {
 				s.Services = append(s.Services, capabilitySurfaceEntry(n))
 				continue
 			}
-			if c.Phase == "install" {
-				s.CredentialsInstall = append(s.CredentialsInstall, c.Service)
-			} else {
-				s.CredentialsRuntime = append(s.CredentialsRuntime, c.Service)
+			for _, phase := range c.Phase {
+				if phase == "install" {
+					s.CredentialsInstall = append(s.CredentialsInstall, c.Service)
+				} else {
+					s.CredentialsRuntime = append(s.CredentialsRuntime, c.Service)
+				}
 			}
 		case CapabilitySSHAgent:
 			var a SSHAgent

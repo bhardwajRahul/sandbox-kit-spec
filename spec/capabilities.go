@@ -222,7 +222,7 @@ func CredentialsOfPhase(needs []Capability, phase string) ([]CredentialCapabilit
 	}
 	var out []CredentialCapability
 	for _, c := range all {
-		if c.Phase == phase {
+		if slices.Contains(c.Phase, phase) {
 			out = append(out, c)
 		}
 	}

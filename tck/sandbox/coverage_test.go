@@ -260,7 +260,6 @@ var waived = map[string]string{
 
 	"credential@1/resolved-from-host-store":         "host-internal: which store the value came from has no in-sandbox symptom",
 	"credential@1/oauth-token-endpoint-intercepted": "needs an OAuth fixture service the suite does not run yet",
-	"credential@1/phase-scoped":                     "needs an install-phase credential probe; the fixture binds runtime only",
 	"credential@1/required-without-binding-fails":   "the contract has the adapter bind the fixture secret, so the unbound path never occurs in-suite",
 
 	"ssh-agent@1/key-material-outside-sandbox": "non-observable: a key copied somewhere in the sandbox has no symptom a probe could search for; the relay filter check shows keys cannot be added or exported through the agent",

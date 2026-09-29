@@ -276,7 +276,9 @@ One entry per v2 `credentials[]` element, with `service:` and `phase:`
 (`runtime` unless the credential exists only so install hooks can download
 something). `apiKey`, `inject`, `proxyManaged`, `oauth.tokenEndpoint`,
 `sentinels`, `resourceHosts`, `responseFields` and `passthrough` carry over
-unchanged.
+unchanged. `phase` also accepts a non-empty list of distinct phases:
+`[install, runtime]` shares the configuration across both. Overlapping
+(service, phase) pairs are errors, whether scalar or list-shaped.
 
 - **Add `optional: true` to preserve v2 behavior.** v2 credentials default to
   not-required; v3 entries are required unless they opt out.
@@ -290,9 +292,9 @@ unchanged.
   `{{.Scopes}}` (an array) and `{{.PrimaryApiKey}}` (whose enclosing key is
   omitted when no key is captured). `format: toml` is available for agents that
   read TOML.
-- Validation enforces that every `inject[].domain` appears in the **same
-  phase's** allow list. An inject domain outside it would be a credential mapped
-  onto a connection that can never occur — which is how the claude migration
+- Validation enforces that every `inject[].domain` appears in **every
+  listed phase's** allow list. An inject domain outside it would be a
+  credential mapped onto a connection that can never occur — which is how the claude migration
   found two dead inject rules.
 - That check is an **exact host match**, escaped only by a bare `*` or `**`. A
   single-label wildcard like `*.example.com` does not satisfy an inject domain

@@ -233,8 +233,10 @@ func checkOneCredentialOwner(units []*Unit, addProblem func(string, ...any)) {
 			continue // the per-descriptor validator owns malformed configs
 		}
 		for _, c := range creds {
-			k := key{c.Service, c.Phase}
-			owners[k] = append(owners[k], u.Reference)
+			for _, phase := range c.Phase {
+				k := key{c.Service, phase}
+				owners[k] = append(owners[k], u.Reference)
+			}
 		}
 	}
 	keys := make([]key, 0, len(owners))

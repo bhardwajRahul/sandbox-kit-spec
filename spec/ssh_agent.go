@@ -30,18 +30,8 @@ func validateSSHAgentNeed(path string, i int, n Capability) (*SSHAgent, error) {
 	if err := DecodeCapabilityConfig(n, &a); err != nil {
 		return nil, fieldErrorf(path+".config", "capabilities[%d]: %v", i, err)
 	}
-	if len(a.Phase) == 0 {
-		return nil, fieldErrorf(path+".config.phase", "capabilities[%d]: ssh-agent phase must be install or runtime", i)
-	}
-	seen := map[string]bool{}
-	for _, phase := range a.Phase {
-		if !ContainsArgRef(phase) && !ContainsEnvRef(phase) && phase != "install" && phase != "runtime" {
-			return nil, fieldErrorf(path+".config.phase", "capabilities[%d]: ssh-agent phase must be install or runtime, got %q", i, phase)
-		}
-		if seen[phase] {
-			return nil, fieldErrorf(path+".config.phase", "capabilities[%d]: ssh-agent phase %q listed twice", i, phase)
-		}
-		seen[phase] = true
+	if err := validatePhases(path, i, a.Phase); err != nil {
+		return nil, err
 	}
 	if err := validateSSHAgentPresence(path, i, a); err != nil {
 		return nil, err

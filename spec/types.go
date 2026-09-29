@@ -601,8 +601,8 @@ type Credential struct {
 	// Service is the identifier in the host credential store.
 	Service string `json:"service" yaml:"service"`
 
-	// Phase is "install" or "runtime".
-	Phase string `json:"phase" yaml:"phase"`
+	// Phase accepts one phase or a non-empty list of distinct phases.
+	Phase Phases `json:"phase" yaml:"phase"`
 
 	// APIKey configures header injection of an API key.
 	APIKey *APIKey `json:"apiKey,omitempty" yaml:"apiKey,omitempty"`
@@ -621,11 +621,14 @@ type SSHAgent struct {
 	Authenticate []string `json:"authenticate,omitempty" yaml:"authenticate,omitempty"`
 }
 
-// SSHAgentPhases accepts a scalar or list, preserving the scalar spelling
-// when encoding a single-phase entry.
-type SSHAgentPhases []string
+// SSHAgentPhases is the phase list used by SSH-agent configurations.
+type SSHAgentPhases = Phases
 
-func (p *SSHAgentPhases) UnmarshalJSON(data []byte) error {
+// Phases accepts a scalar or list, preserving the scalar spelling when
+// encoding a single-phase entry. Credentials and SSH agents share this grammar.
+type Phases []string
+
+func (p *Phases) UnmarshalJSON(data []byte) error {
 	var one string
 	if err := json.Unmarshal(data, &one); err == nil {
 		*p = []string{one}
@@ -633,13 +636,13 @@ func (p *SSHAgentPhases) UnmarshalJSON(data []byte) error {
 	}
 	var many []string
 	if err := json.Unmarshal(data, &many); err != nil {
-		return fmt.Errorf("ssh-agent phase must be a string or list of strings: %w", err)
+		return fmt.Errorf("phase must be a string or list of strings: %w", err)
 	}
 	*p = many
 	return nil
 }
 
-func (p SSHAgentPhases) MarshalJSON() ([]byte, error) {
+func (p Phases) MarshalJSON() ([]byte, error) {
 	if len(p) == 1 {
 		return json.Marshal(p[0])
 	}

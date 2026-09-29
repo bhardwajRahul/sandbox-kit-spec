@@ -45,7 +45,7 @@ capabilities:
     optional: true
     config:
       service: github
-      phase: runtime
+      phase: [runtime]
       apiKey:
         name: GH_TOKEN
         proxyManaged: true

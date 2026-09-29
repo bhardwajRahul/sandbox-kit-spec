@@ -213,9 +213,16 @@ func TestSchemaMatchesSpecConstants(t *testing.T) {
 	injectBranch := at(t, credential, "definitions", "apiKey")["anyOf"].([]any)[1].(map[string]any)
 	require.Equal(t, "^$", literalPattern(t, at(t, injectBranch, "properties", "name")))
 	assertAcceptsKitArg(t, at(t, injectBranch, "properties", "name"), "bearing")
-	require.ElementsMatch(t, []any{"install", "runtime"},
-		literalEnum(t, at(t, credential, "properties", "phase")))
-	assertAcceptsKitArg(t, at(t, credential, "properties", "phase"), "bearing")
+	require.Equal(t, at(t, sshAgent, "properties", "phase"), at(t, credential, "properties", "phase"))
+	phaseBranches := at(t, credential, "properties", "phase")["anyOf"].([]any)
+	phaseScalar := phaseBranches[0].(map[string]any)
+	phaseList := phaseBranches[1].(map[string]any)
+	require.ElementsMatch(t, []any{"install", "runtime"}, literalEnum(t, phaseScalar))
+	assertAcceptsKitArg(t, phaseScalar, "bearing")
+	require.Equal(t, "array", phaseList["type"])
+	require.Equal(t, float64(1), phaseList["minItems"])
+	require.Equal(t, true, phaseList["uniqueItems"])
+	require.Equal(t, phaseScalar, at(t, phaseList, "items"))
 	// The credential-file encodings the validator accepts, pinned so the
 	// schema cannot silently admit (or drop) one.
 	credentialFile := at(t, credential, "definitions", "oauth", "properties", "credentialFile")
