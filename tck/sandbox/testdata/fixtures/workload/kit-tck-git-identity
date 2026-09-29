@@ -30,12 +30,22 @@ defaults)
 absent)
   test "$(git config --global --get user.name)" = 'Image Author'
   test "$(git config --global --get user.email)" = image@example.invalid
+  # Observe effective author and committer values outside a user repository,
+  # whose own attribution is independent of the runtime grant.
+  dir=$(mktemp -d)
+  trap 'rm -rf "$dir"' EXIT
+  for ident in GIT_AUTHOR_IDENT GIT_COMMITTER_IDENT; do
+    case "$(git -C "$dir" var "$ident")" in
+    'Image Author <image@example.invalid> '*) ;;
+    *) exit 1 ;;
+    esac
+  done
   echo absent
   ;;
 only)
   test "$(git config --global --get alias.kit-tck-guest)" = status
   for key in user.signingKey alias.kit-tck-source credential.helper http.extraHeader core.hooksPath include.path filter.kit-tck-source.clean gpg.program; do
-    if git config --global --get "$key"; then exit 1; else test "$?" = 1; fi
+    if git config --get "$key"; then exit 1; else test "$?" = 1; fi
   done
   echo only
   ;;

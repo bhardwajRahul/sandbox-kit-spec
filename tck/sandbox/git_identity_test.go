@@ -117,6 +117,12 @@ func TestGitIdentityProbe(t *testing.T) {
 	out, err := run("sh", probe, "absent")
 	require.NoError(t, err, "%s", out)
 	require.Equal(t, "absent\n", string(out))
+	for _, variable := range []string{"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"} {
+		out, err = run("env", variable+"=leaked-identity", "sh", probe, "absent")
+		require.Error(t, err, "%s: %s", variable, out)
+	}
+	out, err = run("env", "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=user.name", "GIT_CONFIG_VALUE_0=leaked-identity", "sh", probe, "absent")
+	require.Error(t, err, "%s", out)
 	out, err = run("sh", probe, "workload", "true")
 	require.NoError(t, err, "%s", out)
 
@@ -154,6 +160,20 @@ func TestGitIdentityProbe(t *testing.T) {
 		require.Contains(t, string(out), "kit-tck-leaked-setting")
 		out, err = run("git", "config", "--global", "--unset", key)
 		require.NoError(t, err, "%s", out)
+	}
+	// Source settings are forbidden in every effective scope, even when
+	// the global config itself still contains only the requested pair.
+	for _, key := range []string{"user.signingKey", "alias.kit-tck-source", "credential.helper", "http.extraHeader", "core.hooksPath", "include.path", "filter.kit-tck-source.clean", "gpg.program"} {
+		out, err = run("env", "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0="+key, "GIT_CONFIG_VALUE_0=/kit-tck-leaked-setting", "sh", probe, "only")
+		require.Error(t, err, "environment %s: %s", key, out)
+		require.Contains(t, string(out), "/kit-tck-leaked-setting")
+		systemConfig := filepath.Join(root, "system-config")
+		require.NoError(t, os.WriteFile(systemConfig, nil, 0600))
+		out, err = run("git", "config", "--file", systemConfig, key, "/kit-tck-leaked-setting")
+		require.NoError(t, err, "%s", out)
+		out, err = run("env", "GIT_CONFIG_NOSYSTEM=0", "GIT_CONFIG_SYSTEM="+systemConfig, "sh", probe, "only")
+		require.Error(t, err, "system %s: %s", key, out)
+		require.Contains(t, string(out), "/kit-tck-leaked-setting")
 	}
 	// A late write changes exec defaults but cannot repair what the
 	// workload saw when it started.

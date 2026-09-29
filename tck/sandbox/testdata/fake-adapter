@@ -531,10 +531,12 @@ exec)
     startup-hook) cat "$dir/git-startup" ;;
     clear-hooks) rm -f "$dir/git-startup" ;;
     absent)
+      if [ "$broken" = leaks-identity-env ]; then exit 1; fi
       test "$(head -1 "$dir/git-identity")" = 'Image Author'
       test "$(tail -1 "$dir/git-identity")" = image@example.invalid
       echo absent ;;
     only)
+      if [ "$broken" = imports-effective-git-settings ]; then exit 1; fi
       case "$broken" in imports-identity-include | imports-identity-filter | imports-identity-signing-program) exit 1 ;; esac
       if [ "$broken" = imports-identity-signing-key ]; then exit 1; fi
       if [ "$broken" = imports-source-git-settings ] || [ "$broken" = clobbers-guest-git-settings ]; then exit 1; fi

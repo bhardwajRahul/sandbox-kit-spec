@@ -152,6 +152,12 @@ hide a missing hook. Required and optional fixtures exercise missing
 values and withheld identity. The suite never needs the user's real name,
 email or signing keys.
 
+After recreation, the hook check reads only the new startup capture:
+install hooks do not repeat, and their writable-layer output is discarded.
+Workload entrypoint captures are also checked after restart and recreation.
+Identity and source-setting leak probes inspect effective Git behavior,
+including environment and system configuration, not only global files.
+
 An adapter claiming this capability also supports `selection <id>` using
 the record format below. The suite checks that an unavailable optional
 identity is recorded as skipped, with its rejected member, and is absent
