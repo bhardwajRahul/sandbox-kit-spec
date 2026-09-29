@@ -275,6 +275,9 @@ func (r *relay) loginAllowed(l login, b *binding) bool {
 		user, host, hasUser := strings.Cut(d, "@")
 		if !hasUser {
 			host, user = user, ""
+			if r.broken == "restricts-host-only-user" {
+				user = "git"
+			}
 		}
 		if user != "" && user != l.user && r.broken != "ignores-login-user" {
 			continue

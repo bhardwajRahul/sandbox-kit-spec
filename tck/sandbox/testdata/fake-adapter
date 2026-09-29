@@ -99,6 +99,23 @@ write_republished_state() {
   printf '{"selection":{"selected":[%s],"skipped":[%s]},"surface":%s}\n' "$selected" "$skipped" "$surface" >"$dir/selection.json"
 }
 
+record_ssh_processes() {
+  local dir="$1" boot="$2" process process_agent process_socket
+  for process in workload startup; do
+    process_agent="$(cat "$dir/ssh-agent")"
+    process_socket=/run/kit-tck/ssh-agent.sock
+    if [ "$broken" = "ssh-agent-missing-$process-env" ] || { [ "$boot" = restart ] && [ "$broken" = "ssh-agent-restart-missing-$process-env" ]; }; then
+      process_agent=""
+      process_socket=""
+    elif [ "$broken" = "ssh-agent-bogus-$process-socket" ]; then
+      process_agent="$dir/nonexistent-agent.sock"
+      process_socket=/run/kit-tck/nonexistent-agent.sock
+    fi
+    printf '%s' "$process_socket" >"$dir/$process-ssh-sock"
+    SSH_AUTH_SOCK="$process_agent" python3 "$(cat "$dir/ssh-agent-probe")" observe >"$dir/$process-ssh-sock-proof" 2>&1 || true
+  done
+}
+
 case "$verb" in
 capabilities)
   if [ -n "$claims" ]; then echo "$claims" | tr ',' '\n'; fi
@@ -235,12 +252,13 @@ create)
     */ssh-agent-optional) agent_phase=runtime ;;
     */ssh-agent-bounded)
       agent_phase=runtime agent_required=1
-      agent_config='{"phase":"runtime","unrestricted":false,"sign":["git"],"authenticate":["git@kit-tck.example"]}'
+      agent_config='{"phase":"runtime","unrestricted":false,"sign":["git"],"authenticate":["git@kit-tck.example","any-user.kit-tck.example"]}'
       ;;
     */ssh-agent) agent_phase=runtime agent_required=1 ;;
     esac
   done
   if [ -n "$agent_required" ] && [ -z "$offered_agent" ] && [ "$broken" != "ssh-agent-accepts-without-agent" ]; then
+    if [ "$broken" = ssh-agent-refusal-unnamed ]; then echo "refusing: unavailable" >&2; exit 2; fi
     echo "refusing: the kit requires com.docker.sandbox/ssh-agent@1 and no backing agent is available" >&2
     exit 2
   fi
@@ -347,19 +365,7 @@ create)
     fi
   fi
   if [ -f "$dir/ssh-agent" ]; then
-    for process in workload startup; do
-      process_agent="$offered_agent"
-      process_socket=/run/kit-tck/ssh-agent.sock
-      if [ "$broken" = "ssh-agent-missing-$process-env" ]; then
-        process_agent=""
-        process_socket=""
-      elif [ "$broken" = "ssh-agent-bogus-$process-socket" ]; then
-        process_agent="$dir/nonexistent-agent.sock"
-        process_socket=/run/kit-tck/nonexistent-agent.sock
-      fi
-      printf '%s' "$process_socket" >"$dir/$process-ssh-sock"
-      SSH_AUTH_SOCK="$process_agent" python3 "$(cat "$dir/ssh-agent-probe")" observe >"$dir/$process-ssh-sock-proof" 2>&1 || true
-    done
+    record_ssh_processes "$dir" create
   fi
   # The entrypoint records an empty value when no runtime-phase grant
   # exists; only the leak mutation writes a non-empty value instead.
@@ -916,6 +922,7 @@ start)
   fi
   echo running >"$dir/status"
   if [ "$broken" = "ssh-agent-first-boot-only" ]; then rm -f "$dir/ssh-agent"; fi
+  if [ -f "$dir/ssh-agent" ] && [ "$broken" != ssh-agent-stale-boot-proofs ]; then record_ssh_processes "$dir" restart; fi
   if [ "$broken" = "loses-volume-on-restart" ]; then rm -rf "$dir/volume" && mkdir -p "$dir/volume"; fi
   if [ "$broken" != "no-startup" ]; then
     count=$(cat "$dir/startup.count")

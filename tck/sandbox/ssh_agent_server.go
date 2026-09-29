@@ -15,7 +15,8 @@ const (
 	// sshTestServer is the destination the bounded fixture names. It is
 	// under .example, which is reserved, so no real server answers: the
 	// suite only ever presents this server's host key in a binding.
-	sshTestServer = "kit-tck.example"
+	sshTestServer    = "kit-tck.example"
+	sshAnyUserServer = "any-user.kit-tck.example"
 	// sshTestUser is the account the fixture's destination names.
 	sshTestUser = "git"
 )

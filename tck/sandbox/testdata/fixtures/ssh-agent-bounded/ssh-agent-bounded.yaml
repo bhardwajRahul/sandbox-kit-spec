@@ -2,7 +2,7 @@
 schemaVersion: "3"
 kind: mixin
 displayName: Bounded SSH agent
-description: Grants git signatures and logins as git to the suite's test server only, so the relay enforcing each bound is observable
+description: Grants git signatures, git logins to one test server, and any-user logins to another, so each destination form is observable
 capabilities:
   - type: com.docker.sandbox/ssh-agent@1
     config:
@@ -11,4 +11,4 @@ capabilities:
       sign: [git]
       # A name the suite hands the runtime host keys for through
       # --ssh-known-hosts; .example is reserved, so no real server answers.
-      authenticate: [git@kit-tck.example]
+      authenticate: [git@kit-tck.example, any-user.kit-tck.example]

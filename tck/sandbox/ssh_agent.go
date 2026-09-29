@@ -171,39 +171,57 @@ func sshAgentReachable(ctx context.Context, e *Env) []report.Finding {
 		if f := agentServes(ctx, e, id, a); f != nil {
 			return []report.Finding{*f}
 		}
-		for _, path := range []string{"/var/tmp/kit-tck-workload-ssh-sock", "/var/tmp/kit-tck-startup-ssh-sock"} {
-			proof, f := initialAgentProof(ctx, e, id, path+"-proof")
-			if f != nil {
-				return []report.Finding{*f}
-			}
-			socket, f := execOutput(ctx, e, id, "cat", path)
-			if f != nil {
-				return []report.Finding{report.Failf("read initial SSH_AUTH_SOCK from %s: %s", path, f.Detail)}
-			}
-			if strings.TrimSpace(socket) == "" {
-				return []report.Finding{report.Failf("SSH_AUTH_SOCK was absent from %s", path)}
-			}
-			if !strings.Contains(proof, a.PublicKey()) {
-				return []report.Finding{report.Failf("the initial process at %s did not list the backing agent's key", path)}
-			}
-			if err := verifyAgentSignature(a, proof); err != nil {
-				return []report.Finding{report.Failf("the initial process at %s did not obtain a valid backing-agent signature: %v", path, err)}
-			}
+		_, f := initialAgentsServe(ctx, e, id, a, nil)
+		if f != nil {
+			return []report.Finding{*f}
 		}
 		return nil
 	})
 }
 
+func initialAgentsServe(ctx context.Context, e *Env, id string, a *backingAgent, previous map[string]string) (map[string]string, *report.Finding) {
+	paths := []string{"/var/tmp/kit-tck-workload-ssh-sock"}
+	if e.Claimed[capLifecycle] {
+		paths = append(paths, "/var/tmp/kit-tck-startup-ssh-sock")
+	}
+	proofs := make(map[string]string, len(paths))
+	for _, path := range paths {
+		proof, f := initialAgentProof(ctx, e, id, path+"-proof", previous[path])
+		if f != nil {
+			return nil, f
+		}
+		socket, f := execOutput(ctx, e, id, "cat", path)
+		if f != nil {
+			return nil, failing("read initial SSH_AUTH_SOCK from %s: %s", path, f.Detail)
+		}
+		if strings.TrimSpace(socket) == "" {
+			return nil, failing("SSH_AUTH_SOCK was absent from %s", path)
+		}
+		if !strings.Contains(proof, a.PublicKey()) {
+			return nil, failing("the initial process at %s did not list the backing agent's key", path)
+		}
+		if err := verifyAgentSignature(a, proof); err != nil {
+			return nil, failing("the initial process at %s did not obtain a valid backing-agent signature: %v", path, err)
+		}
+		proofs[path] = proof
+	}
+	return proofs, nil
+}
+
 // Creation can return before the entrypoint finishes its probe. Fixtures
 // rename the completed record into place so an early exec never judges
-// a partially written signature as a broken agent.
-func initialAgentProof(ctx context.Context, e *Env, id, path string) (string, *report.Finding) {
+// a partially written signature as a broken agent. Each probe signs fresh
+// random data, so an unchanged record cannot prove access on a new boot.
+func initialAgentProof(ctx context.Context, e *Env, id, path, previous string) (string, *report.Finding) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	for {
 		proof, f := execOutput(ctx, e, id, "cat", path)
-		if f == nil {
+		if f == nil && (previous == "" || proof != previous) {
 			return proof, nil
+		}
+		if f == nil {
+			f = failing("the proof from the previous boot was not replaced")
 		}
 		select {
 		case <-ctx.Done():
@@ -313,8 +331,8 @@ func (c loginCase) args(key string) []string {
 }
 
 // withBoundedSandbox creates the bounded fixture with a runtime that
-// trusts only the suite's test server for authenticate destinations.
-func withBoundedSandbox(ctx context.Context, e *Env, run func(id string, a *backingAgent, server, impostor *sshServer) []report.Finding) []report.Finding {
+// trusts only the suite's two allowed servers for authenticate destinations.
+func withBoundedSandbox(ctx context.Context, e *Env, run func(id string, a *backingAgent, server, hostOnly, impostor *sshServer) []report.Finding) []report.Finding {
 	return withBackingAgent(func(a *backingAgent) []report.Finding {
 		server, err := newSSHServer(sshTestServer)
 		if err != nil {
@@ -324,7 +342,11 @@ func withBoundedSandbox(ctx context.Context, e *Env, run func(id string, a *back
 		if err != nil {
 			return []report.Finding{report.Failf("generate the impostor's host key: %v", err)}
 		}
-		known, err := knownHosts(a.dir, server)
+		hostOnly, err := newSSHServer(sshAnyUserServer)
+		if err != nil {
+			return []report.Finding{report.Failf("generate the host-only server key: %v", err)}
+		}
+		known, err := knownHosts(a.dir, server, hostOnly)
 		if err != nil {
 			return []report.Finding{report.Failf("write the known hosts: %v", err)}
 		}
@@ -334,7 +356,7 @@ func withBoundedSandbox(ctx context.Context, e *Env, run func(id string, a *back
 			return []report.Finding{report.Failf("create: %v", err)}
 		}
 		defer cleanup()
-		return run(id, a, server, impostor)
+		return run(id, a, server, hostOnly, impostor)
 	})
 }
 
@@ -354,7 +376,7 @@ func judgeLogins(ctx context.Context, e *Env, id string, a *backingAgent, admitt
 }
 
 func sshAgentLoginsBounded(ctx context.Context, e *Env) []report.Finding {
-	return withBoundedSandbox(ctx, e, func(id string, a *backingAgent, server, impostor *sshServer) []report.Finding {
+	return withBoundedSandbox(ctx, e, func(id string, a *backingAgent, server, hostOnly, impostor *sshServer) []report.Finding {
 		bound := func(s *sshServer, sid []byte) (string, *report.Finding) {
 			b, err := s.binding(sid, false)
 			if err != nil {
@@ -370,6 +392,15 @@ func sshAgentLoginsBounded(ctx context.Context, e *Env) []report.Finding {
 		toImpostor, f := bound(impostor, sid)
 		if f != nil {
 			return []report.Finding{*f}
+		}
+		toHostOnly, f := bound(hostOnly, sid)
+		if f != nil {
+			return []report.Finding{*f}
+		}
+		for _, user := range []string{"root", "deploy"} {
+			if f := expectSigned(ctx, e, id, a, "login "+user, (loginCase{"a host-only login", user, sid, toHostOnly, ""}).args(a.PublicKey())...); f != nil {
+				return []report.Finding{*f}
+			}
 		}
 		serverKey := hex.EncodeToString(server.signer.PublicKey().Marshal())
 		impostorKey := hex.EncodeToString(impostor.signer.PublicKey().Marshal())
@@ -403,7 +434,7 @@ func sshAgentLoginsBounded(ctx context.Context, e *Env) []report.Finding {
 }
 
 func sshAgentBindingVerified(ctx context.Context, e *Env) []report.Finding {
-	return withBoundedSandbox(ctx, e, func(id string, a *backingAgent, server, impostor *sshServer) []report.Finding {
+	return withBoundedSandbox(ctx, e, func(id string, a *backingAgent, server, hostOnly, impostor *sshServer) []report.Finding {
 		sid := newSessionID()
 		valid, err := server.binding(sid, false)
 		if err != nil {
@@ -477,6 +508,10 @@ func sshAgentEveryBoot(ctx context.Context, e *Env) []report.Finding {
 		if f := agentServes(ctx, e, id, a); f != nil {
 			return []report.Finding{*f}
 		}
+		previous, f := initialAgentsServe(ctx, e, id, a, nil)
+		if f != nil {
+			return []report.Finding{*f}
+		}
 		if err := e.Adapter.Stop(ctx, id); err != nil {
 			return []report.Finding{report.Failf("stop: %v", err)}
 		}
@@ -484,6 +519,9 @@ func sshAgentEveryBoot(ctx context.Context, e *Env) []report.Finding {
 			return []report.Finding{report.Failf("start: %v", err)}
 		}
 		if f := agentServes(ctx, e, id, a); f != nil {
+			return []report.Finding{report.Failf("after stop and start: %s", f.Detail)}
+		}
+		if _, f := initialAgentsServe(ctx, e, id, a, previous); f != nil {
 			return []report.Finding{report.Failf("after stop and start: %s", f.Detail)}
 		}
 		return nil
@@ -497,6 +535,9 @@ func sshAgentRequiredRefused(ctx context.Context, e *Env) []report.Finding {
 	var refusal *adapter.RefusedError
 	switch {
 	case errors.As(err, &refusal):
+		if !strings.Contains(refusal.Detail, capSSHAgent) {
+			return []report.Finding{report.Failf("refusal did not name %s: %s", capSSHAgent, refusal.Detail)}
+		}
 		return nil
 	case err != nil:
 		return []report.Finding{report.Failf("create failed for a reason other than refusal: %v", err)}

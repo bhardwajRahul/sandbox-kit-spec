@@ -192,6 +192,12 @@ func TestBackingAgentCloseWithIdleClient(t *testing.T) {
 // requirement — the two network-policy versions state the same duty about
 // the host lists — and dropping it has to fail every one of them.
 var mutations = map[string][]string{
+	"ssh-agent-restart-missing-workload-env": {"ssh-agent@1/every-boot"},
+	"ssh-agent-restart-missing-startup-env":  {"ssh-agent@1/every-boot"},
+	"ssh-agent-stale-boot-proofs":            {"ssh-agent@1/every-boot"},
+	"ssh-agent-refusal-unnamed":              {"ssh-agent@1/unavailable-refuses-required"},
+	"restricts-host-only-user":               {"ssh-agent@1/logins-bounded"},
+
 	"ignores-ssh-agent":                     {"ssh-agent@1/agent-reachable", "ssh-agent@1/operations-restricted", "ssh-agent@1/every-boot"},
 	"ssh-agent-drops-sign":                  {"ssh-agent@1/agent-reachable"},
 	"ssh-agent-missing-workload-env":        {"ssh-agent@1/agent-reachable"},
