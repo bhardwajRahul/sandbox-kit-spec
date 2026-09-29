@@ -365,3 +365,25 @@ func TestSSHAgentParameterizedLiteralValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestSSHAgentParameterizedPhaseOverlap(t *testing.T) {
+	for _, phase := range []string{"runtime", `[install, runtime]`, `[runtime, "${{ kit.args.phase }}"]`} {
+		for _, bounds := range [][]string{
+			{"unrestricted: false", `sign: ["${{ kit.args.ns }}"]`},
+			{`unrestricted: "${{ kit.args.unrestricted }}"`, "sign: [git]"},
+		} {
+			for _, reverse := range []bool{false, true} {
+				entries := []string{sshAgentEntry(phase, false, bounds...), sshAgentEntry("runtime", true)}
+				if reverse {
+					entries[0], entries[1] = entries[1], entries[0]
+				}
+				d := mustDecode(t, "schemaVersion: '3'\nkind: mixin\nargs:\n  ns: {default: git}\n  phase: {default: install}\n  unrestricted: {default: false}\ncapabilities:\n"+strings.Join(entries, ""))
+				_, err := Validate(d)
+				require.ErrorContains(t, err, "already declared")
+				d.Capabilities = []Capability{{Group: &CapabilityGroup{Optional: true, Capabilities: d.Capabilities}}}
+				_, err = Validate(d)
+				require.ErrorContains(t, err, "already declared", "group members are a declaration block too")
+			}
+		}
+	}
+}

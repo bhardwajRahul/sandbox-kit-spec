@@ -565,6 +565,24 @@ func validateCapabilityBlock(d *Descriptor) error {
 			errs.add(fieldErrorf(path+".config", "capabilities[%d]: %s takes no config", i, n.Type))
 		}
 
+		// Record literal phases before deferring parameterized values. A
+		// merge can otherwise union overlapping entries and erase the error.
+		if n.Type == CapabilitySSHAgent {
+			var phaseOnly SSHAgent
+			phaseConfig := Capability{Type: n.Type, Config: map[string]any{"phase": n.Config["phase"]}}
+			if DecodeCapabilityConfig(phaseConfig, &phaseOnly) == nil {
+				for _, phase := range phaseOnly.Phase {
+					if ContainsArgRef(phase) {
+						continue
+					}
+					if prev, dup := seenSSHAgent[phase]; dup && prev != i {
+						errs.add(fieldErrorf(path+".config.phase", "capabilities[%d]: ssh-agent for phase %q already declared at capabilities[%d]", i, phase, prev))
+					}
+					seenSSHAgent[phase] = i
+				}
+			}
+		}
+
 		// A parameterized entry — its config references a kit arg — defers
 		// its typed validation to ValidateEffective, after expansion has
 		// resolved every placeholder: a string placeholder cannot pass a
@@ -615,21 +633,12 @@ func validateCapabilityBlock(d *Descriptor) error {
 			}
 			seenCredential[key] = i
 		case CapabilitySSHAgent:
-			a, err := validateSSHAgentNeed(path, i, n)
+			_, err := validateSSHAgentNeed(path, i, n)
 			if err != nil {
 				errs.add(err)
 				continue
 			}
-			// One entry per phase: two with different bounds would leave
-			// the reader to guess whether they add up or one narrows the
-			// other. Across blocks they merge; within a block, write one.
-			for _, phase := range a.Phase {
-				if prev, dup := seenSSHAgent[phase]; dup {
-					errs.add(fieldErrorf(path+".config.phase", "capabilities[%d]: ssh-agent for phase %q already declared at capabilities[%d]", i, phase, prev))
-					continue
-				}
-				seenSSHAgent[phase] = i
-			}
+
 		case CapabilityVolume:
 			var v Volume
 			if err := DecodeCapabilityConfig(n, &v); err != nil {
