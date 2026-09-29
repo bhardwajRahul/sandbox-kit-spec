@@ -217,3 +217,13 @@ for a failed create. The suite therefore cannot inspect whether files or
 hooks were applied before refusal. The before-application duty remains
 required by the specification, with an explicit TCK coverage waiver until
 the adapter can expose those effects.
+
+Atomic-selection checks observe final state, so they cannot detect effects
+applied during selection and rolled back before observation. The separate
+`selection-before-application` duty has an explicit coverage waiver until
+an adapter effect trace can judge it. `groups-expanded` checks validation
+after create-time argument expansion, including when policy would reject
+the optional member. Lifetime checks exercise both initial acceptance and
+initial rejection: restart retains the decision and recreation uses the
+new policy. Calling `selection-policy <id>` without rejection flags clears
+future rejections, allowing the inverse transition.

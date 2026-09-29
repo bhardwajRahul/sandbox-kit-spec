@@ -150,6 +150,10 @@ func TestAConformingRuntimePasses(t *testing.T) {
 // requirement — the two network-policy versions state the same duty about
 // the host lists — and dropping it has to fail every one of them.
 var mutations = map[string][]string{
+	"group-invalid-expanded":          {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
+	"group-skips-invalid-expanded":    {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
+	"group-reselect-skipped-restart":  {"SPEC-v3 §7.1.1/lifetime"},
+	"group-never-admits-recreate":     {"SPEC-v3 §7.1.1/lifetime"},
 	"group-ignore-required-lifecycle": {"SPEC-v3 §7.1.1/atomic-selection"},
 	"group-ignore-optional-lifecycle": {"SPEC-v3 §7.1.1/atomic-selection"},
 	"group-selected-member-sources":   {"SPEC-v3 §7.1.1/atomic-selection"},

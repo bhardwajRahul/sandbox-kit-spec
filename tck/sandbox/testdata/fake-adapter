@@ -107,13 +107,14 @@ capabilities)
 create)
   kits=()
   greeting=""
+  group_path=/var/tmp/group-expanded
   hostmode="readwrite"
   group_rejected=no
   lifecycle_rejected=no
   while [ $# -gt 0 ]; do
     case "$1" in
     --arg)
-      case "$2" in greeting=*) greeting="${2#greeting=}" ;; esac
+      case "$2" in greeting=*) greeting="${2#greeting=}" ;; group_path=*) group_path="${2#group_path=}" ;; esac
       shift 2
       ;;
     --reject-capability)
@@ -214,6 +215,14 @@ create)
 
   for kit in "${kits[@]}"; do
     case "$kit" in
+    */groups-expanded)
+      if [ "$group_path" = relative ]; then
+        if [ "$broken" != group-invalid-expanded ] && { [ "$lifecycle_rejected" = no ] || [ "$broken" != group-skips-invalid-expanded ]; }; then
+          echo "groups-expanded capabilities[0].group.capabilities[0].config.files[0].path: must be absolute" >&2
+          exit 2
+        fi
+      fi
+      ;;
     */ordinary-required)
       if [ "$lifecycle_rejected" = yes ] && [ "$broken" != ordinary-ignore-required-rejection ]; then
         echo "ordinary-required capabilities[0]: rejected" >&2
@@ -747,14 +756,18 @@ selection)
   ;;
 
 selection-policy)
-  echo yes >"$state/$1/group-future-rejected"
+  rejection=no
+  if [ "$#" -gt 1 ]; then rejection=yes; fi
+  echo "$rejection" >"$state/$1/group-future-rejected"
   ;;
 
 recreate)
   if [ -f "$state/$1/group-rejected" ] && [ "$broken" != group-no-recreate ]; then
     cp "$state/$1/selection.json" "$state/$1/previous-selection.json"
     cp "$state/$1/group-order" "$state/$1/previous-group-order"
-    write_group_state "$state/$1" "$(cat "$state/$1/group-future-rejected")"
+    rejection="$(cat "$state/$1/group-future-rejected")"
+    if [ "$broken" = group-never-admits-recreate ] && [ "$(cat "$state/$1/group-rejected")" = yes ]; then rejection=yes; fi
+    write_group_state "$state/$1" "$rejection"
     if [ "$broken" = group-stale-recreate-records ]; then
       sed 's/"storagePaths":\["[^"]*"\]/"storagePaths":[]/' "$state/$1/previous-selection.json" >"$state/$1/selection.json"
     fi
@@ -773,6 +786,7 @@ start)
   if [ -f "$dir/group-rejected" ]; then
     rejection="$(cat "$dir/group-rejected")"
     if [ "$broken" = group-reselect-restart ]; then rejection="$(cat "$dir/group-future-rejected")"; fi
+    if [ "$broken" = group-reselect-skipped-restart ] && [ "$rejection" = yes ]; then rejection="$(cat "$dir/group-future-rejected")"; fi
     write_group_state "$dir" "$rejection"
   fi
   echo running >"$dir/status"

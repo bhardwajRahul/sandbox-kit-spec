@@ -328,7 +328,25 @@ func groupConflicts(ctx context.Context, e *Env) []report.Finding {
 }
 
 func groupLifetime(ctx context.Context, e *Env) []report.Finding {
-	id, cleanup, err := e.sandbox(ctx, []string{fixtureWorkload, "groups"}, nil)
+	for _, rejected := range []bool{false, true} {
+		if findings := groupLifetimeFrom(ctx, e, rejected); len(findings) > 0 {
+			return findings
+		}
+	}
+	return nil
+}
+
+func groupLifetimeFrom(ctx context.Context, e *Env, initiallyRejected bool) []report.Finding {
+	opts := adapter.CreateOptions{}
+	var futureRejections []string
+	initialOrder, freshOrder := "base,feature,independent", "base,independent"
+	if initiallyRejected {
+		opts.RejectCapabilities = []string{groupVolume}
+		initialOrder, freshOrder = freshOrder, initialOrder
+	} else {
+		futureRejections = []string{groupVolume}
+	}
+	id, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, "groups"}, opts)
 	defer cleanup()
 	if err != nil {
 		return []report.Finding{report.Failf("create: %v", err)}
@@ -337,7 +355,7 @@ func groupLifetime(ctx context.Context, e *Env) []report.Finding {
 	if err != nil {
 		return []report.Finding{report.Failf("selection: %v", err)}
 	}
-	if err := e.Adapter.RejectCapabilities(ctx, id, groupVolume); err != nil {
+	if err := e.Adapter.RejectCapabilities(ctx, id, futureRejections...); err != nil {
 		return []report.Finding{report.Failf("change future selection: %v", err)}
 	}
 	if err := e.Adapter.Stop(ctx, id); err != nil {
@@ -354,35 +372,42 @@ func groupLifetime(ctx context.Context, e *Env) []report.Finding {
 	if f != nil {
 		return []report.Finding{*f}
 	}
-	if strings.TrimSpace(order) != "base,feature,independent" {
+	if strings.TrimSpace(order) != initialOrder {
 		return []report.Finding{report.Failf("restart did not apply the retained group")}
 	}
 	if err := e.Adapter.Recreate(ctx, id); err != nil {
 		return []report.Finding{report.Failf("recreate: %v", err)}
 	}
 	fresh, err := e.Adapter.Selection(ctx, id)
-	if err != nil || slices.Contains(fresh.Surface.StoragePaths, "/var/tmp/group-volume") {
+	if err != nil || slices.Contains(fresh.Surface.StoragePaths, "/var/tmp/group-volume") != initiallyRejected {
 		return []report.Finding{report.Failf("recreate did not select afresh: %v", err)}
 	}
-	for _, record := range fresh.Selection.Selected {
+	expected, unexpected := fresh.Selection.Skipped, fresh.Selection.Selected
+	var wantRejected []string
+	if initiallyRejected {
+		expected, unexpected = unexpected, expected
+	} else {
+		wantRejected = []string{"capabilities[1].group.capabilities[0]"}
+	}
+	for _, record := range unexpected {
 		if record.Path == "capabilities[1]" {
-			return []report.Finding{report.Failf("recreate retained the previously selected group record")}
+			return []report.Finding{report.Failf("recreate retained the previous group decision")}
 		}
 	}
 	found := false
-	for _, record := range fresh.Selection.Skipped {
+	for _, record := range expected {
 		if record.Path == "capabilities[1]" {
-			found = slices.Contains(record.Rejected, "capabilities[1].group.capabilities[0]")
+			found = slices.Equal(record.Rejected, wantRejected)
 		}
 	}
 	if !found {
-		return []report.Finding{report.Failf("recreate did not record the newly skipped group and rejected member")}
+		return []report.Finding{report.Failf("recreate did not record the fresh group decision")}
 	}
 	order, f = execOutput(ctx, e, id, "cat", "/var/tmp/group-order")
 	if f != nil {
 		return []report.Finding{*f}
 	}
-	if strings.TrimSpace(order) != "base,independent" {
+	if strings.TrimSpace(order) != freshOrder {
 		return []report.Finding{report.Failf("recreate applied stale group hooks: %q", order)}
 	}
 	return nil
@@ -394,6 +419,32 @@ func groupExecution(ctx context.Context, e *Env) []report.Finding {
 	var refused *adapter.RefusedError
 	if err == nil || errors.As(err, &refused) {
 		return []report.Finding{report.Failf("selected hook failure must remain an execution error, not skip/refusal: %v", err)}
+	}
+	return nil
+}
+
+// A publish-valid path becomes invalid only after create-time expansion.
+// Even rejecting the optional member must not hide that invalid declaration.
+func groupExpandedValidation(ctx context.Context, e *Env) []report.Finding {
+	for _, reject := range []bool{false, true} {
+		for _, path := range []string{"/var/tmp/group-expanded", "relative"} {
+			opts := adapter.CreateOptions{Args: map[string]string{"group_path": path}}
+			if reject {
+				opts.RejectCapabilities = []string{capLifecycle}
+			}
+			_, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, "groups-expanded"}, opts)
+			cleanup()
+			if path != "relative" {
+				if err != nil {
+					return []report.Finding{report.Failf("valid expanded group rejected: %v", err)}
+				}
+				continue
+			}
+			var refused *adapter.RefusedError
+			if !errors.As(err, &refused) || !strings.Contains(refused.Detail, "capabilities[0].group.capabilities[0]") {
+				return []report.Finding{report.Failf("invalid expanded group must refuse and identify its member (reject=%t): %v", reject, err)}
+			}
+		}
 	}
 	return nil
 }

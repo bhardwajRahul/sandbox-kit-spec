@@ -562,7 +562,10 @@ are valid. Singleton and duplicate constraints apply separately to the
 ordinary top-level entries and to each group's members.
 
 All declarations MUST validate before selection, including skipped <!-- tck: SPEC-v3 §7.1.1/validate-declarations -->
-groups and every member after create-argument expansion. Cross-entry
+groups and every member.
+
+All declarations MUST validate again after create-argument expansion, <!-- tck: SPEC-v3 §7.1.1/validate-expanded-declarations -->
+including members of groups that selection would skip. Cross-entry
 constraints dependent on selection, including credential ownership and
 injection domains, are checked on the selected contributions and merged
 result. Selection does not bypass validation.
@@ -574,8 +577,9 @@ credential availability, and approval can further constrain the answer.
 The selection API MUST include a group only when every member is <!-- tck: SPEC-v3 §7.1.1/atomic-selection -->
 accepted. Otherwise it skips and records an optional group in full, or
 refuses a required group, identifying rejected members. Ordinary entries
-follow the same required/optional rule. No member is applied before
-selection finishes.
+follow the same required/optional rule.
+
+Members MUST NOT be applied before selection finishes. <!-- tck: SPEC-v3 §7.1.1/selection-before-application -->
 
 The selection API MUST flatten accepted constructs at their declaration <!-- tck: SPEC-v3 §7.1.1/order -->
 positions, preserving member order and existing Kit dependency order.
