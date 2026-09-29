@@ -216,9 +216,25 @@ func WithCapabilitySelector(selector spec.SelectCapability) ResolveOption {
 	return func(o *resolveOptions) { o.selector = selector }
 }
 
+// WithEnvironment supplies composed image defaults and runtime overrides for
+// Resolve and ResolvePartial. Kit argument exports replace defaults, and
+// overrides win last. Nil maps are empty; empty values are present values.
+// The maps are copied when this option is constructed. Resolve does not load
+// image configs or read the host environment. ContainerEnv still contains only
+// Kit argument exports; callers apply the same precedence at container creation.
+func WithEnvironment(defaults, overrides map[string]string) ResolveOption {
+	defaults, overrides = maps.Clone(defaults), maps.Clone(overrides)
+	return func(o *resolveOptions) {
+		o.environment = defaults
+		o.envOverrides = overrides
+	}
+}
+
 // Resolve fetches the requests, resolves them as a runnable set —
 // exactly one workload — and merges their descriptors. The result is
-// always validated in effective form before returning.
+// always validated in effective form before returning. WithEnvironment supplies
+// image defaults and runtime overrides for kit.env references; without it, only
+// Kit argument exports are available to environment expansion.
 //
 // Each kit's create-phase args are resolved and expanded before the
 // composition, which is what spec.Compose requires of a contribution. A

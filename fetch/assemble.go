@@ -148,10 +148,7 @@ func Assemble(ctx context.Context, requests []Request, options Options) (*Result
 				return false
 			}
 			return selector(c)
-		}), func(o *resolveOptions) {
-			o.environment = environment
-			o.envOverrides = options.Overrides.Env
-		})
+		}), WithEnvironment(environment, options.Overrides.Env))
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

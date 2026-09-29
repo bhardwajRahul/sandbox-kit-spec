@@ -179,12 +179,21 @@ the destination must have access to all referenced layers.
 For callers orchestrating those steps themselves, `Client.Resolve` and
 `ResolvePartial` resolve only declarations. `Client.LoadImage` and
 `assemble.Assemble` load and compose image metadata without downloading
-layers. These existing APIs remain available. The one-call API also
-checks layer inventories, so it reads more data than metadata-only
-assembly.
+layers. Pass `fetch.WithEnvironment(imageDefaults, runtimeOverrides)` to
+`Resolve` or `ResolvePartial` after composing image defaults. Argument
+exports replace defaults, and runtime overrides win last. Both maps are
+copied when the option is constructed. Without this option, only argument
+exports are available to `${{ kit.env.NAME }}` references; the resolver
+never reads the host environment or image configs. `Resolved.ContainerEnv`
+still reports only argument exports, so apply the same precedence when
+creating the container.
 
-Errors retain structured causes. Descriptor errors include original
-locations and source excerpts; print the returned error directly.
+The one-call API also checks layer inventories, so it reads more data
+than metadata-only assembly.
+
+Descriptor errors include original locations and source excerpts where
+safe. Errors after environment expansion omit expanded values and source
+excerpts that could disclose them; print the returned error directly.
 Publishing a flattened Kit remains `spec.Merge`'s job, with staged
 context bodies owned by the publisher. Runtime composition uses
 `spec.Compose` and preserves each selected context source separately.
