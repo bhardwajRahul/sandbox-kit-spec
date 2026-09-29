@@ -201,13 +201,9 @@ capabilities:
       prompt: ["exec", "{{.Prompt}}"]
       resume: ["resume", "{{.SessionID}}"]
 
-  # Bundled skills use this directory even when host sharing is off.
-  - type: com.docker.sandbox/agent-skills-directory@1
-    optional: true
-    config:
-      path: /home/agent/.agents/skills
-
   # Where codex reads shared skills, so the host's store reaches it.
+  # The runtime also exposes selected agent-skill@1 bundles here, even
+  # when host sharing is off or the user has no host skills.
   - type: com.docker.sandbox/agent-skills@1
     optional: true
     config:

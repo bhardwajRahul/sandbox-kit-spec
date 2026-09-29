@@ -214,7 +214,6 @@ var checks = append(gitIdentityChecks, []check{
 				{capPrivileged, fixturePrivileged, false},
 				{capAgentSkills, fixtureSkills, false},
 				{capAgentSkill, fixtureBundledSkill, false},
-				{capAgentSkillsDirectory, fixtureBundledReader, true},
 				{capPort, fixturePort, false},
 				{capUSBDevice, fixtureUSBDevice, false},
 				{capAgentSessions, fixtureAgentSessions, false},
@@ -230,9 +229,9 @@ var checks = append(gitIdentityChecks, []check{
 				if probe.capability == capAgentSkill {
 					// Without a supported destination, even an adapter
 					// accepting the unclaimed skill can legitimately refuse.
-					if !e.claims(capAgentSkillsDirectory) {
+					if !e.claims(capAgentSkills) {
 						findings = append(findings, report.Skipf(
-							"%s: refusal probe needs claimed %s", capAgentSkill, capAgentSkillsDirectory))
+							"%s: refusal probe needs claimed %s", capAgentSkill, capAgentSkills))
 						continue
 					}
 					compose = []string{fixtureBundledReader, probe.fixture}
@@ -1249,62 +1248,15 @@ func init() {
 			},
 		},
 		check{
-			// With the host's store off, a required skills entry cannot be
-			// satisfied, and the page requires refusal over silently
-			// starting the sandbox without the mount.
-			requirement: "agent-skills@1/host-off-refuses-required",
+			// Host content is supplemental, even for a required destination.
+			requirement: "agent-skills@1/host-store-optional",
 			capability:  capAgentSkills,
-			run: func(ctx context.Context, e *Env) []report.Finding {
-				id, cleanup, err := e.sandboxWith(ctx, skillsComposition,
-					adapter.CreateOptions{SkillsHostMode: "off"})
-				var refused *adapter.RefusedError
-				if errors.As(err, &refused) {
-					return nil
-				}
-				if err != nil {
-					return []report.Finding{report.Failf("create: %v", err)}
-				}
-				cleanup()
-				_ = id
-				return []report.Finding{report.Failf(
-					"skills are off on the host and the entry is required, so create must refuse rather than start without the mount")}
-			},
+			run:         skillsWithoutHost(fixtureSkills, skillsReadOnlyPath),
 		},
 		check{
-			// The other half of required-versus-optional: an entry the
-			// host cannot provide is skipped when the kit said it could
-			// live without it, and the sandbox still starts — without the
-			// mount, because skipped means skipped.
-			requirement: "agent-skills@1/host-off-skips-optional",
+			requirement: "agent-skills@1/host-off-keeps-optional",
 			capability:  capAgentSkills,
-			run: func(ctx context.Context, e *Env) []report.Finding {
-				id, cleanup, err := e.sandboxWith(ctx,
-					[]string{fixtureWorkload, fixtureSkillsOptional},
-					adapter.CreateOptions{SkillsHostMode: "off"})
-				var refused *adapter.RefusedError
-				if errors.As(err, &refused) {
-					return []report.Finding{report.Failf(
-						"the only skills entry is optional, so with the host's store off the runtime must skip it and start, not refuse: %s",
-						refused.Detail)}
-				}
-				if err != nil {
-					return []report.Finding{report.Failf("create: %v", err)}
-				}
-				defer cleanup()
-
-				res, err := e.Adapter.Exec(ctx, id, "ls", "/home/agent/.kit-tck/skills-opt")
-				if err != nil {
-					return []report.Finding{report.Failf("probe mount: %v", err)}
-				}
-				// The path existing proves nothing — an image may carry an
-				// empty mount-point directory. The seeded marker is what
-				// tells an exposed store from leftover directory.
-				if res.ExitCode == 0 && listsExactly(res.Stdout, SkillName) {
-					return []report.Finding{report.Failf(
-						"the host's store is off, but its contents are visible at the skipped entry's path")}
-				}
-				return nil
-			},
+			run:         skillsWithoutHost(fixtureSkillsOptional, "/home/agent/.kit-tck/skills-opt"),
 		},
 		check{
 			// "Every declared path receives the same store" means one

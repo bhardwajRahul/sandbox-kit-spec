@@ -203,10 +203,11 @@ to anyone.
 The host's half is judged separately: when `create` carries
 `--skills-host-mode`, the adapter **MUST** arrange that host setting for
 that sandbox — `readonly` withholds write however much a Kit asked for,
-and `off` withholds the store, which for a required entry means the
-runtime refuses the create, while an optional entry is skipped and the
-sandbox starts without the mount. Without this input the suite could never
-observe host-side narrowing at all. The store the suite uses is its own; a
+and `off` withholds only the host store. Required and optional
+`agent-skills@1` destinations remain selected, and the sandbox starts
+without the host mount. Selected `agent-skill@1` bundles still appear at
+those paths. Without this input the suite could never observe host-side
+narrowing at all. The store the suite uses is its own; a
 runtime **SHOULD NOT** point these fixtures at a store a user depends on.
 
 The workload fixture declares its working directory as

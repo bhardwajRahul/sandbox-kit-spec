@@ -105,9 +105,8 @@ com.docker.sandbox/privileged@1"
 #
 # The daemon draws the distinction itself where it answers over HTTP: a
 # request it understood and declined comes back 400, and one that broke
-# on the way comes back 500 — a kit requiring the skills store while the
-# host has skills off is the former, a hook that could not write its file
-# is the latter. The remaining patterns are the CLI's own refusals, which
+# on the way comes back 500 — an unsupported required capability is the
+# former, a hook that could not write its file is the latter. The remaining patterns are the CLI's own refusals, which
 # never reach the daemon. All of them are narrow on purpose: a refusal
 # reported as an error fails a check loudly, while an error reported as a
 # refusal passes one quietly.

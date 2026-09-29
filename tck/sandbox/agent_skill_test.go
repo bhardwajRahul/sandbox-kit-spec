@@ -25,7 +25,7 @@ func TestBundledSkillChecksAndMutations(t *testing.T) {
 			for _, broken := range modes {
 				t.Run(broken, func(t *testing.T) {
 					a := adapter.New(filepath.Join("testdata", "fake-adapter"))
-					a.Env = []string{"KIT_TCK_FAKE_STATE=" + t.TempDir(), "KIT_TCK_FAKE_BROKEN=" + broken, "KIT_TCK_FAKE_CLAIMS=" + strings.Join([]string{capAgentSkill, capAgentSkillsDirectory, capAgentSkills}, ","), "KIT_TCK_SKILL_NAME=" + SkillName}
+					a.Env = []string{"KIT_TCK_FAKE_STATE=" + t.TempDir(), "KIT_TCK_FAKE_BROKEN=" + broken, "KIT_TCK_FAKE_CLAIMS=" + strings.Join([]string{capAgentSkill, capAgentSkills}, ","), "KIT_TCK_SKILL_NAME=" + SkillName}
 					findings := c.run(t.Context(), &Env{Adapter: a, Fixtures: Fixtures(FixtureDir)})
 					if broken == "" {
 						require.Empty(t, findings)
@@ -51,7 +51,7 @@ func TestBundledSkillRequiredUnclaimedIsRefused(t *testing.T) {
 			claims := capVolume
 			if destination {
 				label = "with-destination-claim/" + broken
-				claims = capAgentSkillsDirectory
+				claims = capAgentSkills
 			}
 			t.Run(label, func(t *testing.T) {
 				a := adapter.New(filepath.Join("testdata", "fake-adapter"))

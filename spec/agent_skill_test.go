@@ -17,7 +17,7 @@ func skillEntry(source, name string) Capability {
 }
 
 func TestAgentSkillValidation(t *testing.T) {
-	for _, typ := range []string{CapabilityAgentSkill, CapabilityAgentSkillsDirectory} {
+	for _, typ := range []string{CapabilityAgentSkill, CapabilityAgentSkills} {
 		for _, value := range []any{"", "/", "relative", "/x/../y", "/x/./y", "/x//y", "/x/y/", nil, 1} {
 			c := Capability{Type: typ, Config: map[string]any{"path": value}}
 			_, err := Validate(&Descriptor{SchemaVersion: SchemaVersion, Kind: KindMixin, Capabilities: []Capability{c}})
@@ -60,7 +60,7 @@ func TestAgentSkillComposition(t *testing.T) {
 	first.Name = "Display label"
 	first.Optional = true
 	second := skillEntry("/a/review", "review")
-	destination := Capability{Type: CapabilityAgentSkillsDirectory, Config: map[string]any{"path": "/home/agent/.example/skills"}}
+	destination := Capability{Type: CapabilityAgentSkills, Config: map[string]any{"path": "/home/agent/.example/skills"}}
 	inputs := []Contribution{
 		{Reference: "skill", Descriptor: &Descriptor{SchemaVersion: SchemaVersion, Kind: KindMixin, Capabilities: []Capability{first}}},
 		{Reference: "agent", Descriptor: &Descriptor{SchemaVersion: SchemaVersion, Kind: KindWorkload, Capabilities: []Capability{second, destination}}},
@@ -74,11 +74,11 @@ func TestAgentSkillComposition(t *testing.T) {
 	require.False(t, requests[0].Optional)
 	require.Equal(t, "Display label", requests[0].DisplayName)
 	require.Equal(t, "review", AgentSkillName(requests[0].AgentSkill))
-	dirs, err := AgentSkillsDirectoriesOf(composed.Capabilities)
+	dirs, err := AgentSkillsOf(composed.Capabilities)
 	require.NoError(t, err)
 	require.Len(t, dirs, 1)
 	require.Equal(t, destination.Config["path"], dirs[0].Path)
-	require.Equal(t, SurfaceOf(&Descriptor{}), SurfaceOf(composed))
+	require.Equal(t, SurfaceOf(&Descriptor{Capabilities: []Capability{destination}}), SurfaceOf(composed))
 	published, err := Merge(inputs, MergeOptions{})
 	require.NoError(t, err)
 	raw, err := json.Marshal(published.Descriptor)
@@ -116,19 +116,19 @@ func TestAgentSkillSelectionAndReaders(t *testing.T) {
 	require.Empty(t, got[0].Name)
 	require.Equal(t, "Label", got[0].DisplayName)
 	require.Equal(t, "source", AgentSkillName(got[0].AgentSkill))
-	for _, typ := range []string{CapabilityAgentSkill, CapabilityAgentSkillsDirectory} {
+	for _, typ := range []string{CapabilityAgentSkill, CapabilityAgentSkills} {
 		invalid := []Capability{{Type: typ, Config: map[string]any{"path": 7}}}
 		if typ == CapabilityAgentSkill {
 			_, err = AgentSkillRequestsOf(invalid)
 		} else {
-			_, err = AgentSkillsDirectoriesOf(invalid)
+			_, err = AgentSkillsOf(invalid)
 		}
 		require.Error(t, err)
 	}
 	group := []Capability{{Group: &CapabilityGroup{Optional: true, Capabilities: []Capability{skillEntry("/a/review", "")}}}}
 	_, err = AgentSkillRequestsOf(group)
 	require.ErrorContains(t, err, "select groups first")
-	_, err = AgentSkillsDirectoriesOf(group)
+	_, err = AgentSkillsOf(group)
 	require.ErrorContains(t, err, "select groups first")
 }
 
@@ -139,7 +139,7 @@ func TestAgentSkillSchemas(t *testing.T) {
 	require.Equal(t, agentSkillName.String(), literal["pattern"])
 	require.Equal(t, float64(255), literal["maxLength"])
 	assertAcceptsKitArg(t, name, "bearing")
-	for _, typ := range []string{CapabilityAgentSkill, CapabilityAgentSkillsDirectory} {
+	for _, typ := range []string{CapabilityAgentSkill, CapabilityAgentSkills} {
 		s = loadJSON(t, perTypeSchemaPath(typ))
 		require.Equal(t, []any{"path"}, s["required"])
 		assertAcceptsKitArg(t, at(t, s, "properties", "path"), "bearing")
@@ -148,7 +148,7 @@ func TestAgentSkillSchemas(t *testing.T) {
 
 func TestAgentSkillDirectoriesCompose(t *testing.T) {
 	destination := func(p string, optional bool) Capability {
-		return Capability{Type: CapabilityAgentSkillsDirectory, Optional: optional, Config: map[string]any{"path": p}}
+		return Capability{Type: CapabilityAgentSkills, Optional: optional, Config: map[string]any{"path": p}}
 	}
 	inputs := []Contribution{
 		{Reference: "agent-a", Descriptor: &Descriptor{SchemaVersion: SchemaVersion, Kind: KindWorkload, Capabilities: []Capability{destination("/skills/a", true)}}},
@@ -156,7 +156,7 @@ func TestAgentSkillDirectoriesCompose(t *testing.T) {
 	}
 	got, err := Compose(inputs)
 	require.NoError(t, err)
-	dirs, err := AgentSkillsDirectoriesOf(got.Capabilities)
+	dirs, err := AgentSkillsOf(got.Capabilities)
 	require.NoError(t, err)
 	require.Len(t, dirs, 2)
 	require.False(t, dirs[0].Optional)
@@ -179,7 +179,7 @@ capabilities:
           config:
             path: /usr/share/content
             name: "${{ kit.args.skill }}"
-        - type: com.docker.sandbox/agent-skills-directory@1
+        - type: com.docker.sandbox/agent-skills@1
           config:
             path: /home/agent/.example/skills
 `)
@@ -204,7 +204,7 @@ capabilities:
 		require.NoError(t, err)
 		require.Empty(t, selected.Capabilities)
 		require.Len(t, selected.Skipped, 1)
-		selected, err = SelectCapabilities(parsed, Supported(CapabilityAgentSkill, CapabilityAgentSkillsDirectory))
+		selected, err = SelectCapabilities(parsed, Supported(CapabilityAgentSkill, CapabilityAgentSkills))
 		require.NoError(t, err)
 		require.Len(t, selected.Capabilities, 2)
 		skills, err := AgentSkillRequestsOf(selected.Capabilities)
@@ -235,7 +235,7 @@ func TestAgentSkillSourceIsKnownAtPublish(t *testing.T) {
 func TestAgentSkillEnvironmentExpansion(t *testing.T) {
 	d := &Descriptor{SchemaVersion: SchemaVersion, Kind: KindMixin, Capabilities: []Capability{
 		skillEntry("/usr/share/source", "${{ kit.env.SKILL_NAME }}"),
-		{Type: CapabilityAgentSkillsDirectory, Config: map[string]any{"path": "${{ kit.env.HOME }}/.example/skills"}},
+		{Type: CapabilityAgentSkills, Config: map[string]any{"path": "${{ kit.env.HOME }}/.example/skills"}},
 	}}
 	expanded, err := ExpandEnvironment(d, map[string]string{"SKILL_NAME": "review", "HOME": "/home/agent"})
 	require.NoError(t, err)
@@ -244,7 +244,7 @@ func TestAgentSkillEnvironmentExpansion(t *testing.T) {
 	skills, err := AgentSkillRequestsOf(expanded.Capabilities)
 	require.NoError(t, err)
 	require.Equal(t, "review", AgentSkillName(skills[0].AgentSkill))
-	directories, err := AgentSkillsDirectoriesOf(expanded.Capabilities)
+	directories, err := AgentSkillsOf(expanded.Capabilities)
 	require.NoError(t, err)
 	require.Equal(t, "/home/agent/.example/skills", directories[0].Path)
 	d.Capabilities[0].Config["path"] = "${{ kit.env.HOME }}/source"

@@ -12,7 +12,7 @@ broken="${KIT_TCK_FAKE_BROKEN:-}"
 # suite narrows it, nothing when broken that way. The refusal duty below
 # is always keyed off this same list, because claiming and refusing are
 # two sides of one statement.
-default_claims="com.docker.sandbox/agent-skill@1,com.docker.sandbox/agent-skills-directory@1,com.docker.sandbox/git-identity@1,com.docker.sandbox/long-running@1,com.docker.sandbox/sbx@1,com.docker.sandbox/lifecycle@1,com.docker.sandbox/network-policy@1,com.docker.sandbox/network-policy@2,com.docker.sandbox/credential@1,com.docker.sandbox/agent-context@1,com.docker.sandbox/volume@1,com.docker.sandbox/resources@1,com.docker.sandbox/privileged@1,com.docker.sandbox/agent-skills@1,com.docker.sandbox/ssh-agent@1"
+default_claims="com.docker.sandbox/agent-skill@1,com.docker.sandbox/git-identity@1,com.docker.sandbox/long-running@1,com.docker.sandbox/sbx@1,com.docker.sandbox/lifecycle@1,com.docker.sandbox/network-policy@1,com.docker.sandbox/network-policy@2,com.docker.sandbox/credential@1,com.docker.sandbox/agent-context@1,com.docker.sandbox/volume@1,com.docker.sandbox/resources@1,com.docker.sandbox/privileged@1,com.docker.sandbox/agent-skills@1,com.docker.sandbox/ssh-agent@1"
 claims="${KIT_TCK_FAKE_CLAIMS:-$default_claims}"
 if [ "$broken" = "claims-nothing" ]; then claims=""; fi
 verb="${1:-}"
@@ -229,9 +229,7 @@ create)
     exit 2
   fi
 
-  # Required and optional skills entries part ways when the host's store
-  # is off: a required one cannot be satisfied and forces a refusal, an
-  # optional one is skipped and the sandbox starts without the mount.
+  # Host sharing does not decide whether a discovery destination is selected.
   required_skills=""
   optional_skills=""
   for kit in "${kits[@]}"; do
@@ -240,7 +238,7 @@ create)
     *skills*) required_skills=1 ;;
     esac
   done
-  if [ "$hostmode" = "off" ] && [ -n "$required_skills" ] && [ "$broken" != "ignores-host-off" ]; then
+  if [ "$hostmode" = "off" ] && [ -n "$required_skills" ] && [ "$broken" = "refuses-required-skills" ]; then
     echo "refusing: the host's skills setting is off and the kit requires the store" >&2
     exit 2
   fi
@@ -271,7 +269,7 @@ create)
       # contain a capability name (for example, git-identity).
       case "${kit##*/}" in
       bundled-optional | bundled-existing) ;;
-      bundled-reader) need="com.docker.sandbox/agent-skills-directory@1" ;;
+      bundled-reader) need="com.docker.sandbox/agent-skills@1" ;;
       bundled-skill | bundled-host-conflict) need="com.docker.sandbox/agent-skill@1" ;;
       *git-identity-optional*) ;;
       *git-identity-hooks*) need="com.docker.sandbox/lifecycle@1" ;;
@@ -671,15 +669,14 @@ create)
   # A neighbour of the marker, to catch a substring match.
   if [ "$broken" = "wrong-skill" ]; then : >"$store/${KIT_TCK_SKILL_NAME:-unset}-old"; fi
 
-  # A skipped optional entry gets no mount; only a broken runtime mounts
-  # something at its path anyway.
+  # A disabled host store stays hidden for optional destinations too.
   if [ -n "$optional_skills" ]; then
     if [ "$hostmode" != "off" ] || [ "$broken" = "mounts-optional-despite-off" ]; then
       ln -s "$store" "$dir/skills-opt"
     fi
   fi
   # The shared store, mounted where the kit asked for it.
-  if [ "$broken" != "ignores-skills" ] && [ "$hostmode" != "off" ]; then
+  if [ "$broken" != "ignores-skills" ] && { [ "$hostmode" != "off" ] || [ "$broken" = "ignores-host-off" ]; }; then
     ln -s "$store" "$dir/skills"
     case "$broken" in
     first-skills-only)
@@ -723,6 +720,14 @@ create)
     # A runtime ignoring agent-context writes the workload's own profile
     # and surfaces nothing into it.
     printf '%s\n' "Conformance workload." >"$dir/profile"
+  fi
+  if [ "$hostmode" = off ] && { [ -n "$required_skills" ] || [ -n "$optional_skills" ]; }; then
+    skill_fixture=skills
+    if [ -n "$optional_skills" ]; then skill_fixture=skills-optional; fi
+    record="{\"path\":\"capabilities[0]\",\"source\":{\"kit\":\"$skill_fixture\",\"path\":\"capabilities[0]\"},\"members\":[\"capabilities[0]\"]}"
+    selected="$record" skipped=""
+    if [ "$broken" = skips-required-skills ] || [ "$broken" = skips-optional-skills ]; then selected=""; skipped="$record"; fi
+    printf '{"selection":{"selected":[%s],"skipped":[%s]},"surface":{}}\n' "$selected" "$skipped" >"$dir/selection.json"
   fi
   if [ -n "$bundle_optional" ] && [ -z "$bundle_reader" ]; then
     record='{"path":"capabilities[0]","source":{"kit":"bundled-optional","path":"capabilities[0]"},"members":["capabilities[0]"],"memberSources":[{"kit":"bundled-optional","path":"capabilities[0]"}],"rejected":["capabilities[0]"]}'

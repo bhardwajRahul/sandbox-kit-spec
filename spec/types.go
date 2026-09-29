@@ -399,17 +399,14 @@ const (
 	// Port. Instance-shaped, keyed by container port/transport.
 	CapabilityPort = "com.docker.sandbox/port@1"
 
-	// CapabilityAgentSkills asks for the host's shared agent-skills store
-	// at one in-container path; config decodes to AgentSkills.
+	// CapabilityAgentSkills declares one discovery path for bundled and
+	// available host-shared skills; config decodes to AgentSkills.
 	// Instance-shaped, keyed by path: a composition hosting two agents
 	// that read skills from different places declares one entry each.
 	CapabilityAgentSkills = "com.docker.sandbox/agent-skills@1"
 
 	// CapabilityAgentSkill exposes one image-bundled skill, keyed by its effective name.
 	CapabilityAgentSkill = "com.docker.sandbox/agent-skill@1"
-
-	// CapabilityAgentSkillsDirectory declares an agent's bundled-skill discovery path.
-	CapabilityAgentSkillsDirectory = "com.docker.sandbox/agent-skills-directory@1"
 
 	// CapabilityUSBDevice is one device passthrough request; config decodes
 	// to USBDevice. Instance-shaped.
@@ -737,7 +734,8 @@ type ResponseFields struct {
 	ExpiresIn    string `json:"expiresIn,omitempty" yaml:"expiresIn,omitempty"`
 }
 
-// AgentSkills asks for the host's shared skills store to appear at Path.
+// AgentSkills declares Path as a destination for selected AgentSkill bundles
+// and for the host's shared skills when available and enabled.
 //
 // Only the kit knows where its agent looks: an agent shipped behind a
 // wrapper, or one the runtime has never heard of, reads skills from a
@@ -746,7 +744,8 @@ type ResponseFields struct {
 //
 // Mode is the most access the kit is willing to take, not a demand. The
 // host's own setting narrows it further and can withhold the mount
-// entirely; neither side can exceed the other, so a kit that only reads
+// entirely without making the request unsatisfiable. Mode does not constrain
+// bundled skills. Neither side can exceed the other, so a kit that only reads
 // skills says so and never receives write access on a permissive host.
 type AgentSkills struct {
 	Path string `json:"path" yaml:"path"`
