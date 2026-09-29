@@ -135,8 +135,28 @@ often got wrong:
 | `long-running@1` | workloads or service mixins that outlive client sessions | Config-less; a request from any Kit applies to the whole sandbox. A background hook or published port does not prevent session auto-stop. Required by default; use `optional: true` only if auto-stop is tolerable. This does not request restart after failure. |
 | `git-identity@1` | commits attributed to the runtime-provided user | Config-less; requests only user.name and user.email, not a configuration-source mount. Requires permission; optional when missing identity is tolerable. Signing/authentication are separate grants. |
 | `sbx@1` | "launch this as an agent" | Workload-only, config-less — and enforced: a mixin declaring it fails validation. |
+| `agent-skill@1` | one bundled skill | `path` names the image directory containing `SKILL.md` and supporting files. The basename is the discovery name unless `config.name` overrides it; the entry-level `name` remains only a display label. |
+| `agent-skills-directory@1` | where an agent discovers bundled skills | Declare on the agent workload or agent mixin. Every selected directory receives every selected bundled skill. This grants no host-store access. |
 | `agent-skills@1` | the host's shared skills store | Only where the agent really reads skills from that path, and never where the kit ships content there — the mount would hide it. |
 | `port@1`, `resources@1`, `privileged@1` | inbound ports, limits, elevation | Do not declare on speculation; `privileged@1` is the largest widening available. |
+
+## Bundled skills
+
+Use `agent-skill@1` to package a skill as a mixin; see
+`examples/review-skill`. Ship the whole directory under a Kit-specific
+prefix such as `/usr/share/example-skills/review`, and declare that
+absolute source path. A source path must be literal after publishing;
+use a build-phase argument if it varies. Supporting scripts and references retain their
+relative paths. An optional `config.name` overrides the source basename
+at discovery destinations; it does not rename or rewrite the source.
+
+Agent Kits declare `agent-skills-directory@1` at their discovery paths.
+Keep `agent-skills@1` separate: it asks for the host's shared store.
+Runtime assembly of these sources is implementation-specific. Different
+source paths claiming one effective name conflict at composition, and an
+existing destination entry makes a skill request unsatisfiable. Without
+any selected destination, a required skill request fails; optional
+requests are skipped and recorded. Registration does not execute scripts.
 
 ## Versions, provides and requires
 

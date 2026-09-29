@@ -212,6 +212,8 @@ var checks = append(gitIdentityChecks, []check{
 				{capResources, fixtureResources, false},
 				{capPrivileged, fixturePrivileged, false},
 				{capAgentSkills, fixtureSkills, false},
+				{capAgentSkill, fixtureBundledSkill, false},
+				{capAgentSkillsDirectory, fixtureBundledReader, true},
 				{capPort, fixturePort, false},
 				{capUSBDevice, fixtureUSBDevice, false},
 				{capAgentSessions, fixtureAgentSessions, false},

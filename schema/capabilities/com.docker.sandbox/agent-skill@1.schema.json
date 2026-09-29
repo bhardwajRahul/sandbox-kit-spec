@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "com.docker.sandbox/agent-skill@1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "path"
+  ],
+  "properties": {
+    "path": {
+      "type": "string",
+      "anyOf": [
+        {
+          "pattern": "^(/([^./][^/]*|\\.[^./][^/]*|\\.\\.[^/]+))+$"
+        },
+        {
+          "$ref": "../../definitions/kit-arg.schema.json#/definitions/bearing"
+        }
+      ],
+      "description": "Absolute, canonical in-image skill source directory."
+    },
+    "name": {
+      "type": "string",
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "maxLength": 255
+        },
+        {
+          "$ref": "../../definitions/kit-arg.schema.json#/definitions/bearing"
+        }
+      ],
+      "description": "Skill directory name at the destination; defaults to the source basename. Distinct from the capability display label."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "not": {
+          "required": [
+            "name"
+          ]
+        }
+      },
+      "then": {
+        "properties": {
+          "path": {
+            "anyOf": [
+              {
+                "pattern": "/[A-Za-z0-9][A-Za-z0-9._-]{0,254}$"
+              },
+              {
+                "$ref": "../../definitions/kit-arg.schema.json#/definitions/bearing"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

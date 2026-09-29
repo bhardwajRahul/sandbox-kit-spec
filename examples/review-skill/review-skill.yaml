@@ -1,0 +1,12 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+displayName: Pull request review skill
+description: A bundled review skill with a discovery-name override.
+version: "1.0.0"
+licenses: [Apache-2.0]
+capabilities:
+  - type: com.docker.sandbox/agent-skill@1
+    config:
+      path: /usr/share/review-skill/content
+      name: review-pr

@@ -192,6 +192,20 @@ func TestBackingAgentCloseWithIdleClient(t *testing.T) {
 // requirement — the two network-policy versions state the same duty about
 // the host lists — and dropping it has to fail every one of them.
 var mutations = map[string][]string{
+	"bundle-overwrites-host":     {"agent-skill@1/host-conflict"},
+	"bundle-ignores":             {"agent-skill@1/exposed"},
+	"bundle-first-only":          {"agent-skill@1/exposed", "agent-skills-directory@1/destination"},
+	"bundle-ignores-name":        {"agent-skill@1/exposed"},
+	"bundle-drops-support":       {"agent-skill@1/exposed"},
+	"bundle-loses-executable":    {"agent-skill@1/exposed"},
+	"bundle-corrupts":            {"agent-skill@1/exposed"},
+	"bundle-after-launch":        {"agent-skill@1/before-launch"},
+	"bundle-executes":            {"agent-skill@1/no-execution"},
+	"bundle-accepts-unavailable": {"agent-skill@1/unavailable"},
+	"bundle-refuses-optional":    {"agent-skill@1/unavailable"},
+	"bundle-drops-skip":          {"agent-skill@1/unavailable"},
+	"bundle-overwrites-existing": {"agent-skill@1/existing-conflict"},
+
 	"ssh-agent-create-workload-forward-refused-sign": {"ssh-agent@1/signatures-bounded"},
 	"ssh-agent-restart-startup-forward-refused-sign": {"ssh-agent@1/signatures-bounded"},
 

@@ -12,7 +12,7 @@ broken="${KIT_TCK_FAKE_BROKEN:-}"
 # suite narrows it, nothing when broken that way. The refusal duty below
 # is always keyed off this same list, because claiming and refusing are
 # two sides of one statement.
-default_claims="com.docker.sandbox/git-identity@1,com.docker.sandbox/long-running@1,com.docker.sandbox/sbx@1,com.docker.sandbox/lifecycle@1,com.docker.sandbox/network-policy@1,com.docker.sandbox/network-policy@2,com.docker.sandbox/credential@1,com.docker.sandbox/agent-context@1,com.docker.sandbox/volume@1,com.docker.sandbox/resources@1,com.docker.sandbox/privileged@1,com.docker.sandbox/agent-skills@1,com.docker.sandbox/ssh-agent@1"
+default_claims="com.docker.sandbox/agent-skill@1,com.docker.sandbox/agent-skills-directory@1,com.docker.sandbox/git-identity@1,com.docker.sandbox/long-running@1,com.docker.sandbox/sbx@1,com.docker.sandbox/lifecycle@1,com.docker.sandbox/network-policy@1,com.docker.sandbox/network-policy@2,com.docker.sandbox/credential@1,com.docker.sandbox/agent-context@1,com.docker.sandbox/volume@1,com.docker.sandbox/resources@1,com.docker.sandbox/privileged@1,com.docker.sandbox/agent-skills@1,com.docker.sandbox/ssh-agent@1"
 claims="${KIT_TCK_FAKE_CLAIMS:-$default_claims}"
 if [ "$broken" = "claims-nothing" ]; then claims=""; fi
 verb="${1:-}"
@@ -196,13 +196,39 @@ create)
     esac
   done
 
+  bundle_source="" bundle_reader="" bundle_optional="" bundle_existing="" bundle_host=""
+  for kit in "${kits[@]}"; do
+    case "${kit##*/}" in
+    bundled-skill) bundle_source="$kit" ;;
+    bundled-optional) bundle_source="$kit"; bundle_optional=1 ;;
+    bundled-reader) bundle_reader="$kit" ;;
+    bundled-existing) bundle_existing=1 ;;
+    bundled-host-conflict) bundle_host=1 ;;
+    esac
+  done
+  if [ -n "$bundle_source" ] && [ -z "$bundle_reader" ]; then
+    if [ -z "$bundle_optional" ] && [ "$broken" != bundle-accepts-unavailable ]; then
+      echo 'refusing: com.docker.sandbox/agent-skill@1 has no destination' >&2
+      exit 2
+    fi
+    if [ -n "$bundle_optional" ] && [ "$broken" = bundle-refuses-optional ]; then exit 2; fi
+  fi
+  if [ -n "$bundle_host" ] && [ "$hostmode" != off ] && [ "$broken" != bundle-overwrites-host ]; then
+    echo "refusing: bundled skill conflicts with host store" >&2
+    exit 2
+  fi
+  if [ -n "$bundle_existing" ] && [ -n "$bundle_source" ] && [ "$broken" != bundle-overwrites-existing ]; then
+    echo 'refusing: com.docker.sandbox/agent-skill@1 conflicts with an existing skill' >&2
+    exit 2
+  fi
+
   # Required and optional skills entries part ways when the host's store
   # is off: a required one cannot be satisfied and forces a refusal, an
   # optional one is skipped and the sandbox starts without the mount.
   required_skills=""
   optional_skills=""
   for kit in "${kits[@]}"; do
-    case "$kit" in
+    case "${kit##*/}" in
     *skills-optional*) optional_skills=1 ;;
     *skills*) required_skills=1 ;;
     esac
@@ -237,6 +263,9 @@ create)
       # Match the fixture name, not a checkout directory that happens to
       # contain a capability name (for example, git-identity).
       case "${kit##*/}" in
+      bundled-optional | bundled-existing) ;;
+      bundled-reader) need="com.docker.sandbox/agent-skills-directory@1" ;;
+      bundled-skill | bundled-host-conflict) need="com.docker.sandbox/agent-skill@1" ;;
       *git-identity-optional*) ;;
       *git-identity-hooks*) need="com.docker.sandbox/lifecycle@1" ;;
       *git-identity*) need="com.docker.sandbox/git-identity@1" ;;
@@ -666,6 +695,41 @@ create)
     # and surfaces nothing into it.
     printf '%s\n' "Conformance workload." >"$dir/profile"
   fi
+  if [ -n "$bundle_optional" ] && [ -z "$bundle_reader" ]; then
+    record='{"path":"capabilities[0]","source":{"kit":"bundled-optional","path":"capabilities[0]"},"members":["capabilities[0]"],"memberSources":[{"kit":"bundled-optional","path":"capabilities[0]"}],"rejected":["capabilities[0]"]}'
+    if [ "$broken" = bundle-drops-skip ]; then record=""; fi
+    printf '{"selection":{"selected":[],"skipped":[%s]},"surface":{}}\n' "$record" >"$dir/selection.json"
+  fi
+  if [ -n "$bundle_reader" ]; then
+    cp "$bundle_reader/probe" "$dir/bundle-probe"
+    mkdir -p "$dir/var/tmp"
+    if [ -n "$bundle_source" ]; then
+      source="$dir/usr/share/kit-tck/bundled"
+      mkdir -p "$source/review/scripts" "$source/review/references" "$source/source-name"
+      cp "$bundle_source/review.skill" "$source/review/SKILL.md"
+      cp "$bundle_source/renamed.skill" "$source/source-name/SKILL.md"
+      cp "$bundle_source/read.sh" "$bundle_source/register.sh" "$source/review/scripts/"
+      chmod 755 "$source/review/scripts/"*.sh
+      cp "$bundle_source/reference.txt" "$source/review/references/value.txt"
+      for target in skills skills-rw; do
+        dest="$dir/home/agent/.kit-tck/$target"
+        mkdir -p "$dest"
+        if [ "$broken" = bundle-ignores ] || { [ "$broken" = bundle-first-only ] && [ "$target" = skills-rw ]; }; then continue; fi
+        cp -R "$source/review" "$dest/review"
+        name=renamed
+        if [ "$broken" = bundle-ignores-name ]; then name=source-name; fi
+        cp -R "$source/source-name" "$dest/$name"
+        case "$broken" in
+        bundle-drops-support) rm "$dest/review/references/value.txt" ;;
+        bundle-loses-executable) chmod 644 "$dest/review/scripts/read.sh" ;;
+        bundle-corrupts) echo wrong >"$dest/review/SKILL.md" ;;
+        esac
+      done
+      KIT_TCK_BUNDLE_ROOT="$dir" sh "$dir/bundle-probe" exposed >"$dir/var/tmp/bundled-at-launch" 2>&1 || true
+      if [ "$broken" = bundle-after-launch ]; then echo missing >"$dir/var/tmp/bundled-at-launch"; fi
+      if [ "$broken" = bundle-executes ]; then touch "$dir/var/tmp/bundled-script-executed"; fi
+    fi
+  fi
   echo "$id"
   ;;
 
@@ -675,6 +739,9 @@ exec)
   [ "${1:-}" = "--" ] && shift
   dir="$state/$id"
   case "${1:-}" in
+  kit-tck-bundled)
+    KIT_TCK_BUNDLE_ROOT="$dir" sh "$dir/bundle-probe" "$2"
+    ;;
   kit-tck-git-identity)
     case "$2" in
     defaults) cat "$dir/git-identity" ;;

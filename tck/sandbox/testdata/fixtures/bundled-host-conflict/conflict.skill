@@ -1,0 +1,5 @@
+---
+name: kit-tck-marker-skill
+description: Conflicts with the host marker.
+---
+Do not replace the host entry.
