@@ -38,17 +38,20 @@ func (e inventoryEntry) header() tar.Header {
 
 // These are operation-wide limits, including cache replays: compact cached
 // entries still produce extraction trees each time they are applied. Count
-// layers as well so empty archives cannot bypass the entry budget.
+// layers as well so empty archives cannot bypass the entry budget. Component
+// counts bound implied directory creation independently of name byte lengths.
 const (
-	maxInventoryLayers    = 4096
-	maxInventoryEntries   = 250_000
-	maxInventoryPathBytes = 32 << 20
+	maxInventoryLayers     = 4096
+	maxInventoryEntries    = 250_000
+	maxInventoryPathBytes  = 32 << 20
+	maxInventoryComponents = 250_000
 )
 
 type inventoryBudget struct {
-	layersLeft    int
-	entriesLeft   int
-	pathBytesLeft int
+	layersLeft     int
+	entriesLeft    int
+	pathBytesLeft  int
+	componentsLeft int
 }
 
 func (b *inventoryBudget) consumeLayer() error {
@@ -66,9 +69,30 @@ func (b *inventoryBudget) consume(hdr *tar.Header) error {
 	if len(hdr.Name) > b.pathBytesLeft || len(hdr.Linkname) > b.pathBytesLeft-len(hdr.Name) {
 		return fmt.Errorf("assembly inventory exceeds %d path and link-name bytes", maxInventoryPathBytes)
 	}
+	// Charge uncleaned paths and link targets conservatively: normalization
+	// must not hide the work of building implied directories or resolving links.
+	components := pathComponents(hdr.Name) + pathComponents(hdr.Linkname)
+	if components > b.componentsLeft {
+		return fmt.Errorf("assembly inventory exceeds %d path components", maxInventoryComponents)
+	}
+	b.componentsLeft -= components
 	b.entriesLeft--
 	b.pathBytesLeft -= len(hdr.Name) + len(hdr.Linkname)
 	return nil
+}
+
+// Count without allocating a slice proportional to an untrusted path's depth.
+func pathComponents(name string) int {
+	count, inComponent := 0, false
+	for i := 0; i < len(name); i++ {
+		if name[i] == '/' {
+			inComponent = false
+		} else if !inComponent {
+			count++
+			inComponent = true
+		}
+	}
+	return count
 }
 
 func inventoryKits(ctx context.Context, kits []*resolve.Unit, loaded map[string]*LoadedKit, report func(Progress)) ([]kitInventory, error) {
@@ -83,7 +107,7 @@ func inventoryKits(ctx context.Context, kits []*resolve.Unit, loaded map[string]
 		diffID digest.Digest
 	}
 	cache := map[blobKey][]inventoryEntry{}
-	budget := inventoryBudget{layersLeft: maxInventoryLayers, entriesLeft: maxInventoryEntries, pathBytesLeft: maxInventoryPathBytes}
+	budget := inventoryBudget{layersLeft: maxInventoryLayers, entriesLeft: maxInventoryEntries, pathBytesLeft: maxInventoryPathBytes, componentsLeft: maxInventoryComponents}
 	inventories := make([]kitInventory, 0, len(kits))
 	for _, kit := range resolution.Ordered() {
 		input := loaded[kit.Reference]

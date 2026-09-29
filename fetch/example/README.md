@@ -73,11 +73,14 @@ Kit retains its file ownership for the collision check. Skipping
 capabilities removes neither layers nor argument environment exports.
 
 The entire assembly is limited to 4,096 layer occurrences, 250,000
-archive entries, and 32 MiB of combined path and link-name bytes across
-all Kits. Repeated entries and cached layer replays count toward these
-limits; empty archives still consume the layer allowance. Assembly fails
-when a limit is exceeded and closes any open layer stream. Inventories
-retain compact extraction metadata rather than full tar headers. These
+archive entries, 250,000 path components, and 32 MiB of combined path
+and link-name bytes across all Kits. Components in both entry names and
+link targets count before path cleaning, limiting implied directory
+creation as well as retained strings. Repeated entries and cached layer
+replays count toward every allowance; empty archives still consume the
+layer allowance. Assembly fails when a limit is exceeded and closes any
+open layer stream. Inventories retain compact extraction metadata rather
+than full tar headers. These
 limits prevent additional layers or Kits from multiplying the inventory
 allowance.
 
