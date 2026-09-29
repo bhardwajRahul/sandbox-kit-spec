@@ -46,13 +46,15 @@ A conforming runtime:
 - **MUST** preserve normal repository-local identity precedence. <!-- tck: git-identity@1/local-precedence -->
   The grant does not force `GIT_AUTHOR_*` or `GIT_COMMITTER_*` overrides
   and does not overwrite repository-local configuration.
-- **MUST NOT** import unrelated settings or expose the configuration <!-- tck: git-identity@1/identity-only -->
+- **MUST NOT** import unrelated settings from the configuration <!-- tck: git-identity@1/identity-only -->
   sources used to obtain the identity. Credential helpers, HTTP headers,
   includes, aliases, hooks, filters, signing programs and external paths
   are outside the grant. The
   two values are data: serializing them cannot create additional keys
-  or execute commands. Resolving a source does not grant access to that
-  source from the sandbox.
+  or execute commands.
+- **MUST NOT** expose the configuration sources used to obtain the <!-- tck: git-identity@1/source-private -->
+  identity. Resolving a source does not grant access to that source from
+  the sandbox.
 - **MUST NOT** modify the identity source or allow sandbox edits to update <!-- tck: git-identity@1/source-unchanged -->
   that source through this capability. Materialize defaults in
   sandbox-owned storage.

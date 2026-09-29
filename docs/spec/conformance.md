@@ -158,6 +158,13 @@ Workload entrypoint captures are also checked after restart and recreation.
 Identity and source-setting leak probes inspect effective Git behavior,
 including environment and system configuration, not only global files.
 
+The separate `git-identity@1/source-private` requirement is waived by the
+suite: the adapter does not identify every guest path or backend through
+which a runtime could expose its identity source. Effective Git probes
+cannot detect an unconfigured readable copy at an arbitrary path. The
+runtime prohibition still applies; passing these probes does not certify
+source confidentiality.
+
 An adapter claiming this capability also supports `selection <id>` using
 the record format below. The suite checks that an unavailable optional
 identity is recorded as skipped, with its rejected member, and is absent
