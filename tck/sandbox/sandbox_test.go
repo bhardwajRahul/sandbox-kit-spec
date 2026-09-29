@@ -57,6 +57,37 @@ func TestASingleCapabilityRuntimeIsJudgedOnlyOnItsClaim(t *testing.T) {
 	}
 }
 
+func TestAtomicSelectionForPartialRuntimes(t *testing.T) {
+	for _, tc := range []struct {
+		claim  string
+		broken string
+	}{
+		{capLifecycle, ""},
+		{groupVolume, ""},
+		{capLifecycle, "ordinary-ignore-optional-rejection"},
+		{capLifecycle, "ordinary-ignore-required-rejection"},
+		{capLifecycle, "partial-group-applies-lifecycle"},
+		{groupVolume, "partial-group-applies-volume"},
+	} {
+		t.Run(tc.claim+"/"+tc.broken, func(t *testing.T) {
+			a := adapter.New(filepath.Join("testdata", "fake-adapter"))
+			a.Env = []string{"KIT_TCK_FAKE_STATE=" + t.TempDir(), "KIT_TCK_FAKE_CLAIMS=" + tc.claim, "KIT_TCK_FAKE_BROKEN=" + tc.broken}
+			rep, err := Run(t.Context(), &Env{Adapter: a, Fixtures: Fixtures(FixtureDir)})
+			require.NoError(t, err)
+			if tc.broken != "" {
+				require.Contains(t, failedRequirements(rep), "SPEC-v3 §7.1.1/atomic-selection")
+				return
+			}
+			require.False(t, rep.Failed(), "%s", rep)
+			for _, finding := range rep.Findings {
+				if finding.Requirement == "SPEC-v3 §7.1.1/atomic-selection" {
+					require.NotEqual(t, report.Skip, finding.Severity)
+				}
+			}
+		})
+	}
+}
+
 func TestLongRunningNeedsNoHelperCapabilities(t *testing.T) {
 	a := adapter.New(filepath.Join("testdata", "fake-adapter"))
 	a.Env = []string{

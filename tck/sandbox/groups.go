@@ -15,6 +15,54 @@ import (
 
 const groupVolume = "com.docker.sandbox/volume@1"
 
+func atomicSelection(ctx context.Context, e *Env) []report.Finding {
+	lifecycle, volume := e.Claimed[capLifecycle], e.Claimed[groupVolume]
+	if lifecycle && volume {
+		return groupSelection(ctx, e)
+	}
+	if !lifecycle && !volume {
+		return []report.Finding{report.Skipf("runtime claims neither lifecycle nor volume")}
+	}
+	if lifecycle {
+		if findings := ordinarySelection(ctx, e); len(findings) > 0 {
+			return findings
+		}
+	}
+	// One member is supported, the other is not: neither may be applied.
+	id, cleanup, err := e.sandbox(ctx, []string{fixtureWorkload, "groups-partial"}, nil)
+	defer cleanup()
+	if err != nil {
+		return []report.Finding{report.Failf("partial group create: %v", err)}
+	}
+	state, err := e.Adapter.Selection(ctx, id)
+	if err != nil {
+		return []report.Finding{report.Failf("partial group selection: %v", err)}
+	}
+	surface, err := json.Marshal(state.Surface)
+	if err != nil || string(surface) != "{}" {
+		return []report.Finding{report.Failf("partial group leaked grants: %s (%v)", surface, err)}
+	}
+	rejected := "capabilities[0].group.capabilities[1]"
+	if lifecycle {
+		rejected = "capabilities[0].group.capabilities[0]"
+	}
+	found := false
+	for _, record := range state.Selection.Skipped {
+		if record.Source != nil && strings.Contains(record.Source.Kit, "groups-partial") && record.Path == "capabilities[0]" {
+			found = slices.Equal(record.Rejected, []string{rejected}) && slices.Equal(record.Members,
+				[]string{"capabilities[0].group.capabilities[0]", "capabilities[0].group.capabilities[1]"})
+		}
+	}
+	if !found {
+		return []report.Finding{report.Failf("partial group rejection record missing or incorrect")}
+	}
+	file, err := e.Adapter.Exec(ctx, id, "cat", "/var/tmp/group-feature")
+	if err != nil || file.ExitCode == 0 {
+		return []report.Finding{report.Failf("partial group applied a skipped lifecycle file: %v", err)}
+	}
+	return nil
+}
+
 func groupSelection(ctx context.Context, e *Env) []report.Finding {
 	for _, reject := range []bool{false, true} {
 		opts := adapter.CreateOptions{}

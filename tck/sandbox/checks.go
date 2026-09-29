@@ -126,7 +126,7 @@ func installPhaseScoped(fixture string) func(context.Context, *Env) []report.Fin
 }
 
 var checks = []check{
-	{requirement: "SPEC-v3 §7.1.1/atomic-selection", capability: capLifecycle, needs: []string{"com.docker.sandbox/volume@1"}, run: groupSelection},
+	{requirement: "SPEC-v3 §7.1.1/atomic-selection", run: atomicSelection},
 	{requirement: "SPEC-v3 §7.1.1/conflicts", capability: capLifecycle, run: groupConflicts},
 	{requirement: "SPEC-v3 §7.1.1/lifetime", capability: capLifecycle, needs: []string{"com.docker.sandbox/volume@1"}, run: groupLifetime},
 	{requirement: "SPEC-v3 §7.1.1/execution", capability: capLifecycle, run: groupExecution},

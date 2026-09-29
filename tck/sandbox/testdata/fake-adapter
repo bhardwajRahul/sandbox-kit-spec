@@ -212,6 +212,18 @@ create)
   echo running >"$dir/status"
   for kit in "${kits[@]}"; do
     if [[ "$kit" == */groups ]]; then write_group_state "$dir" "$group_rejected"; fi
+    if [[ "$kit" == */groups-partial ]]; then
+      rejected_member='capabilities[0].group.capabilities[1]'
+      if [[ ",$claims," != *",com.docker.sandbox/volume@1,"* ]]; then
+        rejected_member='capabilities[0].group.capabilities[0]'
+      fi
+      partial_surface='{}'
+      if [ "$broken" = partial-group-applies-volume ]; then
+        partial_surface='{"storagePaths":["/var/tmp/group-volume"]}'
+      fi
+      if [ "$broken" = partial-group-applies-lifecycle ]; then echo selected >"$dir/group-feature"; fi
+      printf '{"selection":{"selected":[],"skipped":[{"path":"capabilities[0]","source":{"kit":"groups-partial","path":"capabilities[0]"},"members":["capabilities[0].group.capabilities[0]","capabilities[0].group.capabilities[1]"],"rejected":["%s"]}]},"surface":%s}\n' "$rejected_member" "$partial_surface" >"$dir/selection.json"
+    fi
     if [[ "$kit" == */ordinary-optional ]]; then
       ordinary_record='{"path":"capabilities[0]","source":{"kit":"ordinary-optional","path":"capabilities[0]"},"members":["capabilities[0]"]}'
       if [ "$lifecycle_rejected" = yes ] && [ "$broken" != ordinary-ignore-optional-rejection ]; then
