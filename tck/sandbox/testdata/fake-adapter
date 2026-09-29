@@ -76,6 +76,29 @@ write_group_state() {
   fi
 }
 
+# Publication shifts consumed paths while retaining the original member sources.
+write_republished_state() {
+  local dir="$1" rejected="$2"
+  local base feature sources selected skipped='' surface='{}'
+  base='{"path":"capabilities[0]","source":{"kit":"registry.example/base:1.0.0","path":"capabilities[0]"},"members":["capabilities[0].group.capabilities[0]"],"memberSources":[{"kit":"registry.example/base:1.0.0","path":"capabilities[0]"}]}'
+  sources=',"memberSources":[{"kit":"registry.example/feature:1.0.0","path":"capabilities[0].group.capabilities[0]"},{"kit":"registry.example/feature:1.0.0","path":"capabilities[0].group.capabilities[1]"}]'
+  if [ "$broken" = group-selected-member-sources ] && [ "$rejected" = no ]; then sources=''; fi
+  if [ "$broken" = group-skipped-member-sources ] && [ "$rejected" = yes ]; then sources=''; fi
+  if [ "$broken" = group-member-sources-local ]; then
+    sources=',"memberSources":[{"kit":"groups-republished","path":"capabilities[1].group.capabilities[0]"},{"kit":"groups-republished","path":"capabilities[1].group.capabilities[1]"}]'
+  fi
+  feature='{"path":"capabilities[1]","source":{"kit":"registry.example/feature:1.0.0","path":"capabilities[0]"},"members":["capabilities[1].group.capabilities[0]","capabilities[1].group.capabilities[1]"]'
+  feature="$feature$sources"
+  selected="$base"
+  if [ "$rejected" = yes ]; then
+    skipped="$feature,"'"rejected":["capabilities[1].group.capabilities[0]"]}'
+  else
+    selected="$base,$feature}"
+    surface='{"storagePaths":["/var/tmp/republished-volume"]}'
+  fi
+  printf '{"selection":{"selected":[%s],"skipped":[%s]},"surface":%s}\n' "$selected" "$skipped" "$surface" >"$dir/selection.json"
+}
+
 case "$verb" in
 capabilities)
   if [ -n "$claims" ]; then echo "$claims" | tr ',' '\n'; fi
@@ -236,6 +259,7 @@ create)
   echo running >"$dir/status"
   for kit in "${kits[@]}"; do
     if [[ "$kit" == */groups ]]; then write_group_state "$dir" "$group_rejected"; fi
+    if [[ "$kit" == */groups-republished ]]; then write_republished_state "$dir" "$group_rejected"; fi
     if [[ "$kit" == */groups-partial ]]; then
       rejected_member='capabilities[0].group.capabilities[1]'
       if [[ ",$claims," != *",com.docker.sandbox/volume@1,"* ]]; then

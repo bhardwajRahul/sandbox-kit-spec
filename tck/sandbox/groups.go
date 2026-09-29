@@ -167,7 +167,54 @@ func groupSelection(ctx context.Context, e *Env) []report.Finding {
 	if !errors.As(err, &refused) || !strings.Contains(refused.Detail, "groups-required") || !strings.Contains(refused.Detail, "capabilities[0].group.capabilities[0]") {
 		return []report.Finding{report.Failf("required group must refuse and identify rejected member: %v", err)}
 	}
-	return ordinarySelection(ctx, e)
+	if findings := ordinarySelection(ctx, e); len(findings) > 0 {
+		return findings
+	}
+	return republishedGroupSelection(ctx, e)
+}
+
+func republishedGroupSelection(ctx context.Context, e *Env) []report.Finding {
+	wantSources := []spec.CapabilitySource{
+		{Kit: "registry.example/feature:1.0.0", Path: "capabilities[0].group.capabilities[0]"},
+		{Kit: "registry.example/feature:1.0.0", Path: "capabilities[0].group.capabilities[1]"},
+	}
+	for _, reject := range []bool{false, true} {
+		opts := adapter.CreateOptions{}
+		if reject {
+			opts.RejectCapabilities = []string{groupVolume}
+		}
+		id, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, "groups-republished"}, opts)
+		defer cleanup()
+		if err != nil {
+			return []report.Finding{report.Failf("republished group create: %v", err)}
+		}
+		state, err := e.Adapter.Selection(ctx, id)
+		if err != nil {
+			return []report.Finding{report.Failf("republished group selection: %v", err)}
+		}
+		records := state.Selection.Selected
+		var rejected []string
+		if reject {
+			records = state.Selection.Skipped
+			rejected = []string{"capabilities[1].group.capabilities[0]"}
+		}
+		found := false
+		for _, record := range records {
+			if record.Path != "capabilities[1]" || record.Source == nil || record.Source.Kit != wantSources[0].Kit {
+				continue
+			}
+			found = true
+			if record.Source.Path != "capabilities[0]" || !slices.Equal(record.MemberSources, wantSources) ||
+				!slices.Equal(record.Members, []string{"capabilities[1].group.capabilities[0]", "capabilities[1].group.capabilities[1]"}) ||
+				!slices.Equal(record.Rejected, rejected) {
+				return []report.Finding{report.Failf("republished group lost original member provenance: %+v", record)}
+			}
+		}
+		if !found {
+			return []report.Finding{report.Failf("republished group record missing")}
+		}
+	}
+	return nil
 }
 
 func ordinarySelection(ctx context.Context, e *Env) []report.Finding {

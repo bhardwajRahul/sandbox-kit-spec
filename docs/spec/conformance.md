@@ -191,7 +191,10 @@ The adapter provides these controls without prescribing host approval UI:
 - `selection <id>` returns JSON with `selection` (`selected` and
   `skipped` records) and `surface` (the actual effective `spec.Surface`).
   Records carry `path`, `source` (`kit` and original `path`), `members`,
-  and `rejected` member paths. Names alone are not identities. Paths use
+  aligned `memberSources` (each member's original `kit` and `path`), and
+  `rejected` member paths. `members` and `rejected` locate entries in the
+  consumed descriptor; `memberSources` retains original locations through
+  set publication. Names alone are not identities. Paths use
   the descriptor's zero-based `capabilities[i].group.capabilities[j]`
   vocabulary. The adapter translates retained runtime records; it MUST
   NOT recompute selection to answer the observation.
