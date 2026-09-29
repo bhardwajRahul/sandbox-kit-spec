@@ -7,6 +7,45 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestAssembleEnvironmentConflictsDoNotExposeValues(t *testing.T) {
+	for _, source := range []string{"image", "args within kit", "args across kits"} {
+		t.Run(source, func(t *testing.T) {
+			base, _ := assemblyFixture(t, spec.KindWorkload, "base", "base")
+			mixin, _ := assemblyFixture(t, spec.KindMixin, "tool", "tool")
+			first, second := "secret-first-123", "secret-second-456"
+			stage := StageResolve
+			if source == "image" {
+				base.Config.Config.Env = []string{"TOKEN=" + first}
+				mixin.Config.Config.Env = []string{"TOKEN=" + second}
+				stage = StageCompose
+			} else {
+				baseDescriptor := &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindWorkload,
+					Args: map[string]spec.Arg{"first": {Default: &first, Env: "TOKEN"}}}
+				if source == "args within kit" {
+					baseDescriptor.Args["second"] = spec.Arg{Default: &second, Env: "TOKEN"}
+				} else {
+					mixin.Descriptor = kitJSON(t, &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindMixin,
+						Args: map[string]spec.Arg{"second": {Default: &second, Env: "TOKEN"}}})
+				}
+				base.Descriptor = kitJSON(t, baseDescriptor)
+			}
+			var events []Progress
+			result, err := Assemble(t.Context(), fixtureRequests(2), Options{
+				Loader: fixtureLoader(base, mixin), OnProgress: func(p Progress) { events = append(events, p) },
+			})
+			require.Nil(t, result)
+			require.ErrorContains(t, err, "TOKEN")
+			require.ErrorContains(t, err, "example.com/kit0")
+			if source != "args within kit" {
+				require.ErrorContains(t, err, "example.com/kit1")
+			}
+			require.NotContains(t, err.Error(), first)
+			require.NotContains(t, err.Error(), second)
+			require.Equal(t, Progress{Stage: stage, State: ProgressFailed}, events[len(events)-1])
+		})
+	}
+}
+
 func TestAssembleRejectsZeroLayerKits(t *testing.T) {
 	for index, kind := range []string{spec.KindWorkload, spec.KindMixin} {
 		for _, reader := range []string{"nil reader", "present reader"} {
