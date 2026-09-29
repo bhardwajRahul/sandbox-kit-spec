@@ -757,6 +757,10 @@ create)
         bundle-drops-support) rm "$dest/review/references/value.txt" ;;
         bundle-loses-executable) chmod 644 "$dest/review/scripts/read.sh" ;;
         bundle-corrupts) echo wrong >"$dest/review/SKILL.md" ;;
+        bundle-skill-newline) printf '\n' >>"$dest/review/SKILL.md" ;;
+        bundle-renamed-newline) printf '\n' >>"$dest/renamed/SKILL.md" ;;
+        bundle-reference-newline) printf '\n' >>"$dest/review/references/value.txt" ;;
+        bundle-reader-newline) printf '\n' >>"$dest/review/scripts/read.sh" ;;
         esac
       done
       KIT_TCK_BUNDLE_ROOT="$dir" sh "$dir/bundle-probe" exposed >"$dir/var/tmp/bundled-at-launch" 2>&1 || true
