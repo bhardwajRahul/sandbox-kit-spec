@@ -275,7 +275,8 @@ const (
 
 // Progress describes one stage transition. Reference and Layer identify work
 // when applicable. It never includes environment values or file contents;
-// detailed errors are returned by Assemble. Cached inventories emit no event.
+// detailed errors are returned by Assemble. Inventory events include cache replays,
+// which consume the operation budget without reopening the blob.
 type Progress struct {
 	Stage     Stage
 	State     ProgressState

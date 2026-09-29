@@ -26,8 +26,9 @@ func checkFileCollisions(ctx context.Context, inventories []kitInventory) error 
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				if !layer.Add(&headers[i]) {
-					return fmt.Errorf("kit %s: layer entry %q cannot be extracted", inventory.reference, headers[i].Name)
+				hdr := headers[i].header()
+				if !layer.Add(&hdr) {
+					return fmt.Errorf("kit %s: layer entry %q cannot be extracted", inventory.reference, hdr.Name)
 				}
 			}
 			model.Apply(layer)

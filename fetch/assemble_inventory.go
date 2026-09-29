@@ -17,28 +17,54 @@ import (
 
 type kitInventory struct {
 	reference string
-	layers    [][]tar.Header
+	layers    [][]inventoryEntry
 }
 
-// Compressed size does not bound inventory memory: repeated overwritten paths
-// still need archive-order processing. Bound both fixed-size headers and the
-// strings they retain before appending anything to the cacheable inventory.
+// Retain only fields used by the extraction model. tar.Header also carries
+// timestamps, format information and extended-attribute maps that multiply
+// memory usage even when zeroed.
+type inventoryEntry struct {
+	name, linkname     string
+	mode               int64
+	uid, gid           int
+	devmajor, devminor int64
+	typeflag           byte
+}
+
+func (e inventoryEntry) header() tar.Header {
+	return tar.Header{Name: e.name, Linkname: e.linkname, Typeflag: e.typeflag,
+		Mode: e.mode, Uid: e.uid, Gid: e.gid, Devmajor: e.devmajor, Devminor: e.devminor}
+}
+
+// These are operation-wide limits, including cache replays: compact cached
+// entries still produce extraction trees each time they are applied. Count
+// layers as well so empty archives cannot bypass the entry budget.
 const (
+	maxInventoryLayers    = 4096
 	maxInventoryEntries   = 250_000
 	maxInventoryPathBytes = 32 << 20
 )
 
 type inventoryBudget struct {
+	layersLeft    int
 	entriesLeft   int
 	pathBytesLeft int
 }
 
+func (b *inventoryBudget) consumeLayer() error {
+	if b.layersLeft == 0 {
+		return fmt.Errorf("assembly inventory exceeds %d layers", maxInventoryLayers)
+	}
+	b.layersLeft--
+	return nil
+}
+
 func (b *inventoryBudget) consume(hdr *tar.Header) error {
 	if b.entriesLeft == 0 {
-		return fmt.Errorf("layer inventory exceeds %d entries", maxInventoryEntries)
+		return fmt.Errorf("assembly inventory exceeds %d entries", maxInventoryEntries)
 	}
 	if len(hdr.Name) > b.pathBytesLeft || len(hdr.Linkname) > b.pathBytesLeft-len(hdr.Name) {
-		return fmt.Errorf("layer inventory exceeds %d path and link-name bytes", maxInventoryPathBytes)
+		return fmt.Errorf("assembly inventory exceeds %d path and link-name bytes", maxInventoryPathBytes)
 	}
 	b.entriesLeft--
 	b.pathBytesLeft -= len(hdr.Name) + len(hdr.Linkname)
@@ -56,7 +82,8 @@ func inventoryKits(ctx context.Context, kits []*resolve.Unit, loaded map[string]
 		size   int64
 		diffID digest.Digest
 	}
-	cache := map[blobKey][]tar.Header{}
+	cache := map[blobKey][]inventoryEntry{}
+	budget := inventoryBudget{layersLeft: maxInventoryLayers, entriesLeft: maxInventoryEntries, pathBytesLeft: maxInventoryPathBytes}
 	inventories := make([]kitInventory, 0, len(kits))
 	for _, kit := range resolution.Ordered() {
 		input := loaded[kit.Reference]
@@ -68,17 +95,30 @@ func inventoryKits(ctx context.Context, kits []*resolve.Unit, loaded map[string]
 			diffID := input.Config.RootFS.DiffIDs[index]
 			key := blobKey{layer.Digest, layer.Size, diffID}
 			files, exists := cache[key]
-			if !exists {
-				err := progressStep(ctx, report, Progress{Stage: StageInventory, Reference: kit.Reference, Layer: layer.Digest}, func() error {
-					var err error
-					files, err = readLayerInventory(ctx, input, layer, diffID)
+			err := progressStep(ctx, report, Progress{Stage: StageInventory, Reference: kit.Reference, Layer: layer.Digest}, func() error {
+				if err := budget.consumeLayer(); err != nil {
 					return err
-				})
-				if err != nil {
-					return nil, fmt.Errorf("inventory %s layer %s: %w", kit.Reference, layer.Digest, err)
 				}
-				cache[key] = files
+				if exists {
+					for _, entry := range files {
+						if err := ctx.Err(); err != nil {
+							return err
+						}
+						hdr := entry.header()
+						if err := budget.consume(&hdr); err != nil {
+							return err
+						}
+					}
+					return nil
+				}
+				var err error
+				files, err = readLayerInventory(ctx, input, layer, diffID, &budget)
+				return err
+			})
+			if err != nil {
+				return nil, fmt.Errorf("inventory %s layer %s: %w", kit.Reference, layer.Digest, err)
 			}
+			cache[key] = files
 			inventory.layers = append(inventory.layers, files)
 		}
 		inventories = append(inventories, inventory)
@@ -86,7 +126,7 @@ func inventoryKits(ctx context.Context, kits []*resolve.Unit, loaded map[string]
 	return inventories, nil
 }
 
-func readLayerInventory(ctx context.Context, input *LoadedKit, layer ocispec.Descriptor, diffID digest.Digest) (files []tar.Header, retErr error) {
+func readLayerInventory(ctx context.Context, input *LoadedKit, layer ocispec.Descriptor, diffID digest.Digest, budget *inventoryBudget) (files []inventoryEntry, retErr error) {
 	if layer.Size == math.MaxInt64 {
 		return nil, fmt.Errorf("layer size is too large")
 	}
@@ -103,16 +143,15 @@ func readLayerInventory(ctx context.Context, input *LoadedKit, layer ocispec.Des
 	limited := &io.LimitedReader{R: contextReader{ctx: ctx, reader: reader}, N: layer.Size + 1}
 	verifier := layer.Digest.Verifier()
 	verified := io.TeeReader(limited, verifier)
-	budget := inventoryBudget{entriesLeft: maxInventoryEntries, pathBytesLeft: maxInventoryPathBytes}
 	err = assemble.WalkLayerVerified(verified, diffID, func(hdr *tar.Header) error {
 		if err := budget.consume(hdr); err != nil {
 			return err
 		}
 		// Clone names so a short substring cannot retain a larger PAX record.
 		// Keep only extraction metadata, never bodies or extended attributes.
-		files = append(files, tar.Header{Name: strings.Clone(hdr.Name), Typeflag: hdr.Typeflag,
-			Linkname: strings.Clone(hdr.Linkname), Mode: hdr.Mode, Uid: hdr.Uid, Gid: hdr.Gid,
-			Devmajor: hdr.Devmajor, Devminor: hdr.Devminor})
+		files = append(files, inventoryEntry{name: strings.Clone(hdr.Name), typeflag: hdr.Typeflag,
+			linkname: strings.Clone(hdr.Linkname), mode: hdr.Mode, uid: hdr.Uid, gid: hdr.Gid,
+			devmajor: hdr.Devmajor, devminor: hdr.Devminor})
 		return nil
 	})
 	if err != nil {

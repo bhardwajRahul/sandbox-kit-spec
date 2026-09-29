@@ -72,11 +72,14 @@ multiple inputs with the same expected diff ID is read once, but each
 Kit retains its file ownership for the collision check. Skipping
 capabilities removes neither layers nor argument environment exports.
 
-Each layer inventory is limited to 250,000 archive entries and 32 MiB of
-combined path and link-name bytes, counting repeated entries. Assembly
-fails when either limit is exceeded, before caching the inventory, and
-closes the layer stream. These limits bound retained metadata even when
-a small compressed layer repeatedly overwrites the same path.
+The entire assembly is limited to 4,096 layer occurrences, 250,000
+archive entries, and 32 MiB of combined path and link-name bytes across
+all Kits. Repeated entries and cached layer replays count toward these
+limits; empty archives still consume the layer allowance. Assembly fails
+when a limit is exceeded and closes any open layer stream. Inventories
+retain compact extraction metadata rather than full tar headers. These
+limits prevent additional layers or Kits from multiplying the inventory
+allowance.
 
 The program prints the result plus its computed manifest:
 
@@ -144,8 +147,9 @@ An archive entry the shared extractor model refuses fails assembly.
 goroutine: `started`, `completed`, or `failed`. The stages are `load`,
 `resolve` (including argument expansion, selection, and descriptor
 validation), `compose`, `inventory`, and `collisions`. Kit references and
-layer digests identify individual work. Cached inventories emit no new
-event. Callbacks should return promptly; use the context to cancel. The
+layer digests identify individual work. Inventory events include cached
+layer replays, which consume the operation budget without reopening
+blobs. Callbacks should return promptly; use the context to cancel. The
 returned error remains authoritative, and events never contain
 configuration values or file contents.
 
