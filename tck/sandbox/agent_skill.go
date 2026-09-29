@@ -111,6 +111,10 @@ func bundledConflict(ctx context.Context, e *Env) []report.Finding {
 }
 
 var bundledSkillChecks = []check{
+	{requirement: "agent-skills@1/host-store-missing", capability: capAgentSkills, run: skillsWithoutStore("missing")},
+	{requirement: "agent-skills@1/host-store-empty", capability: capAgentSkills, run: skillsWithoutStore("empty")},
+	{requirement: "agent-skills@1/bundled-with-missing-store", capability: capAgentSkills, needs: []string{capAgentSkill}, run: bundledWithoutStore("missing")},
+	{requirement: "agent-skills@1/bundled-with-empty-store", capability: capAgentSkills, needs: []string{capAgentSkill}, run: bundledWithoutStore("empty")},
 	{requirement: "agent-skill@1/host-conflict", capability: capAgentSkill, needs: []string{capAgentSkills}, run: bundledHostConflict},
 	{requirement: "agent-skill@1/exposed", capability: capAgentSkill, needs: []string{capAgentSkills}, run: bundledObservation("exposed", "ready\n", false)},
 	{requirement: "agent-skill@1/before-launch", capability: capAgentSkill, needs: []string{capAgentSkills}, run: bundledObservation("launch", "ready\n", false)},
@@ -123,11 +127,11 @@ var bundledSkillChecks = []check{
 func init() { checks = append(checks, bundledSkillChecks...) }
 
 // No host content must not erase the destination from capability selection.
-func skillsWithoutHost(fixture, path string) func(context.Context, *Env) []report.Finding {
+func skillsWithoutHost(fixture, path string, opts adapter.CreateOptions) func(context.Context, *Env) []report.Finding {
 	return func(ctx context.Context, e *Env) []report.Finding {
-		id, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, fixture}, adapter.CreateOptions{SkillsHostMode: "off"})
+		id, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, fixture}, opts)
 		if err != nil {
-			return []report.Finding{report.Failf("host sharing is off, but the skills destination must remain available: %v", err)}
+			return []report.Finding{report.Failf("host skills are unavailable, but the skills destination must remain available: %v", err)}
 		}
 		defer cleanup()
 		res, err := e.Adapter.Exec(ctx, id, "ls", path)
@@ -135,7 +139,7 @@ func skillsWithoutHost(fixture, path string) func(context.Context, *Env) []repor
 			return []report.Finding{report.Failf("probe host store: %v", err)}
 		}
 		if res.ExitCode == 0 && listsExactly(res.Stdout, SkillName) {
-			return []report.Finding{report.Failf("host sharing is off, but shared skills are visible at %s", path)}
+			return []report.Finding{report.Failf("host skills are unavailable, but shared skills are visible at %s", path)}
 		}
 		state, err := e.Adapter.Selection(ctx, id)
 		if err != nil {
@@ -146,7 +150,7 @@ func skillsWithoutHost(fixture, path string) func(context.Context, *Env) []repor
 		}
 		for _, r := range state.Selection.Skipped {
 			if matches(r) {
-				return []report.Finding{report.Failf("host sharing is off, but the skills destination must not be skipped")}
+				return []report.Finding{report.Failf("host skills are unavailable, but the skills destination must not be skipped")}
 			}
 		}
 		for _, r := range state.Selection.Selected {
@@ -155,5 +159,26 @@ func skillsWithoutHost(fixture, path string) func(context.Context, *Env) []repor
 			}
 		}
 		return []report.Finding{report.Failf("skills destination missing from selected capabilities")}
+	}
+}
+
+// Exercise both selection forms without requiring bundled-skill support.
+func skillsWithoutStore(store string) func(context.Context, *Env) []report.Finding {
+	return func(ctx context.Context, e *Env) []report.Finding {
+		opts := adapter.CreateOptions{SkillsHostStore: store}
+		findings := skillsWithoutHost(fixtureSkills, skillsReadOnlyPath, opts)(ctx, e)
+		return append(findings, skillsWithoutHost(fixtureSkillsOptional, "/home/agent/.kit-tck/skills-opt", opts)(ctx, e)...)
+	}
+}
+
+func bundledWithoutStore(store string) func(context.Context, *Env) []report.Finding {
+	return func(ctx context.Context, e *Env) []report.Finding {
+		id, cleanup, err := e.sandboxWith(ctx, []string{fixtureBundledReader, fixtureBundledSkill}, adapter.CreateOptions{SkillsHostStore: store})
+		if err != nil {
+			return []report.Finding{report.Failf("create with %s host store: %v", store, err)}
+		}
+		defer cleanup()
+		findings := bundledProbe(ctx, e, id, "exposed", "ready\n")
+		return append(findings, bundledProbe(ctx, e, id, "launch", "ready\n")...)
 	}
 }

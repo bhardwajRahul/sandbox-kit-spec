@@ -1251,12 +1251,12 @@ func init() {
 			// Host content is supplemental, even for a required destination.
 			requirement: "agent-skills@1/host-store-optional",
 			capability:  capAgentSkills,
-			run:         skillsWithoutHost(fixtureSkills, skillsReadOnlyPath),
+			run:         skillsWithoutHost(fixtureSkills, skillsReadOnlyPath, adapter.CreateOptions{SkillsHostMode: "off"}),
 		},
 		check{
 			requirement: "agent-skills@1/host-off-keeps-optional",
 			capability:  capAgentSkills,
-			run:         skillsWithoutHost(fixtureSkillsOptional, "/home/agent/.kit-tck/skills-opt"),
+			run:         skillsWithoutHost(fixtureSkillsOptional, "/home/agent/.kit-tck/skills-opt", adapter.CreateOptions{SkillsHostMode: "off"}),
 		},
 		check{
 			// "Every declared path receives the same store" means one

@@ -81,6 +81,11 @@ type CreateOptions struct {
 	// permissive host can only ever see the kit's half narrow.
 	SkillsHostMode string
 
+	// SkillsHostStore arranges a "missing" or "empty" host store independently
+	// of sharing policy. Empty uses the normal seeded store. The override is
+	// per sandbox and must not remove or alter user content.
+	SkillsHostStore string
+
 	// SSHAgent, when set, is the socket of the backing SSH agent the
 	// runtime has available for this sandbox, passed as --ssh-agent: an
 	// adapter wires it however its runtime obtains agents (forwarded from
@@ -110,6 +115,9 @@ func (a *Adapter) Create(ctx context.Context, kits []string, opts CreateOptions)
 	}
 	if opts.SkillsHostMode != "" {
 		argv = append(argv, "--skills-host-mode", opts.SkillsHostMode)
+	}
+	if opts.SkillsHostStore != "" {
+		argv = append(argv, "--skills-host-store", opts.SkillsHostStore)
 	}
 	if opts.SSHAgent != "" {
 		argv = append(argv, "--ssh-agent", opts.SSHAgent)

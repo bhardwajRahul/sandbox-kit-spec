@@ -25,7 +25,8 @@
 #                                sandboxes, the skills store, secrets and
 #                                policy onto state of their own. Needs its
 #                                own `sbx --app-name <name> login`, and is
-#                                required when credential@1 is claimed —
+#                                required for missing/empty skills-store probes
+#                                and when credential@1 is claimed —
 #                                which also passes the fixture's secret
 #                                through sbx's argv, since set-custom
 #                                takes no protected input.
@@ -189,6 +190,7 @@ release_host_state() {
 	if ls "$state"/*.create >/dev/null 2>&1; then
 		return 0
 	fi
+	restore_skill_store
 	if [ -f "$state/seeded-skill" ]; then
 		local name store
 		name="$(cat "$state/seeded-skill")"
@@ -241,6 +243,59 @@ release_host_state() {
 # the store the sandbox will actually be given.
 skills_store() {
 	run_sbx skills ls --json | sed -n 's/.*"store"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+}
+
+# Missing/empty probes need sharing enabled. Move the isolated app's store
+# aside until cleanup, so the scenario neither deletes existing skills nor
+# substitutes the runtime's off setting for an absent directory.
+prepare_skill_store() {
+	local scenario="$1" store
+	[ ! -f "$state/skills-store.path" ] ||
+		die "a skills-store probe is still active; remove its sandbox before another create"
+	if [ -z "$scenario" ]; then
+		seed_skill_store
+		return
+	fi
+	case "$scenario" in
+	missing | empty) ;;
+	*) die "unknown skills-store scenario: $scenario" ;;
+	esac
+	[ -n "${SBX_TCK_APP_NAME:-}" ] ||
+		die "missing/empty skills-store probes require SBX_TCK_APP_NAME for isolated host state"
+	if ls "$state"/*.create >/dev/null 2>&1; then
+		die "skills-store probes cannot replace a store used by another sandbox"
+	fi
+	store="$(skills_store)"
+	case "$store" in
+	/*) [ "$store" != / ] || die "invalid skills-store path: $store" ;;
+	*) die "could not resolve an absolute skills-store path" ;;
+	esac
+	[ ! -L "$store" ] || die "skills-store probes do not replace symlinks"
+	[ ! -e "$state/skills-store.backup" ] || die "a saved skills store still needs recovery"
+	if [ -e "$store" ]; then
+		[ -d "$store" ] || die "skills store is not a directory: $store"
+		mv "$store" "$state/skills-store.backup"
+	fi
+	printf '%s\n' "$store" >"$state/skills-store.path"
+	if [ "$scenario" = empty ]; then
+		mkdir -p "$store"
+	fi
+}
+
+restore_skill_store() {
+	[ -f "$state/skills-store.path" ] || return 0
+	local store
+	store="$(cat "$state/skills-store.path")"
+	# Only an empty probe directory is disposable. Unexpected content stays
+	# put with the backup, rather than being erased to make restoration pass.
+	[ ! -L "$store" ] || die "probe store became a symlink; saved store retained in $state"
+	if [ -e "$store" ]; then
+		rmdir "$store" || die "probe store is not empty; saved store retained in $state"
+	fi
+	if [ -d "$state/skills-store.backup" ]; then
+		mv "$state/skills-store.backup" "$store"
+	fi
+	rm -f "$state/skills-store.path"
 }
 
 # §2.3 requires a known entry in the store before agent-skills@1 is
@@ -485,6 +540,7 @@ create)
 	kit_args=()
 	container_env_args=()
 	skills_mode=""
+	skills_store_scenario=""
 	while [ $# -gt 0 ]; do
 		case "$1" in
 		--arg)
@@ -496,6 +552,10 @@ create)
 			;;
 		--env)
 			container_env_args+=("--env" "$2")
+			shift 2
+			;;
+		--skills-host-store)
+			skills_store_scenario="$2"
 			shift 2
 			;;
 		--skills-host-mode)
@@ -526,7 +586,7 @@ create)
 	[ -n "$skills_mode" ] || skills_mode="readwrite"
 
 	check_prerequisites
-	seed_skill_store
+	prepare_skill_store "$skills_store_scenario"
 	bind_credential
 
 	id="$(new_id)"
