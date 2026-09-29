@@ -561,6 +561,25 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "com.docker.sandbox/git-identity@1"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "config": {
+                "$ref": "capabilities/com.docker.sandbox/git-identity@1.schema.json"
+              }
+            }
+          }
         }
       ]
     },

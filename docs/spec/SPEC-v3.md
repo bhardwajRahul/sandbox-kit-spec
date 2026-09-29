@@ -520,7 +520,7 @@ declaration block (ordinary top-level entries or one group), and in the
 effective merged descriptor:
 `network-policy@1`, `network-policy@2`, `resources@1`, `privileged@1`,
 `kit-registry@1`, `agent-sessions@1`, `lifecycle@1`, `agent-context@1`,
-`sbx@1`, `long-running@1`.
+`sbx@1`, `long-running@1`, `git-identity@1`.
 
 The two `network-policy` versions are additionally **exclusive of each
 other**: a descriptor states one of them, never both. They describe the
@@ -640,6 +640,7 @@ behavior** for a runtime supporting the type:
 | `com.docker.sandbox/agent-context@1` | [agent-context@1](capabilities/com.docker.sandbox/agent-context@1.md) | singleton |
 | `com.docker.sandbox/agent-sessions@1` | [agent-sessions@1](capabilities/com.docker.sandbox/agent-sessions@1.md) | singleton |
 | `com.docker.sandbox/agent-skills@1` | [agent-skills@1](capabilities/com.docker.sandbox/agent-skills@1.md) | per path |
+| `com.docker.sandbox/git-identity@1` | [git-identity@1](capabilities/com.docker.sandbox/git-identity@1.md) | singleton, config-less |
 | `com.docker.sandbox/kit-registry@1` | [kit-registry@1](capabilities/com.docker.sandbox/kit-registry@1.md) | singleton, config-less |
 | `com.docker.sandbox/sbx@1` | [sbx@1](capabilities/com.docker.sandbox/sbx@1.md) | singleton, config-less |
 
@@ -682,6 +683,9 @@ candidate's against it:
   workload a particular way and to read an identity the image already
   states (see their pages). `long-running@1` likewise grants no access;
   it keeps the workload running independently of attached sessions.
+- `git-identity@1` contributes its type to the service surface: it
+  discloses runtime-provided name/email values, unlike the image-defined
+  process identity honored by `sbx@1`.
 
 ---
 
@@ -1008,7 +1012,8 @@ The spec library enforces, beyond per-field rules stated above:
 - **capabilities**: type matches
   `^[a-z0-9]([a-z0-9.-]*[a-z0-9])?/[a-z0-9]([a-z0-9-]*[a-z0-9])?@[1-9][0-9]*$`;
   singleton and dedup arity per [§7.1](#71-arity); config-less types
-  (`privileged@1`, `kit-registry@1`, `sbx@1`, `long-running@1`) reject any
+  (`privileged@1`, `kit-registry@1`, `sbx@1`, `long-running@1`,
+  `git-identity@1`) reject any
   config; well-known configs decode strictly (unknown keys are errors)
   and pass their per-type rules
   (see the capability pages); **cross-entry**: every credential inject

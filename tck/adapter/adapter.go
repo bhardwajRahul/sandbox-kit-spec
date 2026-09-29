@@ -60,6 +60,9 @@ func (a *Adapter) Capabilities(ctx context.Context) ([]string, error) {
 
 // CreateOptions shape one create call beyond the kit set itself.
 type CreateOptions struct {
+	// GitIdentityConfig transports a suite-owned test binding in Git config
+	// format, or "off" to withhold it. It does not prescribe runtime storage.
+	GitIdentityConfig string
 	// RejectCapabilities arranges false selector answers for these types.
 	RejectCapabilities []string
 
@@ -78,6 +81,9 @@ type CreateOptions struct {
 // Create composes a kit set into a running sandbox and returns its id.
 func (a *Adapter) Create(ctx context.Context, kits []string, opts CreateOptions) (string, error) {
 	argv := append([]string{"create"}, kits...)
+	if opts.GitIdentityConfig != "" {
+		argv = append(argv, "--git-identity-config", opts.GitIdentityConfig)
+	}
 	for _, typ := range opts.RejectCapabilities {
 		argv = append(argv, "--reject-capability", typ)
 	}
