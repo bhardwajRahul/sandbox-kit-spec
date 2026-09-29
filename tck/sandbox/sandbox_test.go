@@ -241,6 +241,44 @@ var mutations = map[string][]string{
 	"trusts-any-host-key":                   {"ssh-agent@1/logins-bounded"},
 	"trusts-unverified-binding":             {"ssh-agent@1/binding-verified"},
 	"trusts-forwarding-binding":             {"ssh-agent@1/binding-verified"},
+	"identity-selected-null-source":         {"git-identity@1/unavailable-refuses-required"},
+	"identity-selected-wrong-kit":           {"git-identity@1/unavailable-refuses-required"},
+	"identity-selected-bad-workload":        {"git-identity@1/unavailable-refuses-required"},
+	"identity-selected-missing-members":     {"git-identity@1/unavailable-refuses-required"},
+	"leaks-identity-env":                    {"git-identity@1/absent-without-grant", "git-identity@1/unavailable-refuses-required"},
+	"imports-effective-git-settings":        {"git-identity@1/identity-only"},
+	"late-identity-workload-start":          {"git-identity@1/pinned-selection"},
+	"late-identity-workload-recreate":       {"git-identity@1/pinned-selection"},
+	"late-identity-restart-hook":            {"git-identity@1/before-hooks"},
+	"late-identity-recreate-hook":           {"git-identity@1/before-hooks"},
+	"skips-identity-restart-hook":           {"git-identity@1/before-hooks"},
+	"skips-identity-recreate-hook":          {"git-identity@1/before-hooks"},
+	"imports-identity-include":              {"git-identity@1/identity-only"},
+	"imports-identity-filter":               {"git-identity@1/identity-only"},
+	"imports-identity-signing-program":      {"git-identity@1/identity-only"},
+	"imports-identity-signing-key":          {"git-identity@1/identity-only"},
+	"identity-skip-wrong-path":              {"git-identity@1/unavailable-refuses-required"},
+	"identity-skip-wrong-source-path":       {"git-identity@1/unavailable-refuses-required"},
+	"identity-skip-missing-member-sources":  {"git-identity@1/unavailable-refuses-required"},
+	"identity-skip-wrong-member-kit":        {"git-identity@1/unavailable-refuses-required"},
+	"identity-skip-wrong-member-path":       {"git-identity@1/unavailable-refuses-required"},
+	"ignores-git-identity":                  {"git-identity@1/global-defaults"},
+	"corrupts-git-identity":                 {"git-identity@1/global-defaults"},
+	"git-identity-after-launch":             {"git-identity@1/global-defaults"},
+	"late-git-identity":                     {"git-identity@1/before-hooks"},
+	"forces-git-identity":                   {"git-identity@1/local-precedence"},
+	"imports-source-git-settings":           {"git-identity@1/identity-only"},
+	"clobbers-guest-git-settings":           {"git-identity@1/identity-only"},
+	"edits-identity-source":                 {"git-identity@1/source-unchanged"},
+	"rereads-identity-on-recreate":          {"git-identity@1/pinned-selection"},
+	"loses-git-identity-on-start":           {"git-identity@1/pinned-selection"},
+	"imports-unrequested-identity":          {"git-identity@1/absent-without-grant"},
+	"accepts-missing-identity":              {"git-identity@1/unavailable-refuses-required"},
+	"refuses-optional-identity":             {"git-identity@1/unavailable-refuses-required"},
+	"imports-unavailable-identity":          {"git-identity@1/unavailable-refuses-required"},
+	"drops-identity-skip-record":            {"git-identity@1/unavailable-refuses-required"},
+	"selects-unavailable-identity":          {"git-identity@1/unavailable-refuses-required"},
+	"selects-and-skips-identity":            {"git-identity@1/unavailable-refuses-required"},
 	"group-invalid-expanded":                {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
 	"group-skips-invalid-expanded":          {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
 	"group-reselect-skipped-restart":        {"SPEC-v3 §7.1.1/lifetime"},
@@ -445,5 +483,18 @@ func TestSSHAgentReachabilityWithoutLifecycle(t *testing.T) {
 				require.False(t, rep.Failed(), "%s", rep)
 			}
 		})
+	}
+}
+
+func TestGitIdentityNeedsNoHelperCapabilities(t *testing.T) {
+	a := adapter.New(filepath.Join("testdata", "fake-adapter"))
+	a.Env = []string{"KIT_TCK_FAKE_STATE=" + t.TempDir(), "KIT_TCK_FAKE_CLAIMS=" + capGitIdentity, "KIT_TCK_FAKE_BROKEN="}
+	rep, err := Run(context.Background(), &Env{Adapter: a, Fixtures: Fixtures(FixtureDir)})
+	require.NoError(t, err)
+	require.False(t, rep.Failed(), "git-identity alone must be testable:\n%s", rep)
+	for _, f := range rep.Findings {
+		if f.Requirement != "git-identity@1/before-hooks" {
+			require.NotContains(t, f.Requirement, "git-identity@1", "%s", f)
+		}
 	}
 }

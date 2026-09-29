@@ -394,6 +394,37 @@ when their service needs that lifetime too: a request from any Kit
 applies to the whole sandbox, and a required declaration wins over an
 optional one.
 
+### git-identity@1
+
+For a Kit whose commit workflow needs the user's runtime-provided Git
+identity, declare `com.docker.sandbox/git-identity@1`. It has no `config`,
+including empty or null. The runtime selects `user.name` and `user.email`
+and exposes them as the workload user's global defaults before that
+user's hooks, workload and exec sessions run. Repository-local identity still
+takes precedence. Authentication and signing are outside this grant.
+
+Use `optional: true` only when the Kit can operate without that identity.
+A required entry refuses creation if the runtime withholds the pair or
+either value is unavailable; an optional entry is skipped and recorded.
+Adding either form widens permission surface: the grant discloses the
+selected name and email to sandbox processes and commit recipients.
+
+Audit v2 hooks, environment variables and mounts that supplied Git
+identity. When migrating runtime-provided attribution to this capability,
+remove the replaced identity plumbing and explain the change with a
+`# MIGRATION NOTE:`. Do not bake the user's pair into image content or
+descriptor args, mount a host gitconfig, or copy its unrelated settings
+to implement this request. Source selection belongs to the runtime.
+Keep the request on a `-mixin` variant if its workflow needs it too; a
+request from either shape applies to the sandbox, and required wins over
+optional when requests merge.
+
+Do not add this capability merely because Git is installed, the Kit
+clones a repository, or an agent could create commits. Preserve an
+intentional bot identity or repository-local attribution unless the
+migration explicitly changes that behavior; neither requires disclosing
+the user's runtime identity.
+
 ### sbx@1
 
 Config-less. Add it to every migrated **workload**: v2 `kind: sandbox` kits are
@@ -537,6 +568,8 @@ Before calling a migration done:
       artifact is what loses
 - [ ] every hook that reads a variable declares it in `env:`
 - [ ] every credential that was effectively optional in v2 sets `optional: true`
+- [ ] `git-identity@1` reflects an actual attribution need, with its
+      permission widening and required/optional behavior accounted for
 - [ ] every inject domain appears in the same phase's allow list
 - [ ] the install/runtime phase split loses no host from the v2 list
 - [ ] `filename:` appears only on a workload, or on a set that resolves to

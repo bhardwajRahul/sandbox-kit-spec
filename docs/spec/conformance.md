@@ -64,7 +64,7 @@ An adapter **MUST NOT** require interactive input.
 | Verb | Arguments | stdout | Purpose |
 |---|---|---|---|
 | `capabilities` | — | one capability type per line | What the runtime claims to implement |
-| `create` | `<kit-ref>…`, zero or more `--arg name=value`, at most one `--skills-host-mode readonly\|off`, at most one `--ssh-agent <socket>`, at most one `--ssh-known-hosts <file>` | one sandbox id | Compose the Kit set and start it |
+| `create` | `<kit-ref>…`, zero or more `--arg name=value`, at most one `--skills-host-mode readonly\|off`, at most one `--ssh-agent <socket>`, at most one `--ssh-known-hosts <file>`, at most one `--git-identity-config <absolute-path>\|off` | one sandbox id | Compose the Kit set and start it |
 | `exec` | `<id> -- <argv>…` | the command's stdout | Run a command inside |
 | `stop` | `<id>` | — | Stop without discarding state |
 | `start` | `<id>` | — | Start a stopped sandbox |
@@ -116,6 +116,59 @@ finished stopping; a missing sandbox or a failed observation is an error,
 not a stopped state. The suite reads status before probing the background
 process, so an exec that implicitly starts a stopped sandbox cannot hide
 auto-stop, and reads it again after explicit stop.
+
+### Git identity binding
+
+An adapter claiming `com.docker.sandbox/git-identity@1` **MUST** accept
+`create --git-identity-config <absolute-path>|off`. The suite-owned file
+is a transport for a test binding, not a requirement that the runtime
+store or discover identity in files. It carries a known name/email pair
+in Git config syntax, alongside unrelated settings used as leak probes.
+
+The adapter **MUST** arrange for the runtime to provide that binding for
+this create using its normal identity-provisioning interface. It can
+translate the test input into runtime settings, an API request or another
+binding mechanism. Incomplete values are unavailable, not filled from
+other sources; `off` withholds the identity. The option does not grant
+the capability: only a Kit requesting it receives the pair.
+
+The adapter **MUST NOT** write a sandbox gitconfig itself to bypass the
+runtime's materialization path, or alter the user's real settings. The
+suite changes its input between create and restart/recreate; the adapter
+**MUST** reflect that change in the runtime binding before those verbs,
+so the suite can check that existing sandboxes retain their selection.
+Sandbox edits **MUST** remain observable if they incorrectly write back
+to that binding: an adapter translating the input into another store
+reflects such writes in the suite-owned file before returning from exec.
+Otherwise the adapter **MUST NOT** delete or rewrite the suite's input.
+
+The fixture workload ships Git and `kit-tck-git-identity`, with distinct
+image identity defaults and an unrelated sandbox alias. Its probe checks
+global values, repository-local precedence through a real commit,
+preservation of sandbox settings, exclusion of unrelated source settings,
+and hook-time captures at creation, stop/start and recreation. Repeated
+hook checks clear the startup capture first so an old observation cannot
+hide a missing hook. Required and optional fixtures exercise missing
+values and withheld identity. The suite never needs the user's real name,
+email or signing keys.
+
+After recreation, the hook check reads only the new startup capture:
+install hooks do not repeat, and their writable-layer output is discarded.
+Workload entrypoint captures are also checked after restart and recreation.
+Identity and source-setting leak probes inspect effective Git behavior,
+including environment and system configuration, not only global files.
+
+The separate `git-identity@1/source-private` requirement is waived by the
+suite: the adapter does not identify every guest path or backend through
+which a runtime could expose its identity source. Effective Git probes
+cannot detect an unconfigured readable copy at an arbitrary path. The
+runtime prohibition still applies; passing these probes does not certify
+source confidentiality.
+
+An adapter claiming this capability also supports `selection <id>` using
+the record format below. The suite checks that an unavailable optional
+identity is recorded as skipped, with its rejected member, and is absent
+from selected records.
 
 ### 2.3 Known values the suite arranges
 

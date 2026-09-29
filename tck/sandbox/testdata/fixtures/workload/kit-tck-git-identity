@@ -1,0 +1,79 @@
+#!/bin/sh
+set -eu
+case "${1:?probe mode required}" in
+workload)
+  # Capture once at entrypoint, before a late runtime write can make an
+  # exec probe pass. Publish atomically so exec cannot read half a pair.
+  "$0" defaults > "$HOME/git-identity-workload.tmp" || :
+  mv "$HOME/git-identity-workload.tmp" "$HOME/git-identity-workload"
+  shift
+  exec "$@"
+  ;;
+clear-workload)
+  rm -f "$HOME/git-identity-workload"
+  ;;
+workload-identity)
+  # Create can return before the entrypoint is scheduled. Wait only for
+  # its capture, never for the current Git config to acquire the pair.
+  attempts=0
+  until [ -f "$HOME/git-identity-workload" ]; do
+    attempts=$((attempts + 1))
+    [ "$attempts" -le 10 ] || { echo 'workload identity capture missing' >&2; exit 1; }
+    sleep 1
+  done
+  cat "$HOME/git-identity-workload"
+  ;;
+defaults)
+  git config --global --get user.name
+  git config --global --get user.email
+  ;;
+absent)
+  test "$(git config --global --get user.name)" = 'Image Author'
+  test "$(git config --global --get user.email)" = image@example.invalid
+  # Observe effective author and committer values outside a user repository,
+  # whose own attribution is independent of the runtime grant.
+  dir=$(mktemp -d)
+  trap 'rm -rf "$dir"' EXIT
+  for ident in GIT_AUTHOR_IDENT GIT_COMMITTER_IDENT; do
+    case "$(git -C "$dir" var "$ident")" in
+    'Image Author <image@example.invalid> '*) ;;
+    *) exit 1 ;;
+    esac
+  done
+  echo absent
+  ;;
+only)
+  test "$(git config --global --get alias.kit-tck-guest)" = status
+  for key in user.signingKey alias.kit-tck-source credential.helper http.extraHeader core.hooksPath include.path filter.kit-tck-source.clean gpg.program; do
+    if git config --get "$key"; then exit 1; else test "$?" = 1; fi
+  done
+  echo only
+  ;;
+clear-hooks)
+  rm -f "$HOME/git-identity-startup"
+  ;;
+startup-hook)
+  cat "$HOME/git-identity-startup"
+  ;;
+hooks)
+  cat "$HOME/git-identity-install" "$HOME/git-identity-startup"
+  ;;
+local)
+  dir=$(mktemp -d)
+  trap 'rm -rf "$dir"' EXIT
+  git -C "$dir" init -q
+  git -C "$dir" config user.name 'Local Author'
+  git -C "$dir" config user.email local@example.invalid
+  git -C "$dir" -c commit.gpgsign=false commit -q --allow-empty -m test
+  test "$(git -C "$dir" log -1 --format='%an <%ae>|%cn <%ce>')" = 'Local Author <local@example.invalid>|Local Author <local@example.invalid>'
+  echo local
+  ;;
+edit)
+  # Read-only sandbox defaults may refuse edits; either way the source
+  # binding must remain unchanged. The suite checks reachability first.
+  git config --global user.name 'Guest Changed' || :
+  git config --global user.email guest-changed@example.invalid || :
+  echo attempted
+  ;;
+*) exit 1 ;;
+esac

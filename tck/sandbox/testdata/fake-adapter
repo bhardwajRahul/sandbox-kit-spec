@@ -12,7 +12,7 @@ broken="${KIT_TCK_FAKE_BROKEN:-}"
 # suite narrows it, nothing when broken that way. The refusal duty below
 # is always keyed off this same list, because claiming and refusing are
 # two sides of one statement.
-default_claims="com.docker.sandbox/long-running@1,com.docker.sandbox/sbx@1,com.docker.sandbox/lifecycle@1,com.docker.sandbox/network-policy@1,com.docker.sandbox/network-policy@2,com.docker.sandbox/credential@1,com.docker.sandbox/agent-context@1,com.docker.sandbox/volume@1,com.docker.sandbox/resources@1,com.docker.sandbox/privileged@1,com.docker.sandbox/agent-skills@1,com.docker.sandbox/ssh-agent@1"
+default_claims="com.docker.sandbox/git-identity@1,com.docker.sandbox/long-running@1,com.docker.sandbox/sbx@1,com.docker.sandbox/lifecycle@1,com.docker.sandbox/network-policy@1,com.docker.sandbox/network-policy@2,com.docker.sandbox/credential@1,com.docker.sandbox/agent-context@1,com.docker.sandbox/volume@1,com.docker.sandbox/resources@1,com.docker.sandbox/privileged@1,com.docker.sandbox/agent-skills@1,com.docker.sandbox/ssh-agent@1"
 claims="${KIT_TCK_FAKE_CLAIMS:-$default_claims}"
 if [ "$broken" = "claims-nothing" ]; then claims=""; fi
 verb="${1:-}"
@@ -154,6 +154,7 @@ create)
   # The backing SSH agent available to this sandbox; empty when none is.
   offered_agent=""
   known_hosts=""
+  identity_config=""
   group_rejected=no
   lifecycle_rejected=no
   while [ $# -gt 0 ]; do
@@ -165,6 +166,10 @@ create)
     --reject-capability)
       if [ "$2" = com.docker.sandbox/volume@1 ]; then group_rejected=yes; fi
       if [ "$2" = com.docker.sandbox/lifecycle@1 ]; then lifecycle_rejected=yes; fi
+      shift 2
+      ;;
+    --git-identity-config)
+      identity_config="$2"
       shift 2
       ;;
     --skills-host-mode)
@@ -224,7 +229,12 @@ create)
   if [ "$broken" != "accepts-required-unclaimed" ]; then
     for kit in "${kits[@]}"; do
       need=""
-      case "$kit" in
+      # Match the fixture name, not a checkout directory that happens to
+      # contain a capability name (for example, git-identity).
+      case "${kit##*/}" in
+      *git-identity-optional*) ;;
+      *git-identity-hooks*) need="com.docker.sandbox/lifecycle@1" ;;
+      *git-identity*) need="com.docker.sandbox/git-identity@1" ;;
       *long-running-optional*)
         if [ "$broken" = "refuses-optional-long-running" ]; then exit 2; fi
         ;;
@@ -297,6 +307,29 @@ create)
     exit 1
   fi
 
+  identity_required=""
+  identity_optional=""
+  identity_requested=""
+  for kit in "${kits[@]}"; do
+    case "$kit" in
+    */git-identity) identity_required=1; identity_requested=1 ;;
+    */git-identity-optional) identity_requested=1; identity_optional=1 ;;
+    esac
+  done
+  identity_name=""
+  identity_email=""
+  if [ -n "$identity_config" ] && [ "$identity_config" != off ]; then
+    identity_name=$(git config --file "$identity_config" --get user.name || true)
+    identity_email=$(git config --file "$identity_config" --get user.email || true)
+  fi
+  if [ -n "$identity_requested" ] && { [ -z "$identity_name" ] || [ -z "$identity_email" ]; }; then
+    if [ -n "$identity_required" ] && [ "$broken" != accepts-missing-identity ]; then
+      echo "refusing: Git identity unavailable" >&2
+      exit 2
+    fi
+    if [ -z "$identity_required" ] && [ "$broken" = refuses-optional-identity ]; then exit 2; fi
+    if [ "$broken" != imports-unavailable-identity ]; then identity_requested=""; fi
+  fi
   for kit in "${kits[@]}"; do
     case "$kit" in
     */groups-expanded)
@@ -408,6 +441,53 @@ create)
   # The entrypoint records an empty value when no runtime-phase grant
   # exists; only the leak mutation writes a non-empty value instead.
   if [ ! -f "$dir/workload-ssh-sock" ]; then : >"$dir/workload-ssh-sock"; fi
+  if [ -n "$identity_optional" ] && { [ -z "$identity_name" ] || [ -z "$identity_email" ]; }; then
+    record='{"path":"capabilities[0]","source":{"kit":"git-identity-optional","path":"capabilities[0]"},"members":["capabilities[0]"],"memberSources":[{"kit":"git-identity-optional","path":"capabilities[0]"}],"rejected":["capabilities[0]"]}'
+    case "$broken" in
+    identity-skip-wrong-path)
+      record=$(printf '%s' "$record" | sed 's/"path":"capabilities\[0\]","source"/"path":"capabilities[9]","source"/; s/"members":\["capabilities\[0\]"\]/"members":["capabilities[9]"]/; s/"rejected":\["capabilities\[0\]"\]/"rejected":["capabilities[9]"]/') ;;
+    identity-skip-wrong-source-path)
+      record=$(printf '%s' "$record" | sed 's/"kit":"git-identity-optional","path":"capabilities\[0\]"/"kit":"git-identity-optional","path":"capabilities[9]"/g') ;;
+    identity-skip-missing-member-sources)
+      record=$(printf '%s' "$record" | sed 's/"memberSources":\[{[^}]*}\]/"memberSources":[]/') ;;
+    identity-skip-wrong-member-kit)
+      record=$(printf '%s' "$record" | sed 's/"memberSources":\[{"kit":"git-identity-optional"/"memberSources":[{"kit":"wrong-kit"/') ;;
+    identity-skip-wrong-member-path)
+      record=$(printf '%s' "$record" | sed 's/"memberSources":\[{"kit":"git-identity-optional","path":"capabilities\[0\]"/"memberSources":[{"kit":"git-identity-optional","path":"capabilities[9]"/') ;;
+    esac
+    workload_record='{"path":"capabilities[0]","source":{"kit":"workload","path":"capabilities[0]"},"members":["capabilities[0]"],"memberSources":[{"kit":"workload","path":"capabilities[0]"}]}'
+    selected='[]'
+    if [[ ",$claims," == *",com.docker.sandbox/agent-context@1,"* ]]; then selected="[$workload_record]"; fi
+    skipped="[$record]"
+    case "$broken" in
+    drops-identity-skip-record) skipped='[]' ;;
+    selects-unavailable-identity) selected="[$record]"; skipped='[]' ;;
+    selects-and-skips-identity) selected="[$record]" ;;
+    identity-selected-null-source) selected=$(printf '[%s]' "$record" | sed 's/"source":{[^}]*}/"source":null/') ;;
+    identity-selected-wrong-kit) selected=$(printf '[%s]' "$record" | sed 's/git-identity-optional/unknown-kit/g') ;;
+    identity-selected-bad-workload) selected=$(printf '[%s]' "$workload_record" | sed 's/capabilities\[0\]/capabilities[9]/g') ;;
+    identity-selected-missing-members) selected=$(printf '[%s]' "$workload_record" | sed 's/"memberSources":\[{[^}]*}\]/"memberSources":[]/') ;;
+
+    esac
+    printf '{"selection":{"selected":%s,"skipped":%s},"surface":{}}\n' "$selected" "$skipped" >"$dir/selection.json"
+  fi
+  printf '%s\n' 'Image Author' image@example.invalid >"$dir/git-identity"
+  if [ "$broken" = git-identity-after-launch ]; then
+    cp "$dir/git-identity" "$dir/git-workload"
+  fi
+  if [ -n "$identity_requested" ] || [ "$broken" = imports-unrequested-identity ]; then
+    if [ "$broken" != ignores-git-identity ]; then
+      printf '%s\n%s\n' "$identity_name" "$identity_email" >"$dir/git-identity"
+    fi
+    if [ "$broken" = corrupts-git-identity ]; then echo wrong >"$dir/git-identity"; fi
+  fi
+  if [ -n "$identity_config" ] && [ "$identity_config" != off ]; then printf '%s' "$identity_config" >"$dir/git-source"; fi
+  cp "$dir/git-identity" "$dir/git-install"
+  cp "$dir/git-identity" "$dir/git-startup"
+  if [ "$broken" = late-git-identity ]; then echo missing >"$dir/git-startup"; fi
+  if [ "$broken" != git-identity-after-launch ]; then
+    cp "$dir/git-identity" "$dir/git-workload"
+  fi
   for kit in "${kits[@]}"; do
     if [[ "$kit" == */groups ]]; then write_group_state "$dir" "$group_rejected"; fi
     if [[ "$kit" == */groups-republished ]]; then write_republished_state "$dir" "$group_rejected"; fi
@@ -579,6 +659,36 @@ exec)
   [ "${1:-}" = "--" ] && shift
   dir="$state/$id"
   case "${1:-}" in
+  kit-tck-git-identity)
+    case "$2" in
+    defaults) cat "$dir/git-identity" ;;
+    clear-workload) rm -f "$dir/git-workload" ;;
+    workload-identity) cat "$dir/git-workload" ;;
+    hooks) cat "$dir/git-install" "$dir/git-startup" ;;
+    startup-hook) cat "$dir/git-startup" ;;
+    clear-hooks) rm -f "$dir/git-startup" ;;
+    absent)
+      if [ "$broken" = leaks-identity-env ]; then exit 1; fi
+      test "$(head -1 "$dir/git-identity")" = 'Image Author'
+      test "$(tail -1 "$dir/git-identity")" = image@example.invalid
+      echo absent ;;
+    only)
+      if [ "$broken" = imports-effective-git-settings ]; then exit 1; fi
+      case "$broken" in imports-identity-include | imports-identity-filter | imports-identity-signing-program) exit 1 ;; esac
+      if [ "$broken" = imports-identity-signing-key ]; then exit 1; fi
+      if [ "$broken" = imports-source-git-settings ] || [ "$broken" = clobbers-guest-git-settings ]; then exit 1; fi
+      echo only ;;
+    local)
+      if [ "$broken" = forces-git-identity ]; then exit 1; fi
+      echo local ;;
+    edit)
+      if [ "$broken" = edits-identity-source ] && [ -f "$dir/git-source" ]; then
+        echo changed >>"$(cat "$dir/git-source")"
+      fi
+      echo attempted ;;
+    *) exit 1 ;;
+    esac
+    ;;
   kit-tck-background)
     if [ "$2" = start ]; then echo original >"$dir/background"; fi
     if [ ! -f "$dir/background" ]; then echo "background process is gone" >&2; exit 1; fi
@@ -926,6 +1036,17 @@ selection-policy)
   ;;
 
 recreate)
+  cp "$state/$1/git-identity" "$state/$1/git-workload"
+  if [ "$broken" = late-identity-workload-recreate ]; then echo missing >"$state/$1/git-workload"; fi
+  rm -f "$state/$1/git-install" "$state/$1/git-startup"
+  if [ "$broken" != skips-identity-recreate-hook ]; then
+    cp "$state/$1/git-identity" "$state/$1/git-startup"
+    if [ "$broken" = late-identity-recreate-hook ]; then echo missing >"$state/$1/git-startup"; fi
+  fi
+  if [ "$broken" = rereads-identity-on-recreate ] && [ -f "$state/$1/git-source" ]; then
+    git config --file "$(cat "$state/$1/git-source")" --get user.name >"$state/$1/git-identity"
+    git config --file "$(cat "$state/$1/git-source")" --get user.email >>"$state/$1/git-identity"
+  fi
   if [ -f "$state/$1/group-rejected" ] && [ "$broken" != group-no-recreate ]; then
     cp "$state/$1/selection.json" "$state/$1/previous-selection.json"
     cp "$state/$1/group-order" "$state/$1/previous-group-order"
@@ -946,7 +1067,14 @@ recreate)
   ;;
 
 start)
+  cp "$state/$1/git-identity" "$state/$1/git-workload"
+  if [ "$broken" = late-identity-workload-start ]; then echo missing >"$state/$1/git-workload"; fi
   dir="$state/$1"
+  if [ "$broken" != skips-identity-restart-hook ]; then
+    cp "$dir/git-identity" "$dir/git-startup"
+    if [ "$broken" = late-identity-restart-hook ]; then echo missing >"$dir/git-startup"; fi
+  fi
+  if [ "$broken" = loses-git-identity-on-start ]; then echo missing >"$dir/git-identity"; fi
   if [ -f "$dir/group-rejected" ]; then
     rejection="$(cat "$dir/group-rejected")"
     if [ "$broken" = group-reselect-restart ]; then rejection="$(cat "$dir/group-future-rejected")"; fi

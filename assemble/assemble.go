@@ -118,7 +118,8 @@ func (o *configOwners) mergeConfig(config *ocispec.ImageConfig, m Input) error {
 		}
 		if prev, exists := o.env[k]; exists {
 			if prev.value != v {
-				return fmt.Errorf("env conflict on %s: %s sets %q but %s sets %q", k, prev.kit, prev.value, m.Name, v)
+				// Environment values may be credentials; identify the owners only.
+				return fmt.Errorf("env conflict on %s: %s and %s set different values", k, prev.kit, m.Name)
 			}
 			continue
 		}

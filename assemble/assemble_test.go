@@ -220,6 +220,8 @@ func TestMergeConfigEnvConflict(t *testing.T) {
 	require.ErrorContains(t, err, "env conflict on EDITOR")
 	require.ErrorContains(t, err, "shell-kit")
 	require.ErrorContains(t, err, "tool-kit")
+	require.NotContains(t, err.Error(), "vim")
+	require.NotContains(t, err.Error(), "nano")
 }
 
 func TestMergeConfigLabelDisagreementKeepsFirstWriter(t *testing.T) {
