@@ -325,12 +325,19 @@ create)
     identity-skip-wrong-member-path)
       record=$(printf '%s' "$record" | sed 's/"memberSources":\[{"kit":"git-identity-optional","path":"capabilities\[0\]"/"memberSources":[{"kit":"git-identity-optional","path":"capabilities[9]"/') ;;
     esac
+    workload_record='{"path":"capabilities[0]","source":{"kit":"workload","path":"capabilities[0]"},"members":["capabilities[0]"],"memberSources":[{"kit":"workload","path":"capabilities[0]"}]}'
     selected='[]'
+    if [[ ",$claims," == *",com.docker.sandbox/agent-context@1,"* ]]; then selected="[$workload_record]"; fi
     skipped="[$record]"
     case "$broken" in
     drops-identity-skip-record) skipped='[]' ;;
     selects-unavailable-identity) selected="[$record]"; skipped='[]' ;;
     selects-and-skips-identity) selected="[$record]" ;;
+    identity-selected-null-source) selected=$(printf '[%s]' "$record" | sed 's/"source":{[^}]*}/"source":null/') ;;
+    identity-selected-wrong-kit) selected=$(printf '[%s]' "$record" | sed 's/git-identity-optional/unknown-kit/g') ;;
+    identity-selected-bad-workload) selected=$(printf '[%s]' "$workload_record" | sed 's/capabilities\[0\]/capabilities[9]/g') ;;
+    identity-selected-missing-members) selected=$(printf '[%s]' "$workload_record" | sed 's/"memberSources":\[{[^}]*}\]/"memberSources":[]/') ;;
+
     esac
     printf '{"selection":{"selected":%s,"skipped":%s},"surface":{}}\n' "$selected" "$skipped" >"$dir/selection.json"
   fi

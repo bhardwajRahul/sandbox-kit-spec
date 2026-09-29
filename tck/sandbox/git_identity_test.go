@@ -43,6 +43,10 @@ func TestGitIdentityChecksAndMutations(t *testing.T) {
 							require.Contains(t, findings[0].Detail, operation+": probe startup-hook:")
 						}
 					}
+					if strings.HasPrefix(broken, "identity-selected-") {
+						require.Len(t, findings, 1)
+						require.Contains(t, findings[0].Detail, "unexpected or malformed selected record:")
+					}
 					if strings.HasPrefix(broken, "identity-skip-") {
 						require.Len(t, findings, 1)
 						require.Contains(t, findings[0].Detail, "optional identity skip record incomplete:")

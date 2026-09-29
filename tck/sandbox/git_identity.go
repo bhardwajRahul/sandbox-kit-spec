@@ -147,9 +147,18 @@ func gitIdentitySkipped(ctx context.Context, e *Env, id string) []report.Finding
 		return []report.Finding{report.Failf("optional identity selection records: %v", err)}
 	}
 	fixtureRef := e.Fixtures(fixtureGitIdentityOptional)
+	workloadRef := e.Fixtures(fixtureWorkload)
 	for _, record := range state.Selection.Selected {
 		if record.Source != nil && (record.Source.Kit == fixtureGitIdentityOptional || record.Source.Kit == fixtureRef) {
 			return []report.Finding{report.Failf("unavailable optional identity recorded as selected: %+v", record)}
+		}
+		// The only other request in this composition is the workload's
+		// optional agent context. Unknown provenance is not unrelated data.
+		if record.Source == nil || (record.Source.Kit != fixtureWorkload && record.Source.Kit != workloadRef) ||
+			record.Source.Path != "capabilities[0]" || record.Path != "capabilities[0]" ||
+			!slices.Equal(record.Members, []string{"capabilities[0]"}) ||
+			!slices.Equal(record.MemberSources, []spec.CapabilitySource{*record.Source}) || len(record.Rejected) != 0 {
+			return []report.Finding{report.Failf("unexpected or malformed selected record: %+v", record)}
 		}
 	}
 	found := 0
