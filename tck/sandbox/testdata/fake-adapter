@@ -221,6 +221,10 @@ create)
       fi
       ;;
     */groups-required)
+      if [ "$lifecycle_rejected" = yes ] && [ "$broken" != group-ignore-required-lifecycle ]; then
+        echo "groups-required capabilities[0].group.capabilities[1]: rejected" >&2
+        exit 2
+      fi
       if [ "$group_rejected" = yes ] && [ "$broken" != group-accept-required ]; then
         source_kit=groups-required
         if [ "$broken" = group-required-no-kit ]; then source_kit=''; fi
@@ -271,6 +275,10 @@ create)
       fi
       if [ "$broken" = partial-group-applies-lifecycle ]; then echo selected >"$dir/group-feature"; fi
       printf '{"selection":{"selected":[],"skipped":[{"path":"capabilities[0]","source":{"kit":"groups-partial","path":"capabilities[0]"},"members":["capabilities[0].group.capabilities[0]","capabilities[0].group.capabilities[1]"],"rejected":["%s"]}]},"surface":%s}\n' "$rejected_member" "$partial_surface" >"$dir/selection.json"
+    fi
+    if [[ "$kit" == */groups-partial ]] && [ "$lifecycle_rejected" = yes ] && [ "$broken" = group-ignore-optional-lifecycle ]; then
+      echo '{"selection":{"selected":[],"skipped":[]},"surface":{"storagePaths":["/var/tmp/group-volume"]}}' >"$dir/selection.json"
+      echo selected >"$dir/group-feature"
     fi
     if [[ "$kit" == */ordinary-optional ]]; then
       ordinary_record='{"path":"capabilities[0]","source":{"kit":"ordinary-optional","path":"capabilities[0]"},"members":["capabilities[0]"]}'

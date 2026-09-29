@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -161,16 +162,51 @@ func groupSelection(ctx context.Context, e *Env) []report.Finding {
 			}
 		}
 	}
-	_, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, "groups-required"}, adapter.CreateOptions{RejectCapabilities: []string{groupVolume}})
-	defer cleanup()
-	var refused *adapter.RefusedError
-	if !errors.As(err, &refused) || !strings.Contains(refused.Detail, "groups-required") || !strings.Contains(refused.Detail, "capabilities[0].group.capabilities[0]") {
-		return []report.Finding{report.Failf("required group must refuse and identify rejected member: %v", err)}
+	for i, rejected := range []string{groupVolume, capLifecycle} {
+		_, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, "groups-required"}, adapter.CreateOptions{RejectCapabilities: []string{rejected}})
+		cleanup()
+		var refused *adapter.RefusedError
+		path := fmt.Sprintf("capabilities[0].group.capabilities[%d]", i)
+		if !errors.As(err, &refused) || !strings.Contains(refused.Detail, "groups-required") || !strings.Contains(refused.Detail, path) {
+			return []report.Finding{report.Failf("required group must refuse and identify rejected member %s: %v", path, err)}
+		}
+	}
+	if findings := groupedLifecycleRejection(ctx, e); len(findings) > 0 {
+		return findings
 	}
 	if findings := ordinarySelection(ctx, e); len(findings) > 0 {
 		return findings
 	}
 	return republishedGroupSelection(ctx, e)
+}
+
+// This fixture has no required lifecycle entry outside the optional group,
+// so rejecting lifecycle can exercise a successful create with a skipped group.
+func groupedLifecycleRejection(ctx context.Context, e *Env) []report.Finding {
+	id, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, "groups-partial"}, adapter.CreateOptions{RejectCapabilities: []string{capLifecycle}})
+	defer cleanup()
+	if err != nil {
+		return []report.Finding{report.Failf("optional grouped lifecycle rejection: %v", err)}
+	}
+	state, err := e.Adapter.Selection(ctx, id)
+	if err != nil {
+		return []report.Finding{report.Failf("grouped lifecycle selection records: %v", err)}
+	}
+	found := false
+	for _, record := range state.Selection.Skipped {
+		if record.Path == "capabilities[0]" && record.Source != nil && strings.Contains(record.Source.Kit, "groups-partial") {
+			found = slices.Equal(record.Rejected, []string{"capabilities[0].group.capabilities[1]"})
+		}
+	}
+	surface, err := json.Marshal(state.Surface)
+	if !found || err != nil || string(surface) != "{}" {
+		return []report.Finding{report.Failf("grouped lifecycle rejection lost skip attribution or leaked grants: %+v", state)}
+	}
+	file, err := e.Adapter.Exec(ctx, id, "cat", "/var/tmp/group-feature")
+	if err != nil || file.ExitCode == 0 {
+		return []report.Finding{report.Failf("grouped lifecycle rejection applied a skipped file: %v", err)}
+	}
+	return nil
 }
 
 func republishedGroupSelection(ctx context.Context, e *Env) []report.Finding {
