@@ -72,6 +72,21 @@ locally: BuildKit caches frontend resolution per reference and can keep
 dispatching the stale binary. `kit:dev` and `frontend:dev` exist for
 exactly this reason.
 
+## Branches
+
+Use semantic branch names in the form `<type>/<short-description>`,
+with a type from the commit conventions below and a lowercase,
+hyphen-separated description of the change. Examples:
+`fix/resolver-cancellation`, `feat/kit-inspection`, and
+`docs/branch-naming`.
+
+Do not include AI tool, model, agent, or harness identifiers in branch
+names: prefixes such as `codex/`, `claude/`, or `cursor/` expose local
+tooling in repository history and pull requests. This convention
+overrides tool-generated branch naming defaults. If a tool creates a
+branch with such a name, rename it before pushing or opening a pull
+request.
+
 ## Commits
 
 Commit subjects follow

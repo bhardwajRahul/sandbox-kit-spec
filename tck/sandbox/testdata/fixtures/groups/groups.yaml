@@ -1,0 +1,27 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+capabilities:
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      startup:
+        - command: "printf base > /var/tmp/group-order"
+  - group:
+      name: Feature
+      optional: true
+      capabilities:
+        - type: com.docker.sandbox/volume@1
+          config: {path: /var/tmp/group-volume}
+        - type: com.docker.sandbox/lifecycle@1
+          config:
+            files:
+              - {path: /var/tmp/group-feature, content: selected}
+            startup:
+              - command: "printf ',feature' >> /var/tmp/group-order"
+  - group:
+      name: Feature
+      capabilities:
+        - type: com.docker.sandbox/lifecycle@1
+          config:
+            startup:
+              - command: "printf ',independent' >> /var/tmp/group-order"

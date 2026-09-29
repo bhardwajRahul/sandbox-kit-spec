@@ -23,6 +23,33 @@ capabilities:
       contentFile: ./docs/${{ kit.args.file }}
 `
 
+const groupedGuidanceDescriptor = `schemaVersion: "3"
+kind: mixin
+args:
+  file:
+    default: kit.yaml
+    buildArg: GUIDANCE_FILE
+capabilities:
+  - group:
+      optional: true
+      capabilities:
+        - type: com.docker.sandbox/agent-context@1
+          config:
+            contentFile: ./docs/${{ kit.args.file }}
+`
+
+func TestBuildAllowsReservedBasenamesInGroupedGuidance(t *testing.T) {
+	for _, file := range []string{"kit.yaml", "kit.dockerfile"} {
+		t.Run(file, func(t *testing.T) {
+			c := newGuidanceClient(groupedGuidanceDescriptor, map[string]string{"build-arg:file": file})
+			c.files["docs/"+file] = []byte("Guidance body.")
+			_, err := Build(t.Context(), c)
+			require.ErrorIs(t, err, errGuidanceContentBuild)
+			require.Equal(t, []string{"demo.yaml", "demo.dockerfile", "docs/" + file}, c.reads)
+		})
+	}
+}
+
 func TestBuildLoadsExpandedGuidance(t *testing.T) {
 	for _, tt := range []struct {
 		name string

@@ -12,7 +12,8 @@ workstation or manage one on the user's behalf. The Kit names neither a
 socket nor a particular key.
 
 - **Shape**: instance — one entry may name one or both phases; overlapping
-  phases in the same Kit are rejected.
+  phases in the same declaration block are rejected (ordinary top-level
+  entries or one capability group's members).
 - **Permission surface**: yes — the phase, and what the entry lets the
   agent sign in each phase.
 

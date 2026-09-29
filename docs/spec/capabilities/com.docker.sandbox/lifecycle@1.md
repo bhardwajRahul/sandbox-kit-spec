@@ -120,5 +120,7 @@ A conforming runtime:
 ## Composition
 
 Install and startup lists concatenate in dependency order across the set;
-files likewise. Two Kits writing the same file path is last-write-wins in
-composition order — authors SHOULD avoid shared paths. <!-- tck: lifecycle@1/shared-paths-avoided -->
+files likewise. Composition MUST reject duplicate file paths and multiple <!-- tck: lifecycle@1/shared-paths-avoided -->
+`interactive` declarations, including contributions from selected groups.
+Repeated hook commands remain separate hooks. Singleton arity applies per
+declaration block; selected contributions produce one effective entry.

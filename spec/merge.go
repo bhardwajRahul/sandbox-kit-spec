@@ -29,13 +29,12 @@ type MergeResult struct {
 	// Descriptor is the merged declaration set, under the derived kind.
 	Descriptor *Descriptor
 
-	// ContextSources are the agent-context bodies to concatenate into
-	// the merged entry's contentFile, in contribution order. Empty when
-	// no contribution declared any context content.
-	//
-	// The type is a singleton, so several contributors' guidance has to
-	// become one body; which file that is and who writes it belongs to
-	// whoever stages layers, not to the arithmetic here.
+	// ContextSources are agent-context bodies in contribution order. Empty
+	// when no contribution declared any context content. Sources with an
+	// empty Target are concatenated into the merged entry's contentFile.
+	// Each source with a Target must instead be staged separately at that
+	// path, preserving its conditional selection boundary. The caller owns
+	// reading and staging the bodies; this package only computes the paths.
 	ContextSources []ContextSource
 }
 
@@ -53,6 +52,9 @@ type ContextSource struct {
 
 	// Content is the inline body; empty when Path is set.
 	Content string
+
+	// Target is set when publication preserves a separately selectable body.
+	Target string
 }
 
 // MergeOptions carries what the merge cannot derive from the
@@ -72,13 +74,52 @@ type MergeOptions struct {
 // what several of the rules below mean by "first" and "last", and
 // deriving it needs the resolver, which does not belong here.
 //
-// What the merge computes is the same judgment a runtime makes when it
-// composes the same kits at create, moved to publish: the union of what
-// they ask for, reconciled where a capability type admits only one
-// entry. Where two contributions ask for incompatible things, the merge
-// fails rather than picking — the artifact would otherwise record a
-// policy neither author wrote.
+// Unconditional context bodies are concatenated at opts.ContextPath;
+// grouped publication stages each ContextSource at its separate Target.
+// Runtime consumers use Compose and retain the input contributions.
 func Merge(contributions []Contribution, opts MergeOptions) (*MergeResult, error) {
+	if contributionsHaveGroups(contributions) {
+		return preserveGroups(contributions, opts)
+	}
+	result, err := mergeDeclarations(contributions)
+	if err != nil {
+		return nil, err
+	}
+	if len(result.ContextSources) > 0 {
+		if opts.ContextPath == "" {
+			return nil, fmt.Errorf("merge: %d agent-context bodies to stage but no ContextPath to stage them at", len(result.ContextSources))
+		}
+		for i := range result.Descriptor.Capabilities {
+			c := &result.Descriptor.Capabilities[i]
+			if c.Type == CapabilityAgentContext {
+				c.Config["contentFile"] = opts.ContextPath
+			}
+		}
+	}
+	return result, nil
+}
+
+// Compose reconciles ordered, expanded contributions for runtime use.
+// It shares Merge's conflict and reconciliation rules, without staging
+// content for publication. Retain the input contributions alongside the
+// returned descriptor: capability handlers need the individual declarations
+// wherever composition would otherwise erase their provenance.
+// The caller resolves dependencies and validates inputs before calling;
+// Compose does not perform descriptor validation or registry IO.
+func Compose(contributions []Contribution) (*Descriptor, error) {
+	result, err := mergeDeclarations(contributions)
+	if err != nil {
+		return nil, err
+	}
+	// A reconciled entry can represent several Kits. Keep their sources in
+	// the input declarations and diagnostics, not on the effective request.
+	for i := range result.Descriptor.Capabilities {
+		result.Descriptor.Capabilities[i].Source = nil
+	}
+	return result.Descriptor, nil
+}
+
+func mergeDeclarations(contributions []Contribution) (*MergeResult, error) {
 	if len(contributions) == 0 {
 		return nil, fmt.Errorf("merge: no contributions")
 	}
@@ -100,7 +141,7 @@ func Merge(contributions []Contribution, opts MergeOptions) (*MergeResult, error
 	if err := mergeLicenses(contributions, out); err != nil {
 		return nil, err
 	}
-	capabilities, sources, err := mergeCapabilities(contributions, opts)
+	capabilities, sources, err := mergeCapabilities(contributions)
 	if err != nil {
 		return nil, err
 	}
@@ -354,20 +395,27 @@ func mergeLicenses(contributions []Contribution, out *Descriptor) error {
 // concatenate, and the types that describe the whole sandbox rather
 // than a grant to it — resources, agent-sessions — admit one author,
 // because two different answers cannot both be the sandbox's.
-func mergeCapabilities(contributions []Contribution, opts MergeOptions) ([]Capability, []ContextSource, error) {
+func mergeCapabilities(contributions []Contribution) ([]Capability, []ContextSource, error) {
 	m := &capabilityMerge{
 		byKey:    map[string]keyed{},
 		optional: map[string]bool{},
 	}
 	for _, c := range contributions {
-		for _, n := range c.Descriptor.Capabilities {
+		for i, n := range c.Descriptor.Capabilities {
+			if n.Group != nil {
+				return nil, nil, fmt.Errorf("compose: %s capabilities[%d]: select groups before composition", c.Reference, i)
+			}
+			reference := fmt.Sprintf("%s capabilities[%d]", c.Reference, i)
+			if n.Source != nil {
+				reference = fmt.Sprintf("%s (%s %s)", c.Reference, n.Source.Kit, n.Source.Path)
+			}
 			if n.Type == CapabilitySSHAgent {
 				var a SSHAgent
-				if err := decodeForMerge(c.Reference, n, &a); err != nil {
+				if err := decodeForMerge(reference, n, &a); err != nil {
 					return nil, nil, err
 				}
 				if len(a.Phase) == 0 {
-					return nil, nil, fmt.Errorf("merge: %s: ssh-agent phase is empty", c.Reference)
+					return nil, nil, fmt.Errorf("merge: %s: ssh-agent phase is empty", reference)
 				}
 				for _, phase := range a.Phase {
 					one := a
@@ -376,18 +424,21 @@ func mergeCapabilities(contributions []Contribution, opts MergeOptions) ([]Capab
 					if err != nil {
 						return nil, nil, err
 					}
-					if err := m.add(c.Reference, *entry); err != nil {
+					if err := m.add(reference, *entry); err != nil {
 						return nil, nil, err
 					}
 				}
 				continue
 			}
-			if err := m.add(c.Reference, n); err != nil {
+			if err := m.add(reference, n); err != nil {
 				return nil, nil, err
+			}
+			if n.Type == CapabilityAgentContext {
+				m.context[len(m.context)-1].contribution = c.Reference
 			}
 		}
 	}
-	return m.finish(opts)
+	return m.finish()
 }
 
 // decodeForMerge reads one entry's typed config, explaining the one
@@ -440,6 +491,7 @@ type capabilityMerge struct {
 
 type networkAsk struct {
 	reference string
+	name      string
 	v2        bool
 	policy    *PhasedNetworkV2
 	optional  bool
@@ -447,14 +499,18 @@ type networkAsk struct {
 
 type lifecycleAsk struct {
 	reference string
+	name      string
 	lifecycle *Lifecycle
 	optional  bool
 }
 
 type contextAsk struct {
 	reference string
-	context   *AgentContext
-	optional  bool
+	// Content lookup uses the consuming Kit, while diagnostics retain member paths.
+	contribution string
+	name         string
+	context      *AgentContext
+	optional     bool
 }
 
 func (m *capabilityMerge) add(reference string, n Capability) error {
@@ -466,6 +522,7 @@ func (m *capabilityMerge) add(reference string, n Capability) error {
 		}
 		m.network = append(m.network, networkAsk{
 			reference: reference,
+			name:      n.Name,
 			v2:        n.Type == CapabilityNetworkPolicyV2,
 			policy:    p,
 			optional:  n.Optional,
@@ -477,7 +534,7 @@ func (m *capabilityMerge) add(reference string, n Capability) error {
 		if err := decodeForMerge(reference, n, &l); err != nil {
 			return err
 		}
-		m.lifecycle = append(m.lifecycle, lifecycleAsk{reference: reference, lifecycle: &l, optional: n.Optional})
+		m.lifecycle = append(m.lifecycle, lifecycleAsk{reference: reference, name: n.Name, lifecycle: &l, optional: n.Optional})
 		return nil
 
 	case CapabilityAgentContext:
@@ -485,7 +542,7 @@ func (m *capabilityMerge) add(reference string, n Capability) error {
 		if err := decodeForMerge(reference, n, &a); err != nil {
 			return err
 		}
-		m.context = append(m.context, contextAsk{reference: reference, context: &a, optional: n.Optional})
+		m.context = append(m.context, contextAsk{reference: reference, name: n.Name, context: &a, optional: n.Optional})
 		return nil
 
 	case CapabilityResources:
@@ -545,6 +602,10 @@ func (m *capabilityMerge) add(reference string, n Capability) error {
 			prev.reference, reference, describeCapability(n))
 	}
 	// Identical asks collapse, and the stricter optionality wins.
+	if prev.capability.Name == "" {
+		prev.capability.Name = n.Name
+		m.byKey[key] = prev
+	}
 	if !n.Optional {
 		m.optional[key] = false
 	}
@@ -559,6 +620,9 @@ func mergeSole(slot **keyed, reference string, n Capability, label string) error
 		return nil
 	}
 	if sameRequest((*slot).capability, n) {
+		if (*slot).capability.Name == "" {
+			(*slot).capability.Name = n.Name
+		}
 		if !n.Optional {
 			(*slot).capability.Optional = false
 		}
@@ -682,7 +746,7 @@ func describeCapability(n Capability) string {
 	return n.Type
 }
 
-func (m *capabilityMerge) finish(opts MergeOptions) ([]Capability, []ContextSource, error) {
+func (m *capabilityMerge) finish() ([]Capability, []ContextSource, error) {
 	var out []Capability
 
 	if network, err := m.mergedNetwork(); err != nil {
@@ -710,7 +774,7 @@ func (m *capabilityMerge) finish(opts MergeOptions) ([]Capability, []ContextSour
 		out = append(out, *lifecycle)
 	}
 
-	context, sources, err := m.mergedContext(opts)
+	context, sources, err := m.mergedContext()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -736,11 +800,15 @@ func (m *capabilityMerge) mergedNetwork() (*Capability, error) {
 		return nil, nil
 	}
 	v2 := false
+	name := ""
 	// Required wins, as it does for every other merged entry: optional
 	// says its asker degrades without the grant, and one that does not
 	// degrade decides for the whole.
 	optional := true
 	for _, ask := range m.network {
+		if name == "" {
+			name = ask.name
+		}
 		if ask.v2 {
 			v2 = true
 		}
@@ -773,6 +841,7 @@ func (m *capabilityMerge) mergedNetwork() (*Capability, error) {
 		return nil, err
 	}
 	c.Optional = optional
+	c.Name = name
 	return c, nil
 }
 
@@ -892,12 +961,27 @@ func (m *capabilityMerge) mergedLifecycle() (*Capability, error) {
 	}
 	merged := &Lifecycle{}
 	interactiveFrom := ""
+	name := ""
 	optional := true
+	seenFile := map[string]string{}
 	for _, ask := range m.lifecycle {
+		if name == "" {
+			name = ask.name
+		}
 		merged.Install = append(merged.Install, ask.lifecycle.Install...)
 		merged.Startup = append(merged.Startup, ask.lifecycle.Startup...)
+		for _, f := range ask.lifecycle.Files {
+			if ContainsArgRef(f.Path) {
+				return nil, fmt.Errorf("merge: %s: lifecycle file path %q resolves at create; pin the path", ask.reference, f.Path)
+			}
+			clean := path.Clean(f.Path)
+			if prev, dup := seenFile[clean]; dup {
+				return nil, fmt.Errorf("merge: %s and %s: %s is written by two contributions; one file has one author", prev, ask.reference, clean)
+			}
+			seenFile[clean] = ask.reference
+		}
 		merged.Files = append(merged.Files, ask.lifecycle.Files...)
-		if len(ask.lifecycle.Interactive) > 0 {
+		if ask.lifecycle.Interactive != nil {
 			if interactiveFrom != "" {
 				return nil, fmt.Errorf("merge: %s and %s both declare a lifecycle interactive tail; it replaces the launch command's arguments, so it has one author",
 					interactiveFrom, ask.reference)
@@ -909,53 +993,33 @@ func (m *capabilityMerge) mergedLifecycle() (*Capability, error) {
 			optional = false
 		}
 	}
-	// Two kits writing the same path would each believe they own the
-	// file; the runtime writes them in order and the later one wins,
-	// which is a silent loss of whatever the earlier one configured.
-	//
-	// Judged on the cleaned path, because lifecycle validation asks
-	// only that a path be absolute: /etc/tool.conf and /etc/./tool.conf
-	// are two spellings of one file, and comparing them verbatim would
-	// let the second writer through.
-	seenFile := map[string]string{}
-	for _, f := range merged.Files {
-		// A path still naming an arg cannot be compared against
-		// another: two contributions writing ${{ kit.args.a }} and
-		// ${{ kit.args.b }} look different here and can resolve to
-		// one file at create, where the contributions are gone and
-		// nothing re-checks. The one-writer rule cannot be enforced
-		// on it, so the set is refused rather than published unjudged.
-		if ContainsArgRef(f.Path) {
-			return nil, fmt.Errorf("merge: a lifecycle file is written to %q, which resolves at create; two contributions could then write one path with nothing left to notice, so pin the path in the kit that declares it", f.Path)
-		}
-		clean := path.Clean(f.Path)
-		if prev, dup := seenFile[clean]; dup {
-			return nil, fmt.Errorf("merge: %s is written by two contributions (as %s and %s); one file has one author", clean, prev, f.Path)
-		}
-		seenFile[clean] = f.Path
-	}
 
 	c, err := capabilityFrom(CapabilityLifecycle, merged)
 	if err != nil {
 		return nil, err
 	}
 	c.Optional = optional
+	c.Name = name
 	return c, nil
 }
 
 // mergedContext folds the contributors' agent-context into one entry:
 // the profile filename from whichever contribution owns it, and every
-// body collected for the caller to stage as one file.
-func (m *capabilityMerge) mergedContext(opts MergeOptions) (*Capability, []ContextSource, error) {
+// body collected separately for publishers to stage.
+func (m *capabilityMerge) mergedContext() (*Capability, []ContextSource, error) {
 	if len(m.context) == 0 {
 		return nil, nil, nil
 	}
 
 	merged := &AgentContext{}
 	filenameFrom := ""
+	name := ""
 	optional := true
 	var sources []ContextSource
 	for _, ask := range m.context {
+		if name == "" {
+			name = ask.name
+		}
 		if ask.context.Filename != "" {
 			// Only a workload states the profile, and a composition has
 			// one workload, so two is a set that was mis-assembled
@@ -969,22 +1033,16 @@ func (m *capabilityMerge) mergedContext(opts MergeOptions) (*Capability, []Conte
 		}
 		switch {
 		case ask.context.ContentFile != "":
-			sources = append(sources, ContextSource{Reference: ask.reference, Path: ask.context.ContentFile})
+			sources = append(sources, ContextSource{Reference: ask.contribution, Path: ask.context.ContentFile})
 		case ask.context.Content != "":
-			sources = append(sources, ContextSource{Reference: ask.reference, Content: ask.context.Content})
+			sources = append(sources, ContextSource{Reference: ask.contribution, Content: ask.context.Content})
 		}
 		if !ask.optional {
 			optional = false
 		}
 	}
 
-	if len(sources) > 0 {
-		if opts.ContextPath == "" {
-			return nil, nil, fmt.Errorf("merge: %d agent-context bodies to stage but no ContextPath to stage them at", len(sources))
-		}
-		merged.ContentFile = opts.ContextPath
-	}
-	if merged.Filename == "" && merged.ContentFile == "" {
+	if merged.Filename == "" && len(sources) == 0 {
 		// Every contribution declared the type and stated nothing in
 		// it; the entry would ask for nothing.
 		return nil, nil, nil
@@ -995,6 +1053,7 @@ func (m *capabilityMerge) mergedContext(opts MergeOptions) (*Capability, []Conte
 		return nil, nil, err
 	}
 	c.Optional = optional
+	c.Name = name
 	return c, sources, nil
 }
 

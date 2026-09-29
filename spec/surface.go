@@ -74,13 +74,15 @@ type Surface struct {
 }
 
 // SurfaceOf projects a descriptor's needs onto its permission surface.
+// Supply the selected, merged descriptor for enforcement. On an unselected
+// declaration this conservatively inventories all members, without group grants.
 // Well-known types decode into the direction-aware fields the gate diffs
 // with per-category semantics; every other type — and any known entry
 // whose config fails to decode — lands in Services as type + config
 // digest, so nothing a kit requests can escape the surface.
 func SurfaceOf(d *Descriptor) Surface {
 	var s Surface
-	for _, n := range d.Capabilities {
+	for _, n := range DeclaredCapabilities(d.Capabilities) {
 		switch n.Type {
 		case CapabilityNetworkPolicy, CapabilityNetworkPolicyV2:
 			p, err := NetworkPolicyV2Of([]Capability{n})
@@ -89,16 +91,16 @@ func SurfaceOf(d *Descriptor) Surface {
 				continue
 			}
 			if r := p.Install; r != nil {
-				s.NetworkInstallAllow = connectionHosts(r.Allow)
-				s.NetworkInstallDeny = connectionHosts(r.Deny)
-				s.NetworkInstallHTTPAllow = normalized(entrySurface(r.Allow))
-				s.NetworkInstallHTTPDeny = normalized(entrySurface(r.Deny))
+				s.NetworkInstallAllow = append(s.NetworkInstallAllow, connectionHosts(r.Allow)...)
+				s.NetworkInstallDeny = append(s.NetworkInstallDeny, connectionHosts(r.Deny)...)
+				s.NetworkInstallHTTPAllow = append(s.NetworkInstallHTTPAllow, entrySurface(r.Allow)...)
+				s.NetworkInstallHTTPDeny = append(s.NetworkInstallHTTPDeny, entrySurface(r.Deny)...)
 			}
 			if r := p.Runtime; r != nil {
-				s.NetworkRuntimeAllow = connectionHosts(r.Allow)
-				s.NetworkRuntimeDeny = connectionHosts(r.Deny)
-				s.NetworkRuntimeHTTPAllow = normalized(entrySurface(r.Allow))
-				s.NetworkRuntimeHTTPDeny = normalized(entrySurface(r.Deny))
+				s.NetworkRuntimeAllow = append(s.NetworkRuntimeAllow, connectionHosts(r.Allow)...)
+				s.NetworkRuntimeDeny = append(s.NetworkRuntimeDeny, connectionHosts(r.Deny)...)
+				s.NetworkRuntimeHTTPAllow = append(s.NetworkRuntimeHTTPAllow, entrySurface(r.Allow)...)
+				s.NetworkRuntimeHTTPDeny = append(s.NetworkRuntimeHTTPDeny, entrySurface(r.Deny)...)
 			}
 		case CapabilityCredential:
 			var c Credential
@@ -173,6 +175,14 @@ func SurfaceOf(d *Descriptor) Surface {
 			s.Services = append(s.Services, capabilitySurfaceEntry(n))
 		}
 	}
+	s.NetworkInstallAllow = normalized(s.NetworkInstallAllow)
+	s.NetworkInstallDeny = normalized(s.NetworkInstallDeny)
+	s.NetworkInstallHTTPAllow = normalized(s.NetworkInstallHTTPAllow)
+	s.NetworkInstallHTTPDeny = normalized(s.NetworkInstallHTTPDeny)
+	s.NetworkRuntimeAllow = normalized(s.NetworkRuntimeAllow)
+	s.NetworkRuntimeDeny = normalized(s.NetworkRuntimeDeny)
+	s.NetworkRuntimeHTTPAllow = normalized(s.NetworkRuntimeHTTPAllow)
+	s.NetworkRuntimeHTTPDeny = normalized(s.NetworkRuntimeHTTPDeny)
 	s.CredentialsInstall = normalized(s.CredentialsInstall)
 	s.CredentialsRuntime = normalized(s.CredentialsRuntime)
 	s.SSHAgent = normalized(s.SSHAgent)

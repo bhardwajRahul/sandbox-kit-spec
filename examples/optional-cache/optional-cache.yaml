@@ -1,0 +1,24 @@
+# syntax=docker/sandbox-kit:3
+# yaml-language-server: $schema=../../schema/kit.schema.json
+schemaVersion: "3"
+kind: mixin
+displayName: Optional pip cache
+description: Configure pip's cache only when persistent storage is available
+capabilities:
+  - group:
+      name: Persistent pip cache
+      description: Keep downloads across sandbox restarts
+      optional: true
+      capabilities:
+        - type: com.docker.sandbox/volume@1
+          config:
+            path: /home/agent/.cache/pip
+            size: 2g
+        - type: com.docker.sandbox/lifecycle@1
+          config:
+            files:
+              - path: /home/agent/.config/pip/pip.conf
+                overwrite: false
+                content: |
+                  [global]
+                  cache-dir = /home/agent/.cache/pip

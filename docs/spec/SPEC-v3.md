@@ -38,12 +38,14 @@ There are exactly two kinds of Kit, distinguished by the `kind:` field:
 | **`workload`** | A root filesystem; the image config carries entrypoint, cmd, env, user, workdir. | Exactly one |
 | **`mixin`** | An overlay that lands on a workload's filesystem. May be declaration-only (a single descriptor-file layer). | Zero or more |
 
-A descriptor deliberately carries **no name, no image reference, and no
-runtime config**: identity is the reference a Kit is consumed by, matchable
-identity is what [`provides`](#5-provides-requires-integrates-conflicts)
-states, and runtime config lives in the image config where images already
-carry it. A `version:` field exists only as a fallback for consumption
-references that carry no version of their own ([§4](#4-top-level-fields)).
+A descriptor deliberately carries **no top-level identity name, image
+reference, or runtime config**: identity is the reference a Kit is consumed
+by, matchable identity is what
+[`provides`](#5-provides-requires-integrates-conflicts) states, and runtime
+config lives in the image config where images already carry it.
+Capability-entry names are display labels, not Kit identity. A `version:`
+field exists only as a fallback for consumption references that carry no
+version of their own ([§4](#4-top-level-fields)).
 
 ### 1.1 Descriptor and content
 
@@ -477,6 +479,7 @@ whole ask through one mechanism or refuses the parts it does not know.
 ```yaml
 capabilities:
   - type: com.docker.sandbox/credential@1    # REQUIRED: <namespace>/<name>@<version>
+    name: GitHub access                      # optional display label
     optional: true                           # default false
     description: GitHub API access           # shown wherever the request is listed
     config:                                  # type-specific payload
@@ -487,13 +490,34 @@ capabilities:
 | Field | Type | Rules |
 |---|---|---|
 | `type` | string | REQUIRED. `<namespace>/<name>@<version>`: dotted lowercase namespace, hyphenated lowercase name, integer config-schema version. The version moves when the type's config schema does — capability types evolve without a descriptor schema-major bump. |
+| `name` | string | optional. Human-readable display label; spaces and duplicate names are allowed. |
 | `optional` | bool | The Kit degrades gracefully without it: an unknown or unprovidable optional entry is skipped and recorded; a required one fails resolution closed. |
 | `config` | map | Type-specific request payload. Strictly decoded for well-known types (unknown config keys are errors); carried opaquely for unknown types. |
 | `description` | string | optional. |
+| `source` | object | optional diagnostic provenance: original `kit` and field `path`; not a trust input. |
+
+A capability's `name` labels the request; `description` explains it.
+Neither is an identifier. The name is separate from names inside config,
+such as `credential@1`'s `apiKey.name`, which names an environment variable.
+A runtime MAY use the label in selection UIs and derive one from the type
+and instance key when the label is absent or empty.
+
+Names **MUST NOT** affect capability identity, arity, merge compatibility, <!-- tck: SPEC-v3 §7/name-display-only -->
+permission surface, or execution behavior. Changing only a name does not
+widen permissions.
+
+Names **MUST NOT** be the sole identifier in selection <!-- tck: SPEC-v3 §7/name-not-identity -->
+records or diagnostics; the source Kit and descriptor location distinguish
+requests with the same label.
+
+A stated name **MUST** be a string and survive descriptor decoding and <!-- tck: SPEC-v3 §7/name-round-trip -->
+serialization. An empty string is equivalent to an omitted label.
 
 ### 7.1 Arity
 
-**Policy-shaped types are singletons** — at most one entry each:
+**Policy-shaped types are singletons** — at most one entry each per
+declaration block (ordinary top-level entries or one group), and in the
+effective merged descriptor:
 `network-policy@1`, `network-policy@2`, `resources@1`, `privileged@1`,
 `kit-registry@1`, `agent-sessions@1`, `lifecycle@1`, `agent-context@1`,
 `sbx@1`, `long-running@1`.
@@ -511,6 +535,91 @@ their own key: `credential@1` on (service, phase), `volume@1` on path,
 entry.
 
 Exact-duplicate entries of any type are rejected.
+
+### 7.1.1 Capability groups
+
+A `capabilities` item is an ordinary request or a `group` containing
+ordinary requests. Groups couple one feature's requests without adding
+a capability type. Names and descriptions remain display metadata.
+
+```yaml
+capabilities:
+  - group:
+      name: Shared skills
+      optional: true
+      capabilities:
+        - type: com.docker.sandbox/agent-skills@1
+          config: {path: /home/agent/.local/skills}
+        - type: com.docker.sandbox/lifecycle@1
+          config:
+            startup:
+              - command: [sh, -c, 'echo skills available']
+```
+
+The grammar MUST reject mixed ordinary/group items, empty or nested <!-- tck: SPEC-v3 §7.1.1/group-grammar -->
+groups, and member-level `optional`, even as false.
+The group's `optional` defaults to false. Required and one-member groups
+are valid. Singleton and duplicate constraints apply separately to the
+ordinary top-level entries and to each group's members.
+
+All declarations MUST validate before selection, including skipped <!-- tck: SPEC-v3 §7.1.1/validate-declarations -->
+groups and every member.
+
+All declarations MUST validate again after create-argument expansion, <!-- tck: SPEC-v3 §7.1.1/validate-expanded-declarations -->
+including members of groups that selection would skip. Cross-entry
+constraints dependent on selection, including credential ownership and
+injection domains, are checked on the selected contributions and merged
+result. Selection does not bypass validation.
+
+The runtime supplies a selection function over expanded ordinary
+entries. A static list of supported types is sufficient; host policy,
+credential availability, and approval can further constrain the answer.
+
+The selection API MUST include a group only when every member is <!-- tck: SPEC-v3 §7.1.1/atomic-selection -->
+accepted. Otherwise it skips and records an optional group in full, or
+refuses a required group, identifying rejected members. Ordinary entries
+follow the same required/optional rule.
+
+Members MUST NOT be applied before selection finishes. <!-- tck: SPEC-v3 §7.1.1/selection-before-application -->
+
+The selection API MUST flatten accepted constructs at their declaration <!-- tck: SPEC-v3 §7.1.1/order -->
+positions, preserving member order and existing Kit dependency order.
+Only selected contributions merge; groups never merge by name. Lifecycle
+hooks concatenate without deduplicating repeated commands. Conflicting
+file paths or multiple interactive declarations are composition errors.
+
+Selected composition conflicts MUST fail; optional <!-- tck: SPEC-v3 §7.1.1/conflicts -->
+groups cannot be silently dropped to repair them. The effective
+permission surface contains only selected, merged contributions; groups
+add no grants of their own.
+
+Conflict refusal MUST occur before any selected contribution is applied. <!-- tck: SPEC-v3 §7.1.1/conflicts-before-application -->
+
+Publishing MUST preserve conditional boundaries, relative declaration <!-- tck: SPEC-v3 §7.1.1/publishing -->
+order, referenced content, and source attribution. Publishing does not
+select against build-host availability. A publisher may represent an
+ordinary contribution as a one-member group with the same optionality
+to preserve its position beside conditional contributions. An item's
+optional `source` object records its original `kit` and field `path`;
+this is diagnostic metadata, never an authority or permission input.
+The consumer's actual artifact reference remains the source of trust.
+
+Selection records and composition diagnostics MUST retain original <!-- tck: SPEC-v3 §7.1.1/provenance -->
+item/member locations and source Kits; labels alone are not identities.
+The resolution APIs return selected per-Kit declarations separately
+from original declarations and selection records. Image assembly does
+not select again or omit Kit layers. Argument environment exports are
+independent of selection.
+
+The runtime MUST retain selection and skip records for the sandbox's <!-- tck: SPEC-v3 §7.1.1/lifetime -->
+lifetime, use the same selection on restart, and select afresh only on
+recreation. Loss of a selected resource follows that capability's own
+contract, not group reselection.
+
+The runtime MUST NOT apply skipped files or hooks, or reinterpret a <!-- tck: SPEC-v3 §7.1.1/execution -->
+selected hook's execution failure as an optional-group rejection.
+Selection atomicity promises neither hook rollback nor cleanup of files
+already present on reused volumes.
 
 ### 7.2 Well-known types
 
@@ -740,6 +849,7 @@ error. In that order they reconcile into one descriptor:
 | `agent-context@1` | At most one of them states `filename`. The bodies concatenate into one staged file, since the type is a singleton and a sandbox surfaces one profile. |
 | Config-less and unknown types | Presence is the union; unknown types deduplicate on type plus config, as the permission surface does. |
 | `optional` | An entry any of them requires is required in the merged kit: `optional` says its asker degrades without it, and one that does not degrade decides for the set. |
+| Capability `name` | When contributions merge into one entry, the first nonempty name in contribution order **MUST** be retained. Labels do not prevent merging. | <!-- tck: SPEC-v3 §9.5/capability-name-first -->
 
 A merged descriptor **MUST** be identical across every platform a <!-- tck: SPEC-v3 §9.5/declarations-platform-independent -->
 multi-platform set builds for: the annotation is written once per
@@ -880,7 +990,7 @@ locked set and an assembler emits an ordinary image — config synthesized
 from the merged declarations, layers concatenated in dependency order —
 identified by the lock, which is what makes recreate exact. Local handles,
 state keying, and lock formats are runtime concerns outside this
-specification; the artifact carries no name on purpose.
+specification; the descriptor carries no top-level identity name on purpose.
 
 ---
 
@@ -920,9 +1030,23 @@ The spec library enforces, beyond per-field rules stated above:
   derived `workload` or `mixin`, never `set`; every listed Kit carries
   a digest.
 
-Errors carry the offending element's dotted path with source positions
-computed against the authored bytes, so build failures point at lines the
-author can edit.
+Validation collects independent failures in a `ValidationErrors`
+collection, preserving warnings alongside errors. A failed config decode
+skips that entry's value checks while other entries are still judged;
+strict descriptor decoding remains a separate gate.
+
+Errors carry the offending element's dotted path. `WithSource` adds the
+filename, line, and column computed against the authored bytes, followed
+by the source line and a caret at the offending value. Multiple errors
+are separated by a blank line. A missing field points at its nearest
+containing element. Callers that render source themselves, such as the
+BuildKit frontend, attach source positions to the plain errors instead
+of using `WithSource`, so each error has one source renderer. The error
+collection preserves validation order, sorting map keys so repeated runs
+produce the same diagnostics. Registry fetches, create-phase expansion,
+and conformance findings use the excerpt formatter, labeling registry
+content by its Kit reference or descriptor annotation rather than a local
+filename.
 
 Runtimes revalidate published descriptors on load (`ValidatePublished`), so
 a hand-crafted annotation that never went through the frontend cannot

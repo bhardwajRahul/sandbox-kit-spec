@@ -3,9 +3,11 @@ package spec
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/url"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -40,34 +42,24 @@ var (
 )
 
 // Validate checks every rule the descriptor grammar states. It returns
-// non-fatal warnings alongside the first fatal error; a nil error with
+// non-fatal warnings alongside all independent errors; a nil error with
 // warnings means the descriptor is usable but the author should look.
-// Fatal errors carry the offending element's dotted path (FieldError), so
-// consumers with the raw bytes in hand can point at source lines.
+// Errors are returned as ValidationErrors. Each FieldError carries the
+// offending element's dotted path; WithSource adds source locations when
+// the caller has the raw bytes.
 func Validate(d *Descriptor) (warnings []string, err error) {
+	var errs ValidationErrors
 	if d.Kind != KindWorkload && d.Kind != KindMixin && d.Kind != KindSet {
-		return nil, fieldErrorf("kind", "kind must be %q, %q, or %q, got %q", KindWorkload, KindMixin, KindSet, d.Kind)
+		errs.add(fieldErrorf("kind", "kind must be %q, %q, or %q, got %q", KindWorkload, KindMixin, KindSet, d.Kind))
 	}
 
-	if err := validateIconURL(d.IconURL); err != nil {
-		return nil, err
-	}
-	if err := validateCapabilityNames(d); err != nil {
-		return nil, err
-	}
-	if err := validateCapabilityEntries(d); err != nil {
-		return nil, err
-	}
-	if err := validateArgs(d.Args); err != nil {
-		return nil, err
-	}
-	if err := validateRecipe(d); err != nil {
-		return nil, err
-	}
-	if err := validateKits(d); err != nil {
-		return nil, err
-	}
-	return warnings, nil
+	errs.add(validateIconURL(d.IconURL))
+	errs.add(validateCapabilityNames(d))
+	errs.add(validateCapabilityEntries(d))
+	errs.add(validateArgs(d.Args))
+	errs.add(validateRecipe(d))
+	errs.add(validateKits(d))
+	return warnings, errs.err()
 }
 
 // validateIconURL holds the icon to an absolute https URL. Every other
@@ -95,27 +87,28 @@ func validateIconURL(icon string) error {
 // context — relative, and not escaping the descriptor's directory, which
 // is that context's root.
 func validateRecipe(d *Descriptor) error {
+	var errs ValidationErrors
 	if d.Build != "" && d.Dockerfile != "" {
-		return fieldErrorf("dockerfile", "build: and dockerfile: are both declared; a kit's content recipe lives in exactly one place")
+		errs.add(fieldErrorf("dockerfile", "build: and dockerfile: are both declared; a kit's content recipe lives in exactly one place"))
 	}
 	// A set's content is the kits it lists, so a recipe beside them is a
 	// second answer to what the layers are, not an addition to them.
 	if len(d.Kits) > 0 {
 		if d.Build != "" {
-			return fieldErrorf("build", "kits: and an inline build: block are both declared; a set's content is the kits it lists, so it declares no recipe")
+			errs.add(fieldErrorf("build", "kits: and an inline build: block are both declared; a set's content is the kits it lists, so it declares no recipe"))
 		}
 		if d.Dockerfile != "" {
-			return fieldErrorf("dockerfile", "kits: and dockerfile: are both declared; a set's content is the kits it lists, so it declares no recipe")
+			errs.add(fieldErrorf("dockerfile", "kits: and dockerfile: are both declared; a set's content is the kits it lists, so it declares no recipe"))
 		}
 	}
 	if d.Dockerfile == "" {
-		return nil
+		return errs.err()
 	}
 	cleaned := path.Clean(d.Dockerfile)
 	if path.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return fieldErrorf("dockerfile", "dockerfile: %q must be a relative path inside the descriptor's directory — that directory is the build's dockerfile context, so nothing outside it can be read", d.Dockerfile)
+		errs.add(fieldErrorf("dockerfile", "dockerfile: %q must be a relative path inside the descriptor's directory — that directory is the build's dockerfile context, so nothing outside it can be read", d.Dockerfile))
 	}
-	return nil
+	return errs.err()
 }
 
 // manifestDigest is the one digest spelling a listed kit may be pinned
@@ -133,28 +126,29 @@ var manifestDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 // reproduced from someone's working copy is not shareable, which is the
 // whole point of writing one.
 func validateKits(d *Descriptor) error {
+	var errs ValidationErrors
 	if d.Kind == KindSet && len(d.Kits) == 0 {
-		return fieldErrorf("kits", "kind: %s lists no kits; a set's content is the kits it lists", KindSet)
+		errs.add(fieldErrorf("kits", "kind: %s lists no kits; a set's content is the kits it lists", KindSet))
 	}
 	// Written and left empty, under any kind. Absent means a kit with
 	// an ordinary recipe; present and empty means an author who meant
 	// to list something, and reading it as absence would publish a
 	// declaration-only kit where content was intended. The schema
 	// refuses it through minItems, so the two agree.
-	if d.Kits != nil && len(d.Kits) == 0 {
-		return fieldErrorf("kits", "kits: is present but empty; list the kits this one is merged from, or drop the field")
+	if d.Kind != KindSet && d.Kits != nil && len(d.Kits) == 0 {
+		errs.add(fieldErrorf("kits", "kits: is present but empty; list the kits this one is merged from, or drop the field"))
 	}
 	seen := map[string]int{}
 	for i, k := range d.Kits {
 		at := fmt.Sprintf("kits[%d]", i)
 		if strings.TrimSpace(k.Ref) == "" {
-			return fieldErrorf(at+".ref", "kits[%d]: ref is required — the reference this kit is consumed by", i)
+			errs.add(fieldErrorf(at+".ref", "kits[%d]: ref is required — the reference this kit is consumed by", i))
 		}
 		// The digest is judged whatever the reference looks like: it is
 		// a pin the author wrote literally, and nothing an arg resolves
 		// to can make a malformed one well-formed.
 		if k.Digest != "" && !manifestDigest.MatchString(k.Digest) {
-			return fieldErrorf(at+".digest", "kits[%d]: digest %q is not a sha256 manifest digest", i, k.Digest)
+			errs.add(fieldErrorf(at+".digest", "kits[%d]: digest %q is not a sha256 manifest digest", i, k.Digest))
 		}
 		// Only the reference grammar defers, and only for an arg that
 		// resolves in time to be of use. A set's kits are resolved
@@ -172,23 +166,24 @@ func validateKits(d *Descriptor) error {
 		if ContainsArgRef(k.Ref) {
 			for _, name := range ReferencedArgs([]byte(k.Ref)) {
 				if decl, declared := d.Args[name]; declared && decl.BuildArg == "" {
-					return fieldErrorf(at+".ref", "kits[%d]: ref names %q, which resolves at create, but a set's kits are resolved at build; declare it with buildArg:, or write the reference out", i, name)
+					errs.add(fieldErrorf(at+".ref", "kits[%d]: ref names %q, which resolves at create, but a set's kits are resolved at build; declare it with buildArg:, or write the reference out", i, name))
 				}
 			}
-		} else if err := validateKitReference(at, i, k); err != nil {
-			return err
+		} else if strings.TrimSpace(k.Ref) != "" {
+			errs.add(validateKitReference(at, i, k))
 		}
 		if prev, dup := seen[k.Ref]; dup {
-			return fieldErrorf(at+".ref", "kits[%d]: %q already listed at kits[%d]", i, k.Ref, prev)
+			errs.add(fieldErrorf(at+".ref", "kits[%d]: %q already listed at kits[%d]", i, k.Ref, prev))
+		} else if strings.TrimSpace(k.Ref) != "" {
+			seen[k.Ref] = i
 		}
-		seen[k.Ref] = i
-		for name := range k.Args {
+		for _, name := range slices.Sorted(maps.Keys(k.Args)) {
 			if !envVarName.MatchString(name) {
-				return fieldErrorf(at+".args", "kits[%d]: %q is not a valid arg name", i, name)
+				errs.add(fieldErrorf(at+".args", "kits[%d]: %q is not a valid arg name", i, name))
 			}
 		}
 	}
-	return nil
+	return errs.err()
 }
 
 // validateKitReference holds one listed kit's reference to the shape a
@@ -232,32 +227,42 @@ func validateKitReference(at string, i int, k Kit) error {
 // size budget, and that every ${{ kit.args.* }} reference names a declared
 // arg.
 func ValidateRaw(raw []byte, d *Descriptor) (warnings []string, err error) {
+	var errs ValidationErrors
 	warnings, err = Validate(d)
-	if err != nil {
-		return nil, err
-	}
+	errs.add(err)
 
 	if len(raw) > SizeErrorBytes {
-		return nil, fmt.Errorf("descriptor is %d bytes, over the %d byte budget; move bulk into layers", len(raw), SizeErrorBytes)
+		errs.add(fieldErrorf("", "descriptor is %d bytes, over the %d byte budget; move bulk into layers", len(raw), SizeErrorBytes))
 	}
 	if len(raw) > SizeWarnBytes {
 		warnings = append(warnings, fmt.Sprintf("descriptor is %d bytes; the advisory budget is %d", len(raw), SizeWarnBytes))
 	}
 
+	var references map[string][]string
 	for _, name := range ReferencedArgs(raw) {
 		if _, ok := d.Args[name]; !ok {
-			return nil, fmt.Errorf("descriptor references ${{ kit.args.%s }} but declares no arg %q", name, name)
+			if references == nil {
+				references = argReferencePaths(raw)
+			}
+			paths := references[name]
+			if len(paths) == 0 {
+				paths = []string{""}
+			}
+			for _, at := range paths {
+				errs.add(fieldErrorf(at, "descriptor references ${{ kit.args.%s }} but declares no arg %q", name, name))
+			}
 		}
 	}
-	return warnings, nil
+	return warnings, errs.err()
 }
 
 func validateCapabilityNames(d *Descriptor) error {
+	var errs ValidationErrors
 	// An authored version may reference a build-phase arg, expanded into
 	// the published descriptor; ValidatePublished requires the literal.
 	if d.Version != "" && !argRef.MatchString(d.Version) {
 		if _, err := parseVersion(d.Version); err != nil {
-			return fieldErrorf("version", "version: %v", err)
+			errs.add(fieldErrorf("version", "version: %v", err))
 		}
 	}
 	for i, s := range d.Provides {
@@ -269,7 +274,7 @@ func validateCapabilityNames(d *Descriptor) error {
 			continue
 		}
 		if _, err := ParseProvide(s); err != nil {
-			return fieldErrorf(fmt.Sprintf("provides[%d]", i), "%v", err)
+			errs.add(fieldErrorf(fmt.Sprintf("provides[%d]", i), "%v", err))
 		}
 	}
 	// Requires, integrates, and conflicts stay literal in both forms: they
@@ -277,54 +282,64 @@ func validateCapabilityNames(d *Descriptor) error {
 	// make the judgment depend on caller input.
 	for i, s := range d.Requires {
 		if argRef.MatchString(s) {
-			return fieldErrorf(fmt.Sprintf("requires[%d]", i), "requires entry %q: arg references are not allowed in requires", s)
+			errs.add(fieldErrorf(fmt.Sprintf("requires[%d]", i), "requires entry %q: arg references are not allowed in requires", s))
+			continue
 		}
 		if _, err := ParseRequire(s); err != nil {
-			return fieldErrorf(fmt.Sprintf("requires[%d]", i), "%v", err)
+			errs.add(fieldErrorf(fmt.Sprintf("requires[%d]", i), "%v", err))
 		}
 	}
 	for i, s := range d.Integrates {
 		if argRef.MatchString(s) {
-			return fieldErrorf(fmt.Sprintf("integrates[%d]", i), "integrates entry %q: arg references are not allowed in integrates", s)
+			errs.add(fieldErrorf(fmt.Sprintf("integrates[%d]", i), "integrates entry %q: arg references are not allowed in integrates", s))
+			continue
 		}
 		if _, err := ParseRequire(s); err != nil {
-			return fieldErrorf(fmt.Sprintf("integrates[%d]", i), "%v", err)
+			errs.add(fieldErrorf(fmt.Sprintf("integrates[%d]", i), "%v", err))
 		}
 	}
 	for i, s := range d.Conflicts {
 		if argRef.MatchString(s) {
-			return fieldErrorf(fmt.Sprintf("conflicts[%d]", i), "conflicts entry %q: arg references are not allowed in conflicts", s)
+			errs.add(fieldErrorf(fmt.Sprintf("conflicts[%d]", i), "conflicts entry %q: arg references are not allowed in conflicts", s))
+			continue
 		}
 		if err := capabilityNameError(s); err != nil {
-			return fieldErrorf(fmt.Sprintf("conflicts[%d]", i), "conflicts entry %q: %v", s, err)
+			errs.add(fieldErrorf(fmt.Sprintf("conflicts[%d]", i), "conflicts entry %q: %v", s, err))
 		}
 	}
-	return nil
+	return errs.err()
 }
 
 // ValidatePublished runs ValidateRaw plus the published-form requirement:
 // every build-phase reference has been expanded, so provides entries are
 // literal. Create-phase references in hooks and files legitimately remain.
 func ValidatePublished(raw []byte, d *Descriptor) (warnings []string, err error) {
+	cp := *d
+	cp.declarationsOnly = true
+	d = &cp
+	var errs ValidationErrors
 	warnings, err = ValidateRaw(raw, d)
-	if err != nil {
-		return nil, err
-	}
+	errs.add(err)
 	if argRef.MatchString(d.Version) {
-		return nil, fieldErrorf("version", "published descriptor still references an arg in version %q; build-phase expansion did not run", d.Version)
+		errs.add(fieldErrorf("version", "published descriptor still references an arg in version %q; build-phase expansion did not run", d.Version))
 	}
 	for i, s := range d.Provides {
 		if argRef.MatchString(s) {
-			return nil, fieldErrorf(fmt.Sprintf("provides[%d]", i), "published descriptor still references an arg in provides entry %q; build-phase expansion did not run", s)
-		}
-		if _, err := ParseProvide(s); err != nil {
-			return nil, fieldErrorf(fmt.Sprintf("provides[%d]", i), "%v", err)
+			errs.add(fieldErrorf(fmt.Sprintf("provides[%d]", i), "published descriptor still references an arg in provides entry %q; build-phase expansion did not run", s))
 		}
 	}
 	// §9.2 is a property of every published descriptor, not only of the
 	// frontend's build path, so third-party artifacts are held to it too.
-	if err := RequireVersionedProvides(d); err != nil {
-		return nil, err
+	if d.Version == "" {
+		for i, s := range d.Provides {
+			if argRef.MatchString(s) {
+				continue
+			}
+			p, err := ParseProvide(s)
+			if err == nil && p.Version == "" {
+				errs.add(unversionedProvide(i, s))
+			}
+		}
 	}
 	// Build-phase args are baked before signing, so a reference to one
 	// anywhere in the published form means expansion did not reach it.
@@ -332,9 +347,23 @@ func ValidatePublished(raw []byte, d *Descriptor) (warnings []string, err error)
 	// create-phase references legitimately remain in hooks and file
 	// contents, and only the arg's own declaration says which kind a
 	// reference is.
+	var references map[string][]string
 	for _, name := range ReferencedArgs(raw) {
 		if decl, declared := d.Args[name]; declared && decl.BuildArg != "" {
-			return nil, fieldErrorf("args."+name, "published descriptor still references ${{ kit.args.%s }}, which resolves at build; expansion did not reach it", name)
+			if references == nil {
+				references = argReferencePaths(raw)
+			}
+			paths := references[name]
+			if len(paths) == 0 {
+				paths = []string{""}
+			}
+			for _, at := range paths {
+				// These fields have more specific published-form diagnostics.
+				if at == "version" || strings.HasPrefix(at, "provides[") || (strings.HasPrefix(at, "kits[") && strings.HasSuffix(at, "].ref")) {
+					continue
+				}
+				errs.add(fieldErrorf(at, "published descriptor still references ${{ kit.args.%s }}, which resolves at build; expansion did not reach it", name))
+			}
 		}
 	}
 	// kind: set is an authoring convenience the frontend resolves into
@@ -342,20 +371,20 @@ func ValidatePublished(raw []byte, d *Descriptor) (warnings []string, err error)
 	// merge never ran, so the layers are not what the descriptor
 	// describes.
 	if d.Kind == KindSet {
-		return nil, fieldErrorf("kind", "published descriptor still declares kind: %s; the frontend derives %q or %q from the kits it lists, so this artifact was never merged", KindSet, KindWorkload, KindMixin)
+		errs.add(fieldErrorf("kind", "published descriptor still declares kind: %s; the frontend derives %q or %q from the kits it lists, so this artifact was never merged", KindSet, KindWorkload, KindMixin))
 	}
 	// An authored entry names a version by tag; a published one has
 	// been resolved, and the pin is what makes the record of how the
 	// content was produced reproducible rather than a moving claim.
 	for i, k := range d.Kits {
 		if argRef.MatchString(k.Ref) {
-			return nil, fieldErrorf(fmt.Sprintf("kits[%d].ref", i), "published descriptor still references an arg in %q; a set's kits resolve at build, so build-phase expansion did not run", k.Ref)
+			errs.add(fieldErrorf(fmt.Sprintf("kits[%d].ref", i), "published descriptor still references an arg in %q; a set's kits resolve at build, so build-phase expansion did not run", k.Ref))
 		}
 		if k.Digest == "" {
-			return nil, fieldErrorf(fmt.Sprintf("kits[%d].digest", i), "published descriptor lists %s with no digest; the frontend pins every one of a set's kits to the manifest it resolved", k.Ref)
+			errs.add(fieldErrorf(fmt.Sprintf("kits[%d].digest", i), "published descriptor lists %s with no digest; the frontend pins every one of a set's kits to the manifest it resolved", k.Ref))
 		}
 	}
-	return warnings, nil
+	return warnings, errs.err()
 }
 
 // RequireVersionedProvides is the publish-time rule the frontend enforces
@@ -367,20 +396,26 @@ func ValidatePublished(raw []byte, d *Descriptor) (warnings []string, err error)
 // these versions, never substitute for them. Kits with no provides publish
 // fine: they offer nothing matchable, so there is nothing to version.
 func RequireVersionedProvides(d *Descriptor) error {
+	var errs ValidationErrors
 	if d.Version != "" {
-		return nil
+		return errs.err()
 	}
 	for i, s := range d.Provides {
 		p, err := ParseProvide(s)
 		if err != nil {
-			return fieldErrorf(fmt.Sprintf("provides[%d]", i), "%v", err)
+			errs.add(fieldErrorf(fmt.Sprintf("provides[%d]", i), "%v", err))
+			continue
 		}
 		if p.Version == "" {
-			return fieldErrorf(fmt.Sprintf("provides[%d]", i),
-				"provides entry %q has no version: add @<version> here or a top-level version: field (a version-shaped image tag can override it at consumption, but a published kit must carry one)", s)
+			errs.add(unversionedProvide(i, s))
 		}
 	}
-	return nil
+	return errs.err()
+}
+
+func unversionedProvide(i int, s string) error {
+	return fieldErrorf(fmt.Sprintf("provides[%d]", i),
+		"provides entry %q has no version: add @<version> here or a top-level version: field (a version-shaped image tag can override it at consumption, but a published kit must carry one)", s)
 }
 
 // RequireAuthoredProvides refuses a provides entry an author must not
@@ -395,6 +430,7 @@ func RequireVersionedProvides(d *Descriptor) error {
 // a fact about content instead of offering a capability, with nothing
 // left to catch the difference.
 func RequireAuthoredProvides(d *Descriptor) error {
+	var errs ValidationErrors
 	for i, s := range d.Provides {
 		p, err := ParseProvide(s)
 		// A malformed entry, or one still holding an arg reference, is
@@ -405,11 +441,11 @@ func RequireAuthoredProvides(d *Descriptor) error {
 		}
 		if IsDerivedProvide(p.Name) {
 			namespace, _, _ := strings.Cut(p.Name, "/")
-			return fieldErrorf(fmt.Sprintf("provides[%d]", i),
-				"provides entry %q is in the %s/ namespace, which publishing fills from the image's package database; drop it and let the build state what the content carries", s, namespace)
+			errs.add(fieldErrorf(fmt.Sprintf("provides[%d]", i),
+				"provides entry %q is in the %s/ namespace, which publishing fills from the image's package database; drop it and let the build state what the content carries", s, namespace))
 		}
 	}
-	return nil
+	return errs.err()
 }
 
 // needType is <namespace>/<name>@<version>: a dotted lowercase
@@ -463,7 +499,8 @@ var configlessCapabilities = map[string]bool{
 // allow list — injection sets the header, egress is gated separately,
 // and the two must agree per phase or a credential is presented to a
 // domain the phase cannot reach.
-func validateCapabilityEntries(d *Descriptor) error {
+func validateCapabilityBlock(d *Descriptor) error {
+	var errs ValidationErrors
 	needs := d.Capabilities
 	// The platform contract is about the image config a workload's layers
 	// come with, and a mixin's config never becomes the composed image's.
@@ -473,7 +510,7 @@ func validateCapabilityEntries(d *Descriptor) error {
 	// indistinguishable from the workload's own. A set is exempt — its
 	// kind is derived from its members later.
 	if d.Kind == KindMixin && HasCapability(needs, CapabilitySbx) {
-		return fieldErrorf("capabilities", "%s is workload-only: a mixin's image config never becomes the composed image's, so the identity it would promise is not the one a host reads", CapabilitySbx)
+		errs.add(fieldErrorf("capabilities", "%s is workload-only: a mixin's image config never becomes the composed image's, so the identity it would promise is not the one a host reads", CapabilitySbx))
 	}
 	seenSingleton := map[string]int{}
 	seenExact := map[string]int{}
@@ -484,20 +521,36 @@ func validateCapabilityEntries(d *Descriptor) error {
 	seenPort := map[string]int{}
 
 	deferCrossChecks := false
+	invalidCredentials := map[int]bool{}
 	for i, n := range needs {
 		path := fmt.Sprintf("capabilities[%d]", i)
-		if !needType.MatchString(n.Type) {
-			return fieldErrorf(path+".type", "capabilities[%d]: type %q is not <namespace>/<name>@<version>", i, n.Type)
+		if n.Source != nil && n.Source.Path == "" {
+			errs.add(fieldErrorf(path+".source.path", "source path is required"))
 		}
+		if !needType.MatchString(n.Type) {
+			errs.add(fieldErrorf(path+".type", "capabilities[%d]: type %q is not <namespace>/<name>@<version>", i, n.Type))
+			continue
+		}
+		duplicateSingleton := false
 		if singletonCapabilities[n.Type] {
 			if prev, dup := seenSingleton[n.Type]; dup {
-				return fieldErrorf(path+".type", "capabilities[%d]: %s already declared at capabilities[%d]", i, n.Type, prev)
+				duplicateSingleton = true
+				deferCrossChecks = deferCrossChecks || n.Type == CapabilityNetworkPolicy || n.Type == CapabilityNetworkPolicyV2
+				errs.add(fieldErrorf(path+".type", "capabilities[%d]: %s already declared at capabilities[%d]", i, n.Type, prev))
+			} else {
+				seenSingleton[n.Type] = i
 			}
-			seenSingleton[n.Type] = i
 		}
 		if key := capabilitySurfaceEntry(n); true {
 			if prev, dup := seenExact[key]; dup {
-				return fieldErrorf(path, "capabilities[%d]: identical to capabilities[%d]", i, prev)
+				if !duplicateSingleton {
+					errs.add(fieldErrorf(path, "capabilities[%d]: identical to capabilities[%d]", i, prev))
+				}
+				// The first copy owns its value and cross-entry errors.
+				if n.Type == CapabilityCredential {
+					invalidCredentials[i] = true
+				}
+				continue
 			}
 			seenExact[key] = i
 		}
@@ -507,7 +560,7 @@ func validateCapabilityEntries(d *Descriptor) error {
 		// decoded map alone. Testing length or nil-ness would let one
 		// descriptor pass here and fail schema validation.
 		if configlessCapabilities[n.Type] && n.ConfigStated() {
-			return fieldErrorf(path+".config", "capabilities[%d]: %s takes no config", i, n.Type)
+			errs.add(fieldErrorf(path+".config", "capabilities[%d]: %s takes no config", i, n.Type))
 		}
 
 		// A parameterized entry — its config references a kit arg — defers
@@ -524,9 +577,7 @@ func validateCapabilityEntries(d *Descriptor) error {
 			// contradictory pair through to a merge that normalizes
 			// one of the two away — after which the evidence is gone
 			// and the strict pass at the end sees a valid descriptor.
-			if err := validatePresenceRules(path, i, n); err != nil {
-				return err
-			}
+			errs.add(validatePresenceRules(path, i, n))
 			continue
 		}
 
@@ -534,74 +585,85 @@ func validateCapabilityEntries(d *Descriptor) error {
 		case CapabilityNetworkPolicy:
 			var p PhasedNetwork
 			if err := DecodeCapabilityConfig(n, &p); err != nil {
-				return fieldErrorf(path+".config", "capabilities[%d]: %v", i, err)
+				errs.add(fieldErrorf(path+".config", "capabilities[%d]: %v", i, err))
+				deferCrossChecks = true
+				continue
 			}
 		case CapabilityNetworkPolicyV2:
 			var p PhasedNetworkV2
 			if err := DecodeCapabilityConfig(n, &p); err != nil {
-				return fieldErrorf(path+".config", "capabilities[%d]: %v", i, err)
+				errs.add(fieldErrorf(path+".config", "capabilities[%d]: %v", i, err))
+				deferCrossChecks = true
+				continue
 			}
 			if err := validateNetworkEntries(path, i, &p); err != nil {
-				return err
+				deferCrossChecks = true
+				errs.add(err)
 			}
 		case CapabilityCredential:
 			c, err := validateCredentialNeed(path, i, n)
 			if err != nil {
-				return err
+				errs.add(err)
+				invalidCredentials[i] = true
+				continue
 			}
 			key := c.Service + "\x00" + c.Phase
 			if prev, dup := seenCredential[key]; dup {
-				return fieldErrorf(path+".config.service", "capabilities[%d]: credential for service %q phase %q already declared at capabilities[%d]", i, c.Service, c.Phase, prev)
+				errs.add(fieldErrorf(path+".config.service", "capabilities[%d]: credential for service %q phase %q already declared at capabilities[%d]", i, c.Service, c.Phase, prev))
 			}
 			seenCredential[key] = i
 		case CapabilitySSHAgent:
 			a, err := validateSSHAgentNeed(path, i, n)
 			if err != nil {
-				return err
+				errs.add(err)
+				continue
 			}
 			// One entry per phase: two with different bounds would leave
 			// the reader to guess whether they add up or one narrows the
-			// other. Across kits they merge; within one kit, write one.
+			// other. Across blocks they merge; within a block, write one.
 			for _, phase := range a.Phase {
 				if prev, dup := seenSSHAgent[phase]; dup {
-					return fieldErrorf(path+".config.phase", "capabilities[%d]: ssh-agent for phase %q already declared at capabilities[%d]", i, phase, prev)
+					errs.add(fieldErrorf(path+".config.phase", "capabilities[%d]: ssh-agent for phase %q already declared at capabilities[%d]", i, phase, prev))
+					continue
 				}
 				seenSSHAgent[phase] = i
 			}
 		case CapabilityVolume:
 			var v Volume
 			if err := DecodeCapabilityConfig(n, &v); err != nil {
-				return fieldErrorf(path+".config", "capabilities[%d]: %v", i, err)
+				errs.add(fieldErrorf(path+".config", "capabilities[%d]: %v", i, err))
+				continue
 			}
 			if !strings.HasPrefix(v.Path, "/") {
-				return fieldErrorf(path+".config.path", "capabilities[%d]: volume path %q must be absolute", i, v.Path)
+				errs.add(fieldErrorf(path+".config.path", "capabilities[%d]: volume path %q must be absolute", i, v.Path))
 			}
 			if v.Size != "" && !sizeBytes.MatchString(v.Size) {
-				return fieldErrorf(path+".config.size", "capabilities[%d]: invalid size %q", i, v.Size)
+				errs.add(fieldErrorf(path+".config.size", "capabilities[%d]: invalid size %q", i, v.Size))
 			}
 			if v.Mode != "" && !octalMode.MatchString(v.Mode) {
-				return fieldErrorf(path+".config.mode", "capabilities[%d]: invalid octal mode %q", i, v.Mode)
+				errs.add(fieldErrorf(path+".config.mode", "capabilities[%d]: invalid octal mode %q", i, v.Mode))
 			}
 			if prev, dup := seenVolume[v.Path]; dup {
-				return fieldErrorf(path+".config.path", "capabilities[%d]: volume for %q already declared at capabilities[%d]", i, v.Path, prev)
+				errs.add(fieldErrorf(path+".config.path", "capabilities[%d]: volume for %q already declared at capabilities[%d]", i, v.Path, prev))
 			}
 			seenVolume[v.Path] = i
 		case CapabilityAgentSkills:
 			var s AgentSkills
 			if err := DecodeCapabilityConfig(n, &s); err != nil {
-				return fieldErrorf(path+".config", "capabilities[%d]: %v", i, err)
+				errs.add(fieldErrorf(path+".config", "capabilities[%d]: %v", i, err))
+				continue
 			}
 			// Canonical form is required, not normalized in: /x/../skills
 			// and /skills are different keys for one mount destination, so
 			// an alias would slip past the duplicate check below and could
 			// declare a second mode for the same path.
 			if s.Path == "/" || !canonicalAbsPath(s.Path) {
-				return fieldErrorf(path+".config.path", "capabilities[%d]: skills path %q must be absolute and canonical (no . or .. segments, no trailing slash, not the root)", i, s.Path)
+				errs.add(fieldErrorf(path+".config.path", "capabilities[%d]: skills path %q must be absolute and canonical (no . or .. segments, no trailing slash, not the root)", i, s.Path))
 			}
 			switch s.Mode {
 			case "", SkillsReadOnly, SkillsReadWrite:
 			default:
-				return fieldErrorf(path+".config.mode", "capabilities[%d]: mode must be %q or %q, got %q", i, SkillsReadOnly, SkillsReadWrite, s.Mode)
+				errs.add(fieldErrorf(path+".config.mode", "capabilities[%d]: mode must be %q or %q, got %q", i, SkillsReadOnly, SkillsReadWrite, s.Mode))
 			}
 			// No dedup by path here: two entries naming one path with the
 			// same mode are identical requests, which the exact-duplicate
@@ -609,92 +671,96 @@ func validateCapabilityEntries(d *Descriptor) error {
 			// modes is contradictory, so the narrower one is the request
 			// and stating both is an error.
 			if prev, dup := seenSkills[s.Path]; dup {
-				return fieldErrorf(path+".config.path", "capabilities[%d]: skills for %q already declared at capabilities[%d]", i, s.Path, prev)
+				errs.add(fieldErrorf(path+".config.path", "capabilities[%d]: skills for %q already declared at capabilities[%d]", i, s.Path, prev))
 			}
 			seenSkills[s.Path] = i
 		case CapabilityPort:
 			var p Port
 			if err := DecodeCapabilityConfig(n, &p); err != nil {
-				return fieldErrorf(path+".config", "capabilities[%d]: %v", i, err)
+				errs.add(fieldErrorf(path+".config", "capabilities[%d]: %v", i, err))
+				continue
 			}
 			if p.Container < 1 || p.Container > 65535 {
-				return fieldErrorf(path+".config.container", "capabilities[%d]: container port %d out of range", i, p.Container)
+				errs.add(fieldErrorf(path+".config.container", "capabilities[%d]: container port %d out of range", i, p.Container))
 			}
 			switch p.Transport {
 			case "", "tcp", "udp":
 			default:
-				return fieldErrorf(path+".config.transport", "capabilities[%d]: transport must be tcp or udp, got %q", i, p.Transport)
+				errs.add(fieldErrorf(path+".config.transport", "capabilities[%d]: transport must be tcp or udp, got %q", i, p.Transport))
 			}
 			key := PortKey(p)
 			if prev, dup := seenPort[key]; dup {
-				return fieldErrorf(path+".config.container", "capabilities[%d]: port %d already declared at capabilities[%d]", i, p.Container, prev)
+				errs.add(fieldErrorf(path+".config.container", "capabilities[%d]: port %d already declared at capabilities[%d]", i, p.Container, prev))
 			}
 			seenPort[key] = i
 		case CapabilityUSBDevice:
 			var u USBDevice
 			if err := DecodeCapabilityConfig(n, &u); err != nil {
-				return fieldErrorf(path+".config", "capabilities[%d]: %v", i, err)
+				errs.add(fieldErrorf(path+".config", "capabilities[%d]: %v", i, err))
+				continue
 			}
 			hasID := u.VendorID != "" || u.ProductID != ""
 			if hasID == (u.Class != "") {
-				return fieldErrorf(path+".config", "capabilities[%d]: declare either vendorId/productId or class, not both and not neither", i)
+				errs.add(fieldErrorf(path+".config", "capabilities[%d]: declare either vendorId/productId or class, not both and not neither", i))
 			}
 			if (u.VendorID != "") != (u.ProductID != "") {
-				return fieldErrorf(path+".config", "capabilities[%d]: vendorId and productId go together", i)
+				errs.add(fieldErrorf(path+".config", "capabilities[%d]: vendorId and productId go together", i))
 			}
 		case CapabilityResources:
 			var r Resources
 			if err := DecodeCapabilityConfig(n, &r); err != nil {
-				return fieldErrorf(path+".config", "capabilities[%d]: %v", i, err)
+				errs.add(fieldErrorf(path+".config", "capabilities[%d]: %v", i, err))
+				continue
 			}
 			if r.CPU < 0 {
-				return fieldErrorf(path+".config.cpu", "capabilities[%d]: cpu must be >= 0", i)
+				errs.add(fieldErrorf(path+".config.cpu", "capabilities[%d]: cpu must be >= 0", i))
 			}
 			if r.Memory != "" && !sizeBytes.MatchString(r.Memory) {
-				return fieldErrorf(path+".config.memory", "capabilities[%d]: invalid memory %q", i, r.Memory)
+				errs.add(fieldErrorf(path+".config.memory", "capabilities[%d]: invalid memory %q", i, r.Memory))
 			}
 		case CapabilityAgentSessions:
 			var a AgentSessions
 			if err := DecodeCapabilityConfig(n, &a); err != nil {
-				return fieldErrorf(path+".config", "capabilities[%d]: %v", i, err)
+				errs.add(fieldErrorf(path+".config", "capabilities[%d]: %v", i, err))
+				continue
 			}
 			if len(a.Prompt) == 0 && len(a.Resume) == 0 && len(a.Continue) == 0 && len(a.List) == 0 {
-				return fieldErrorf(path+".config", "capabilities[%d]: agent-sessions declares no verbs; drop the entry instead", i)
+				errs.add(fieldErrorf(path+".config", "capabilities[%d]: agent-sessions declares no verbs; drop the entry instead", i))
 			}
 			// The placeholder is the verb's whole point: a prompt verb
 			// that never receives the prompt (or a resume that never
 			// names the session) runs the agent with the caller's input
 			// silently discarded.
 			if len(a.Prompt) > 0 && !argvContains(a.Prompt, SessionPromptPlaceholder) {
-				return fieldErrorf(path+".config.prompt", "capabilities[%d]: prompt must reference %s", i, SessionPromptPlaceholder)
+				errs.add(fieldErrorf(path+".config.prompt", "capabilities[%d]: prompt must reference %s", i, SessionPromptPlaceholder))
 			}
 			if len(a.Resume) > 0 && !argvContains(a.Resume, SessionIDPlaceholder) {
-				return fieldErrorf(path+".config.resume", "capabilities[%d]: resume must reference %s", i, SessionIDPlaceholder)
+				errs.add(fieldErrorf(path+".config.resume", "capabilities[%d]: resume must reference %s", i, SessionIDPlaceholder))
 			}
 		case CapabilityLifecycle:
 			var l Lifecycle
 			if err := DecodeCapabilityConfig(n, &l); err != nil {
-				return fieldErrorf(path+".config", "capabilities[%d]: %v", i, err)
+				errs.add(fieldErrorf(path+".config", "capabilities[%d]: %v", i, err))
+				continue
 			}
 			if len(l.Install) == 0 && len(l.Startup) == 0 && len(l.Files) == 0 && len(l.Interactive) == 0 {
-				return fieldErrorf(path+".config", "capabilities[%d]: lifecycle declares no hooks, no files, and no interactive tail; drop the entry instead", i)
+				errs.add(fieldErrorf(path+".config", "capabilities[%d]: lifecycle declares no hooks, no files, and no interactive tail; drop the entry instead", i))
 			}
-			if err := validateLifecycle(path, i, &l); err != nil {
-				return err
-			}
+			errs.add(validateLifecycle(path, i, &l))
 		case CapabilityAgentContext:
 			var a AgentContext
 			if err := DecodeCapabilityConfig(n, &a); err != nil {
-				return fieldErrorf(path+".config", "capabilities[%d]: %v", i, err)
+				errs.add(fieldErrorf(path+".config", "capabilities[%d]: %v", i, err))
+				continue
 			}
 			// A set may state the profile when the kits it lists make
 			// it a workload; the merged descriptor carries the derived
 			// kind, so a set of mixins claiming one is caught there.
 			if a.Filename != "" && d.Kind != KindWorkload && d.Kind != KindSet {
-				return fieldErrorf(path+".config.filename", "capabilities[%d]: agent-context filename is workload-kit-only: the profile belongs to the kit that owns the environment; a mixin contributes contentFile or content", i)
+				errs.add(fieldErrorf(path+".config.filename", "capabilities[%d]: agent-context filename is workload-kit-only: the profile belongs to the kit that owns the environment; a mixin contributes contentFile or content", i))
 			}
 			if a.ContentFile != "" && a.Content != "" {
-				return fieldErrorf(path+".config", "capabilities[%d]: agent-context contentFile and content are mutually exclusive", i)
+				errs.add(fieldErrorf(path+".config", "capabilities[%d]: agent-context contentFile and content are mutually exclusive", i))
 			}
 		}
 	}
@@ -702,18 +768,22 @@ func validateCapabilityEntries(d *Descriptor) error {
 	one, hasOne := seenSingleton[CapabilityNetworkPolicy]
 	two, hasTwo := seenSingleton[CapabilityNetworkPolicyV2]
 	if hasOne && hasTwo {
-		return fieldErrorf(fmt.Sprintf("capabilities[%d].type", two),
+		deferCrossChecks = true
+		errs.add(fieldErrorf(fmt.Sprintf("capabilities[%d].type", two),
 			"capabilities[%d]: %s cannot be declared beside %s at capabilities[%d]; a descriptor states one network-policy version",
-			two, CapabilityNetworkPolicyV2, CapabilityNetworkPolicy, one)
+			two, CapabilityNetworkPolicyV2, CapabilityNetworkPolicy, one))
 	}
 
 	// The inject⊆allow invariant needs literal domains on both sides;
 	// with any parameterized entry in play it runs on the effective
-	// descriptor instead, where every domain is literal.
-	if deferCrossChecks {
-		return nil
+	// descriptor instead, where every domain is literal. An invalid or
+	// ambiguous policy cannot judge credentials; an invalid credential
+	// only prevents checking that credential, not its valid siblings.
+	if deferCrossChecks || d.declarationsOnly {
+		return errs.err()
 	}
-	return validateInjectWithinAllow(needs)
+	errs.add(validateInjectWithinAllow(needs, invalidCredentials))
+	return errs.err()
 }
 
 // httpMethods are the tokens a NetworkEntry may name. Canonical uppercase is
@@ -755,6 +825,7 @@ func HTTPMethods() []string {
 // Deny entries may name patterns however they are bounded: a deny wins
 // outright, so an overlap between two of them decides the same way.
 func validateNetworkEntries(path string, i int, p *PhasedNetworkV2) error {
+	var errs ValidationErrors
 	for _, phase := range []struct {
 		name  string
 		rules *NetworkRulesV2
@@ -764,28 +835,24 @@ func validateNetworkEntries(path string, i int, p *PhasedNetworkV2) error {
 		}
 		for j, e := range phase.rules.Allow {
 			at := fmt.Sprintf("%s.config.%s.allow[%d]", path, phase.name, j)
-			if err := validateNetworkEntry(at, i, phase.name, e); err != nil {
-				return err
-			}
+			errs.add(validateNetworkEntry(at, i, phase.name, e))
 			if !e.Bounded() {
 				continue
 			}
 			for _, h := range e.Hosts {
 				if isHostPattern(h) {
-					return fieldErrorf(at+".hosts",
+					errs.add(fieldErrorf(at+".hosts",
 						"capabilities[%d]: %s allow entry bounds the pattern %q; an entry stating methods or paths names its hosts exactly, or the pattern would be bounded and unbounded at once",
-						i, phase.name, h)
+						i, phase.name, h))
 				}
 			}
 		}
 		for j, e := range phase.rules.Deny {
 			at := fmt.Sprintf("%s.config.%s.deny[%d]", path, phase.name, j)
-			if err := validateNetworkEntry(at, i, phase.name, e); err != nil {
-				return err
-			}
+			errs.add(validateNetworkEntry(at, i, phase.name, e))
 		}
 	}
-	return nil
+	return errs.err()
 }
 
 // isHostPattern reports whether an entry is a glob rather than one
@@ -799,12 +866,13 @@ func isHostPattern(h string) bool { return strings.Contains(h, "*") }
 // Checked before expansion so merge normalization cannot discard an
 // invalid entry before it is rejected.
 func validateNetworkEntryShape(path string, i int, phase string, r NetworkEntry) error {
+	var errs ValidationErrors
 	if len(r.Hosts) == 0 {
-		return fieldErrorf(path+".hosts", "capabilities[%d]: %s entry declares no hosts", i, phase)
+		errs.add(fieldErrorf(path+".hosts", "capabilities[%d]: %s entry declares no hosts", i, phase))
 	}
 	for _, h := range r.Hosts {
 		if h == "" {
-			return fieldErrorf(path+".hosts", "capabilities[%d]: %s entry has an empty host", i, phase)
+			errs.add(fieldErrorf(path+".hosts", "capabilities[%d]: %s entry has an empty host", i, phase))
 		}
 	}
 	// Wildcard semantics belong to OMITTED fields alone: a generated
@@ -818,60 +886,60 @@ func validateNetworkEntryShape(path string, i int, phase string, r NetworkEntry)
 		if len(r.Paths) > 0 {
 			remedy = "name the methods the paths bound, or omit paths too to leave the entry unbounded"
 		}
-		return fieldErrorf(path+".methods",
-			"capabilities[%d]: %s entry states an empty methods list; %s", i, phase, remedy)
+		errs.add(fieldErrorf(path+".methods",
+			"capabilities[%d]: %s entry states an empty methods list; %s", i, phase, remedy))
 	}
 	if r.Paths != nil && len(r.Paths) == 0 {
-		return fieldErrorf(path+".paths",
-			"capabilities[%d]: %s entry states an empty paths list; omit the field for every path, or name the paths", i, phase)
+		errs.add(fieldErrorf(path+".paths",
+			"capabilities[%d]: %s entry states an empty paths list; omit the field for every path, or name the paths", i, phase))
 	}
 	if len(r.Paths) > 0 && len(r.Methods) == 0 {
-		return fieldErrorf(path+".paths",
+		errs.add(fieldErrorf(path+".paths",
 			"capabilities[%d]: %s entry states paths without methods; name the methods the paths bound, or %s for every method",
-			i, phase, "methods: ["+MethodAny+"]")
+			i, phase, "methods: ["+MethodAny+"]"))
 	}
-	return nil
+	return errs.err()
 }
 
 func validateNetworkEntry(path string, i int, phase string, r NetworkEntry) error {
-	if err := validateNetworkEntryShape(path, i, phase, r); err != nil {
-		return err
-	}
+	var errs ValidationErrors
+	errs.add(validateNetworkEntryShape(path, i, phase, r))
 	seen := map[string]bool{}
 	for _, m := range r.Methods {
 		if m != MethodAny && !httpMethods[m] {
-			return fieldErrorf(path+".methods",
+			errs.add(fieldErrorf(path+".methods",
 				"capabilities[%d]: %s entry method %q is not an uppercase HTTP method or %s",
-				i, phase, m, MethodAny)
+				i, phase, m, MethodAny))
 		}
 		if seen[m] {
-			return fieldErrorf(path+".methods", "capabilities[%d]: %s entry repeats method %q", i, phase, m)
+			errs.add(fieldErrorf(path+".methods", "capabilities[%d]: %s entry repeats method %q", i, phase, m))
 		}
 		seen[m] = true
 	}
 	if seen[MethodAny] && len(r.Methods) > 1 {
-		return fieldErrorf(path+".methods",
+		errs.add(fieldErrorf(path+".methods",
 			"capabilities[%d]: %s entry names %s beside a specific method; %s already covers every method",
-			i, phase, MethodAny, MethodAny)
+			i, phase, MethodAny, MethodAny))
 	}
 	for _, p := range r.Paths {
 		if !strings.HasPrefix(p, "/") {
-			return fieldErrorf(path+".paths", "capabilities[%d]: %s entry path %q must start with \"/\"", i, phase, p)
+			errs.add(fieldErrorf(path+".paths", "capabilities[%d]: %s entry path %q must start with \"/\"", i, phase, p))
 		}
 	}
-	return nil
+	return errs.err()
 }
 
 // validatePresenceRules judges what an entry states rather than what
 // it states it as, which is the part of a config a placeholder does
 // not hide.
 func validatePresenceRules(path string, i int, n Capability) error {
+	var errs ValidationErrors
 	if n.Type == CapabilityNetworkPolicyV2 {
 		var p PhasedNetworkV2
 		if err := DecodeCapabilityConfig(n, &p); err != nil {
 			// Undecodable is the merge's to report, in the words it
 			// has for a re-export it cannot carry.
-			return nil
+			return errs.err()
 		}
 		for _, phase := range []struct {
 			name  string
@@ -886,13 +954,11 @@ func validatePresenceRules(path string, i int, n Capability) error {
 			}{{"allow", phase.rules.Allow}, {"deny", phase.rules.Deny}} {
 				for j, e := range group.entries {
 					at := fmt.Sprintf("%s.config.%s.%s[%d]", path, phase.name, group.name, j)
-					if err := validateNetworkEntryShape(at, i, phase.name, e); err != nil {
-						return err
-					}
+					errs.add(validateNetworkEntryShape(at, i, phase.name, e))
 				}
 			}
 		}
-		return nil
+		return errs.err()
 	}
 	if n.Type == CapabilitySSHAgent {
 		if err := validateSSHAgentNulls(path, i, n); err != nil {
@@ -905,16 +971,16 @@ func validatePresenceRules(path string, i int, n Capability) error {
 		return validateSSHAgentPresence(path, i, a)
 	}
 	if n.Type != CapabilityAgentContext {
-		return nil
+		return errs.err()
 	}
 	// Read as raw keys: decoding wants types the placeholder does not
 	// have, and presence is all this rule asks about.
 	_, hasFile := n.Config["contentFile"]
 	_, hasContent := n.Config["content"]
 	if hasFile && hasContent {
-		return fieldErrorf(path+".config", "capabilities[%d]: agent-context contentFile and content are mutually exclusive", i)
+		errs.add(fieldErrorf(path+".config", "capabilities[%d]: agent-context contentFile and content are mutually exclusive", i))
 	}
-	return nil
+	return errs.err()
 }
 
 // capabilityIsParameterized reports whether the entry's config references
@@ -932,21 +998,22 @@ func capabilityIsParameterized(n Capability) bool {
 
 // validateCredentialNeed decodes and checks one credential entry.
 func validateCredentialNeed(path string, i int, n Capability) (*Credential, error) {
+	var errs ValidationErrors
 	var c Credential
 	if err := DecodeCapabilityConfig(n, &c); err != nil {
-		return nil, fieldErrorf(path+".config", "capabilities[%d]: %v", i, err)
+		errs.add(fieldErrorf(path+".config", "capabilities[%d]: %v", i, err))
+		return nil, errs.err()
 	}
 	if c.Service == "" {
-		return nil, fieldErrorf(path+".config.service", "capabilities[%d]: credential service is required", i)
-	}
-	if !handleName.MatchString(c.Service) {
-		return nil, fieldErrorf(path+".config.service", "capabilities[%d]: invalid service name %q", i, c.Service)
+		errs.add(fieldErrorf(path+".config.service", "capabilities[%d]: credential service is required", i))
+	} else if !handleName.MatchString(c.Service) {
+		errs.add(fieldErrorf(path+".config.service", "capabilities[%d]: invalid service name %q", i, c.Service))
 	}
 	if c.Phase != "install" && c.Phase != "runtime" {
-		return nil, fieldErrorf(path+".config.phase", "capabilities[%d] (%s): phase must be \"install\" or \"runtime\", got %q", i, c.Service, c.Phase)
+		errs.add(fieldErrorf(path+".config.phase", "capabilities[%d] (%s): phase must be \"install\" or \"runtime\", got %q", i, c.Service, c.Phase))
 	}
 	if c.APIKey == nil && c.OAuth == nil {
-		return nil, fieldErrorf(path+".config", "capabilities[%d] (%s): declare apiKey or oauth", i, c.Service)
+		errs.add(fieldErrorf(path+".config", "capabilities[%d] (%s): declare apiKey or oauth", i, c.Service))
 	}
 	// Present nulls decay through typed decoding — to nil pointers, empty
 	// strings, or nil maps — and would masquerade as omitted fields,
@@ -955,27 +1022,27 @@ func validateCredentialNeed(path string, i int, n Capability) (*Credential, erro
 	// legal is credentialFile.structure under the json encoding, whose
 	// values the schema leaves open (the toml walk judges them
 	// separately).
-	if at, bad := firstNullInConfig("config", n.Config, "config.oauth.credentialFile.structure"); bad {
-		return nil, fieldErrorf(path+"."+at, "capabilities[%d] (%s): %s is null; omit the field or declare a value", i, c.Service, strings.TrimPrefix(at, "config."))
+	for _, at := range nullConfigPaths("config", n.Config, "config.oauth.credentialFile.structure") {
+		errs.add(fieldErrorf(path+"."+at, "capabilities[%d] (%s): %s is null; omit the field or declare a value", i, c.Service, strings.TrimPrefix(at, "config.")))
 	}
 	if c.APIKey != nil {
 		// An empty name with inject rules is the inject-only shape: the
 		// key exists solely as outbound rewrites, with no environment
 		// presence — not even a sentinel.
 		if c.APIKey.Name == "" && len(c.APIKey.Inject) == 0 {
-			return nil, fieldErrorf(path+".config.apiKey", "capabilities[%d] (%s): apiKey needs a name, inject rules, or both", i, c.Service)
+			errs.add(fieldErrorf(path+".config.apiKey", "capabilities[%d] (%s): apiKey needs a name, inject rules, or both", i, c.Service))
 		}
 		if c.APIKey.Name != "" && !envVarName.MatchString(c.APIKey.Name) {
-			return nil, fieldErrorf(path+".config.apiKey.name", "capabilities[%d] (%s): apiKey.name %q is not a valid env var name", i, c.Service, c.APIKey.Name)
+			errs.add(fieldErrorf(path+".config.apiKey.name", "capabilities[%d] (%s): apiKey.name %q is not a valid env var name", i, c.Service, c.APIKey.Name))
 		}
 		for j, inj := range c.APIKey.Inject {
 			if inj.Domain == "" {
-				return nil, fieldErrorf(fmt.Sprintf("%s.config.apiKey.inject[%d]", path, j), "capabilities[%d] (%s): inject[%d]: domain is required", i, c.Service, j)
+				errs.add(fieldErrorf(fmt.Sprintf("%s.config.apiKey.inject[%d]", path, j), "capabilities[%d] (%s): inject[%d]: domain is required", i, c.Service, j))
 			}
 		}
 	}
 	if c.OAuth != nil && c.OAuth.TokenEndpoint != nil && c.OAuth.TokenEndpoint.Host == "" {
-		return nil, fieldErrorf(path+".config.oauth.tokenEndpoint", "capabilities[%d] (%s): oauth.tokenEndpoint.host is required", i, c.Service)
+		errs.add(fieldErrorf(path+".config.oauth.tokenEndpoint", "capabilities[%d] (%s): oauth.tokenEndpoint.host is required", i, c.Service))
 	}
 	if c.OAuth != nil && c.OAuth.CredentialFile != nil {
 		// An explicitly empty format decays to the same "" as an omitted
@@ -985,110 +1052,68 @@ func validateCredentialNeed(path string, i int, n Capability) (*Credential, erro
 		if oauth, ok := n.Config["oauth"].(map[string]any); ok {
 			if cf, ok := oauth["credentialFile"].(map[string]any); ok {
 				if v, present := cf["format"]; present && v == "" {
-					return nil, fieldErrorf(path+".config.oauth.credentialFile.format", "capabilities[%d] (%s): credentialFile.format is empty; omit the field for json or name an encoding", i, c.Service)
+					errs.add(fieldErrorf(path+".config.oauth.credentialFile.format", "capabilities[%d] (%s): credentialFile.format is empty; omit the field for json or name an encoding", i, c.Service))
 				}
 			}
 		}
 		switch c.OAuth.CredentialFile.Format {
 		case "", "json", "toml":
 		default:
-			return nil, fieldErrorf(path+".config.oauth.credentialFile.format", "capabilities[%d] (%s): credentialFile.format %q is not json or toml", i, c.Service, c.OAuth.CredentialFile.Format)
+			errs.add(fieldErrorf(path+".config.oauth.credentialFile.format", "capabilities[%d] (%s): credentialFile.format %q is not json or toml", i, c.Service, c.OAuth.CredentialFile.Format))
 		}
 		// An omitted structure is schema-legal (path alone is required),
 		// so there is nothing to walk; the null check is for values
 		// inside a structure that exists.
 		if c.OAuth.CredentialFile.Format == "toml" && c.OAuth.CredentialFile.Structure != nil {
-			if at, bad := firstNonTOMLValue("structure", c.OAuth.CredentialFile.Structure); bad {
-				return nil, fieldErrorf(path+".config.oauth.credentialFile."+at, "capabilities[%d] (%s): %s is null, which TOML cannot represent", i, c.Service, at)
+			for _, at := range nullConfigPaths("structure", c.OAuth.CredentialFile.Structure, "") {
+				errs.add(fieldErrorf(path+".config.oauth.credentialFile."+at, "capabilities[%d] (%s): %s is null, which TOML cannot represent", i, c.Service, at))
 			}
 		}
 	}
-	return &c, nil
+	return &c, errs.err()
 }
 
-// firstNullInConfig walks a raw capability config for present null
-// values, which typed decoding erases into omitted-looking zero values
-// while the schema rejects them. Skip names one subtree (dot-joined path)
-// where null is legal. Keys are sorted so the diagnostic is
-// deterministic.
-func firstNullInConfig(at string, v any, skip string) (string, bool) {
+// nullConfigPaths finds nulls before typed decoding can make them look
+// absent. JSON credential structures allow nulls; TOML structures do not.
+// Skip exempts the contents of one subtree, but not a null subtree itself.
+func nullConfigPaths(at string, v any, skip string) []string {
+	var paths []string
 	switch t := v.(type) {
 	case nil:
-		// A null AT the skip path is still a null (structure: null is
-		// not a structure); only values inside the subtree are open.
-		return at, true
+		return []string{at}
 	case map[string]any:
 		if at == skip {
-			return "", false
+			return nil
 		}
-		keys := make([]string, 0, len(t))
-		for k := range t {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			if deep, bad := firstNullInConfig(at+"."+k, t[k], skip); bad {
-				return deep, true
-			}
+		for _, key := range slices.Sorted(maps.Keys(t)) {
+			paths = append(paths, nullConfigPaths(at+"."+key, t[key], skip)...)
 		}
 	case []any:
-		for i, e := range t {
-			if deep, bad := firstNullInConfig(fmt.Sprintf("%s[%d]", at, i), e, skip); bad {
-				return deep, true
-			}
+		for i, value := range t {
+			paths = append(paths, nullConfigPaths(fmt.Sprintf("%s[%d]", at, i), value, skip)...)
 		}
 	}
-	return "", false
-}
-
-// firstNonTOMLValue walks a structure map for values TOML 1.0 cannot
-// encode. Null is the one JSON/YAML value with no TOML spelling; every
-// other scalar, array (mixed-type arrays are legal TOML 1.0), and map
-// has one, so the promised well-formed output would otherwise fail at
-// render time.
-func firstNonTOMLValue(at string, v any) (string, bool) {
-	switch t := v.(type) {
-	case nil:
-		return at, true
-	case map[string]any:
-		// Sorted, so the diagnostic names the same offending field on
-		// every run; map iteration order would randomize it.
-		keys := make([]string, 0, len(t))
-		for k := range t {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			if deep, bad := firstNonTOMLValue(at+"."+k, t[k]); bad {
-				return deep, true
-			}
-		}
-	case []any:
-		for i, e := range t {
-			if deep, bad := firstNonTOMLValue(fmt.Sprintf("%s[%d]", at, i), e); bad {
-				return deep, true
-			}
-		}
-	}
-	return "", false
+	return paths
 }
 
 // validateInjectWithinAllow is the cross-entry invariant: every inject
 // domain must appear in the matching phase of the network policy's
 // allow list. It reads the policy in the version-agnostic shape, so the
 // invariant holds for a kit on either version.
-func validateInjectWithinAllow(needs []Capability) error {
+func validateInjectWithinAllow(needs []Capability, invalidCredentials map[int]bool) error {
+	var errs ValidationErrors
 	policy, err := NetworkPolicyV2Of(needs)
 	if err != nil {
 		return err
 	}
 	for i, n := range needs {
-		if n.Type != CapabilityCredential {
+		if n.Type != CapabilityCredential || invalidCredentials[i] {
 			continue
 		}
 		var c Credential
 		if err := DecodeCapabilityConfig(n, &c); err != nil {
-			return err
+			errs.add(err)
+			continue
 		}
 		if c.APIKey == nil {
 			continue
@@ -1101,12 +1126,12 @@ func validateInjectWithinAllow(needs []Capability) error {
 			// domains auditable against the allow list without
 			// reimplementing the enforcement matcher.
 			if !allow[stripPort(inj.Domain)] && !allow["*"] && !allow["**"] {
-				return fieldErrorf(fmt.Sprintf("capabilities[%d].config.apiKey.inject[%d].domain", i, j),
-					"capabilities[%d] (%s): inject domain %q is not in the network policy's %s allow list", i, c.Service, inj.Domain, c.Phase)
+				errs.add(fieldErrorf(fmt.Sprintf("capabilities[%d].config.apiKey.inject[%d].domain", i, j),
+					"capabilities[%d] (%s): inject domain %q is not in the network policy's %s allow list", i, c.Service, inj.Domain, c.Phase))
 			}
 		}
 	}
-	return nil
+	return errs.err()
 }
 
 func phaseAllow(n *PhasedNetworkV2, phase string) map[string]bool {
@@ -1145,69 +1170,72 @@ func stripPort(domain string) string {
 }
 
 func validateArgs(args map[string]Arg) error {
-	for name, a := range args {
+	var errs ValidationErrors
+	for _, name := range slices.Sorted(maps.Keys(args)) {
+		a := args[name]
 		path := "args." + name
 		if !envVarName.MatchString(name) {
-			return fieldErrorf(path, "args.%s: invalid arg name", name)
+			errs.add(fieldErrorf(path, "args.%s: invalid arg name", name))
 		}
 		if a.Required && a.Default != nil {
-			return fieldErrorf(path, "args.%s: required and default are mutually exclusive", name)
+			errs.add(fieldErrorf(path, "args.%s: required and default are mutually exclusive", name))
 		}
 		if len(a.Enum) > 0 && a.Pattern != "" {
-			return fieldErrorf(path, "args.%s: enum and pattern are mutually exclusive", name)
+			errs.add(fieldErrorf(path, "args.%s: enum and pattern are mutually exclusive", name))
 		}
 		if a.Pattern != "" {
 			if _, err := regexp.Compile(a.Pattern); err != nil {
-				return fieldErrorf(path+".pattern", "args.%s: invalid pattern: %v", name, err)
+				errs.add(fieldErrorf(path+".pattern", "args.%s: invalid pattern: %v", name, err))
 			}
 		}
 		if a.Env != "" && a.BuildArg != "" {
-			return fieldErrorf(path, "args.%s: env and buildArg are mutually exclusive; an arg resolves in one phase", name)
+			errs.add(fieldErrorf(path, "args.%s: env and buildArg are mutually exclusive; an arg resolves in one phase", name))
 		}
 		if a.Env != "" && !envVarName.MatchString(a.Env) {
-			return fieldErrorf(path+".env", "args.%s: env %q is not a valid env var name", name, a.Env)
+			errs.add(fieldErrorf(path+".env", "args.%s: env %q is not a valid env var name", name, a.Env))
 		}
 		if a.BuildArg != "" && !envVarName.MatchString(a.BuildArg) {
-			return fieldErrorf(path+".buildArg", "args.%s: buildArg %q is not a valid build-arg name", name, a.BuildArg)
+			errs.add(fieldErrorf(path+".buildArg", "args.%s: buildArg %q is not a valid build-arg name", name, a.BuildArg))
 		}
 	}
-	return nil
+	return errs.err()
 }
 
 // validateLifecycle checks one lifecycle capability's hooks and files.
 // base is the entry's dotted path ("capabilities[N]"), so errors point
 // into the config the author wrote.
 func validateLifecycle(base string, i int, l *Lifecycle) error {
+	var errs ValidationErrors
 	for j, h := range l.Install {
 		p := fmt.Sprintf("%s.config.install[%d]", base, j)
 		if len(h.Command) == 0 {
-			return fieldErrorf(p, "capabilities[%d]: install[%d]: command is required", i, j)
+			errs.add(fieldErrorf(p, "capabilities[%d]: install[%d]: command is required", i, j))
 		}
 		for k, e := range h.Env {
 			if !envVarName.MatchString(e) {
-				return fieldErrorf(fmt.Sprintf("%s.env[%d]", p, k), "capabilities[%d]: install[%d]: env entry %q is not a valid env var name", i, j, e)
+				errs.add(fieldErrorf(fmt.Sprintf("%s.env[%d]", p, k), "capabilities[%d]: install[%d]: env entry %q is not a valid env var name", i, j, e))
 			}
 		}
 	}
 	for j, h := range l.Startup {
 		p := fmt.Sprintf("%s.config.startup[%d]", base, j)
 		if len(h.Command) == 0 {
-			return fieldErrorf(p, "capabilities[%d]: startup[%d]: command is required", i, j)
+			errs.add(fieldErrorf(p, "capabilities[%d]: startup[%d]: command is required", i, j))
 		}
 		for k, e := range h.Env {
 			if !envVarName.MatchString(e) {
-				return fieldErrorf(fmt.Sprintf("%s.env[%d]", p, k), "capabilities[%d]: startup[%d]: env entry %q is not a valid env var name", i, j, e)
+				errs.add(fieldErrorf(fmt.Sprintf("%s.env[%d]", p, k), "capabilities[%d]: startup[%d]: env entry %q is not a valid env var name", i, j, e))
 			}
 		}
 	}
 	for j, f := range l.Files {
 		p := fmt.Sprintf("%s.config.files[%d]", base, j)
 		if !strings.HasPrefix(f.Path, "/") {
-			return fieldErrorf(p+".path", "capabilities[%d]: files[%d]: path %q must be absolute", i, j, f.Path)
+			errs.add(fieldErrorf(p+".path", "capabilities[%d]: files[%d]: path %q must be absolute", i, j, f.Path))
 		}
 		if f.Mode != "" && !octalMode.MatchString(f.Mode) {
-			return fieldErrorf(p+".mode", "capabilities[%d]: files[%d]: invalid octal mode %q", i, j, f.Mode)
+			errs.add(fieldErrorf(p+".mode", "capabilities[%d]: files[%d]: invalid octal mode %q", i, j, f.Mode))
 		}
 	}
-	return nil
+	return errs.err()
 }

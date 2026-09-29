@@ -3,7 +3,6 @@ package assemble
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -22,14 +21,6 @@ type Input struct {
 	Config   ocispec.Image
 }
 
-// Merged is the composed image: the sandbox's config with every mixin's
-// layers appended in composition order.
-type Merged struct {
-	Manifest   ocispec.Manifest
-	Config     ocispec.Image
-	ConfigJSON []byte
-}
-
 // Merge computes the composed image. The sandbox anchors the runtime
 // contract — entrypoint, cmd, user, working dir travel unchanged, and the
 // same fields in a mixin's config are ignored (they exist for standalone
@@ -43,7 +34,7 @@ type Merged struct {
 // collisions Validate rejects. Labels resolve to the first writer instead:
 // they are metadata no runtime reads, and build tooling stamps its own
 // values into every image.
-func Merge(sandbox Input, mixins []Input) (*Merged, error) {
+func Merge(sandbox Input, mixins []Input) (*Image, error) {
 	if len(sandbox.Manifest.Layers) != len(sandbox.Config.RootFS.DiffIDs) {
 		return nil, fmt.Errorf("sandbox kit %s: %d manifest layers but %d config diff_ids", sandbox.Name, len(sandbox.Manifest.Layers), len(sandbox.Config.RootFS.DiffIDs))
 	}
@@ -56,19 +47,14 @@ func Merge(sandbox Input, mixins []Input) (*Merged, error) {
 	config.RootFS.DiffIDs = append([]godigest.Digest{}, sandbox.Config.RootFS.DiffIDs...)
 	config.History = append([]ocispec.History{}, sandbox.Config.History...)
 
-	manifest := ocispec.Manifest{
-		Versioned:   sandbox.Manifest.Versioned,
-		MediaType:   ocispec.MediaTypeImageManifest,
-		Layers:      append([]ocispec.Descriptor{}, sandbox.Manifest.Layers...),
-		Annotations: map[string]string{},
-	}
+	layers := append([]ocispec.Descriptor{}, sandbox.Manifest.Layers...)
 
 	owners := newConfigOwners(sandbox)
 	for _, m := range mixins {
 		if len(m.Manifest.Layers) != len(m.Config.RootFS.DiffIDs) {
 			return nil, fmt.Errorf("mixin kit %s: %d manifest layers but %d config diff_ids", m.Name, len(m.Manifest.Layers), len(m.Config.RootFS.DiffIDs))
 		}
-		manifest.Layers = append(manifest.Layers, m.Manifest.Layers...)
+		layers = append(layers, m.Manifest.Layers...)
 		config.RootFS.DiffIDs = append(config.RootFS.DiffIDs, m.Config.RootFS.DiffIDs...)
 		for range m.Manifest.Layers {
 			// No timestamp: the merged config is addressed by the lock, and
@@ -85,17 +71,7 @@ func Merge(sandbox Input, mixins []Input) (*Merged, error) {
 		}
 	}
 
-	configJSON, err := json.Marshal(config)
-	if err != nil {
-		return nil, fmt.Errorf("marshal merged config: %w", err)
-	}
-	manifest.Config = ocispec.Descriptor{
-		MediaType: ocispec.MediaTypeImageConfig,
-		Digest:    godigest.FromBytes(configJSON),
-		Size:      int64(len(configJSON)),
-	}
-
-	return &Merged{Manifest: manifest, Config: config, ConfigJSON: configJSON}, nil
+	return &Image{Config: config, Layers: layers}, nil
 }
 
 // configOwners tracks which kit stated each env and label value, so an

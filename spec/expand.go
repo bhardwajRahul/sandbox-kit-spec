@@ -397,10 +397,16 @@ func typedScalar(v string) any {
 // The effective descriptor is the enforcement input, so a surviving
 // reference would become literal policy.
 func ValidateEffective(raw []byte, d *Descriptor) ([]string, error) {
-	if refs := ReferencedArgs(raw); len(refs) > 0 {
-		return nil, fmt.Errorf("effective descriptor still references kit args %v; expansion did not run or a value did not resolve", refs)
+	var errs ValidationErrors
+	if !d.declarationsOnly && HasGroups(d.Capabilities) {
+		errs.add(fieldErrorf("capabilities", "effective descriptor still contains unselected groups"))
 	}
-	return ValidateRaw(raw, d)
+	if refs := ReferencedArgs(raw); len(refs) > 0 {
+		errs.add(fieldErrorf("", "effective descriptor still references kit args %v; expansion did not run or a value did not resolve", refs))
+	}
+	warnings, err := ValidateRaw(raw, d)
+	errs.add(err)
+	return warnings, errs.err()
 }
 
 // ReferencedArgs returns the set of arg names referenced anywhere in the

@@ -19,7 +19,7 @@ import (
 	"github.com/docker/sandbox-kit-spec/v3/spec"
 )
 
-func TestAssembleReadsDescriptorsAndMergesInGraphOrder(t *testing.T) {
+func TestResolveReadsDescriptorsAndMergesInGraphOrder(t *testing.T) {
 	reg := newRegistry(t)
 	tool := reg.image(t, kitJSON(t, &spec.Descriptor{
 		SchemaVersion: spec.SchemaVersion,
@@ -39,10 +39,10 @@ func TestAssembleReadsDescriptorsAndMergesInGraphOrder(t *testing.T) {
 
 	client, err := New()
 	require.NoError(t, err)
-	merged, err := client.Assemble(context.Background(), reqs(
+	merged, err := client.Resolve(context.Background(), reqs(
 		reg.ref("kits/hello", "1.0.0"),
 		reg.ref("kits/tool", "1.0.0"),
-	), spec.MergeOptions{})
+	))
 	require.NoError(t, err)
 	require.Equal(t, spec.KindWorkload, merged.Descriptor.Kind)
 	require.Equal(t, []string{"tool@1.0.0", "hello@1.0.0"}, merged.Descriptor.Provides)
@@ -62,12 +62,12 @@ func TestAVersionShapedTagOverridesAStaleDescriptor(t *testing.T) {
 
 	client, err := New()
 	require.NoError(t, err)
-	merged, err := client.Assemble(context.Background(), reqs(reg.ref("kits/hello", "2.0.0")), spec.MergeOptions{})
+	merged, err := client.Resolve(context.Background(), reqs(reg.ref("kits/hello", "2.0.0")))
 	require.NoError(t, err)
 	require.Equal(t, []string{"hello@2.0.0"}, merged.Descriptor.Provides)
 }
 
-func TestAssemblePartialAllowsASetOfMixins(t *testing.T) {
+func TestResolvePartialAllowsASetOfMixins(t *testing.T) {
 	reg := newRegistry(t)
 	tool := reg.image(t, kitJSON(t, &spec.Descriptor{
 		SchemaVersion: spec.SchemaVersion,
@@ -80,10 +80,10 @@ func TestAssemblePartialAllowsASetOfMixins(t *testing.T) {
 
 	client, err := New()
 	require.NoError(t, err)
-	_, err = client.Assemble(context.Background(), refs, spec.MergeOptions{})
+	_, err = client.Resolve(context.Background(), refs)
 	require.ErrorContains(t, err, "no workload kit")
 
-	merged, err := client.AssemblePartial(context.Background(), refs, spec.MergeOptions{})
+	merged, err := client.ResolvePartial(context.Background(), refs)
 	require.NoError(t, err)
 	require.Equal(t, spec.KindMixin, merged.Descriptor.Kind)
 }
@@ -115,13 +115,13 @@ func TestCreatePhaseArgsAreResolvedPerKitBeforeMerge(t *testing.T) {
 	client, err := New()
 	require.NoError(t, err)
 	refA, refB := reg.ref("kits/a", "1.0.0"), reg.ref("kits/b", "1.0.0")
-	_, err = client.AssemblePartial(context.Background(), []Request{{Reference: refA}}, spec.MergeOptions{})
+	_, err = client.ResolvePartial(context.Background(), []Request{{Reference: refA}})
 	require.ErrorContains(t, err, "required")
 
-	merged, err := client.AssemblePartial(context.Background(), []Request{
+	merged, err := client.ResolvePartial(context.Background(), []Request{
 		{Reference: refA, Args: map[string]string{"host": "a.example"}},
 		{Reference: refB, Args: map[string]string{"host": "b.example"}},
-	}, spec.MergeOptions{})
+	})
 	require.NoError(t, err)
 	policy, err := spec.NetworkPolicyOf(merged.Descriptor.Capabilities)
 	require.NoError(t, err)
@@ -148,18 +148,18 @@ func TestCreatePhaseEnvExportsAreReturned(t *testing.T) {
 	client, err := New()
 	require.NoError(t, err)
 	refA, refB := reg.ref("kits/a", "1.0.0"), reg.ref("kits/b", "1.0.0")
-	_, err = client.AssemblePartial(context.Background(), []Request{
+	_, err = client.ResolvePartial(context.Background(), []Request{
 		{Reference: refA, Args: map[string]string{"token": "alpha"}},
 		{Reference: refB, Args: map[string]string{"token": "beta"}},
-	}, spec.MergeOptions{})
+	})
 	require.ErrorContains(t, err, "KIT_TOKEN")
 
-	merged, err := client.AssemblePartial(context.Background(), []Request{
+	merged, err := client.ResolvePartial(context.Background(), []Request{
 		{Reference: refA, Args: map[string]string{"token": "alpha"}},
 		{Reference: refB, Args: map[string]string{"token": "alpha"}},
-	}, spec.MergeOptions{})
+	})
 	require.NoError(t, err)
-	require.Equal(t, map[string]string{"KIT_TOKEN": "alpha"}, merged.Env)
+	require.Equal(t, map[string]string{"KIT_TOKEN": "alpha"}, merged.ContainerEnv)
 	require.Empty(t, merged.Descriptor.Args)
 }
 
@@ -757,13 +757,13 @@ func kitJSON(t *testing.T, d *spec.Descriptor) []byte {
 	return raw
 }
 
-// registry is a distribution server that stores manifests and refuses
-// blob reads, so a test can see that a descriptor fetch stayed in the
-// manifest.
+// registry serves manifests and explicitly registered config blobs; layer
+// blobs are absent so metadata-only consumers fail if they try to read them.
 type registry struct {
 	*httptest.Server
 	mu         sync.Mutex
 	manifests  map[string][]byte
+	blobs      map[string][]byte
 	mediaType  map[string]string
 	tagged     map[string][]byte
 	user       string
@@ -776,6 +776,7 @@ func newRegistry(t *testing.T) *registry {
 	t.Helper()
 	r := &registry{
 		manifests: map[string][]byte{},
+		blobs:     map[string][]byte{},
 		mediaType: map[string]string{},
 		tagged:    map[string][]byte{},
 	}
@@ -882,19 +883,13 @@ func (r *registry) tag(repo, tag string, manifest []byte) {
 }
 
 func (r *registry) serve(w http.ResponseWriter, req *http.Request) {
-	if strings.Contains(req.URL.Path, "/blobs/") {
-		r.mu.Lock()
-		r.blobReads++
-		r.mu.Unlock()
-		http.NotFound(w, req)
-		return
-	}
+
 	if req.URL.Path == "/v2/" || req.URL.Path == "/v2" {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 	path := strings.TrimPrefix(req.URL.Path, "/v2/")
-	if !strings.Contains(path, "/manifests/") {
+	if !strings.Contains(path, "/manifests/") && !strings.Contains(path, "/blobs/") {
 		http.NotFound(w, req)
 		return
 	}
@@ -912,6 +907,11 @@ func (r *registry) serve(w http.ResponseWriter, req *http.Request) {
 	r.mu.Lock()
 	body, ok := r.manifests[path]
 	mediaType := r.mediaType[path]
+	if strings.Contains(path, "/blobs/") {
+		r.blobReads++
+		body, ok = r.blobs[path]
+		mediaType = "application/octet-stream"
+	}
 	r.mu.Unlock()
 	if !ok {
 		http.NotFound(w, req)
@@ -925,4 +925,50 @@ func (r *registry) serve(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	_, _ = w.Write(body)
+}
+
+func TestFetchValidationIncludesSourceExcerpts(t *testing.T) {
+	raw := []byte("schemaVersion: \"3\"\nkind: mixin\niconUrl: http://example.com\nargs:\n  version:\n    pattern: '['\n")
+	reg := newRegistry(t)
+	reg.tag("kits/broken", "1.0.0", reg.image(t, raw))
+	ref := reg.ref("kits/broken", "1.0.0")
+	client, err := New()
+	require.NoError(t, err)
+	_, err = client.Fetch(t.Context(), ref)
+	require.ErrorContains(t, err, ref+" (published descriptor):3:10: iconUrl:")
+	require.ErrorContains(t, err, ref+" (published descriptor):6:14: args.version.pattern:")
+	require.ErrorContains(t, err, "\n3 | iconUrl: http://example.com\n  |          ^")
+	var all spec.ValidationErrors
+	require.ErrorAs(t, err, &all)
+	require.Len(t, all, 2)
+
+	// Already-fetched Kits also pass through validation during composition.
+	d, err := spec.Decode(raw)
+	require.NoError(t, err)
+	_, err = expandKit(&Kit{Reference: ref, Raw: raw, Descriptor: d}, nil)
+	require.ErrorContains(t, err, ref+" (published descriptor):3:10:")
+	require.ErrorContains(t, err, "\n6 |     pattern: '['\n  |              ^")
+	require.ErrorAs(t, err, &all)
+	require.Len(t, all, 2)
+}
+
+func TestExpandedValidationShowsTheEffectiveSource(t *testing.T) {
+	raw := []byte(`schemaVersion: "3"
+kind: mixin
+args:
+  port: {default: '99999'}
+capabilities:
+  - type: com.docker.sandbox/port@1
+    config: {container: '${{ kit.args.port }}', transport: quic}
+`)
+	d, err := spec.Decode(raw)
+	require.NoError(t, err)
+	_, err = expandKit(&Kit{Reference: "example.com/kit:1", Raw: raw, Descriptor: d}, nil)
+	require.ErrorContains(t, err, "example.com/kit:1 (expanded descriptor):")
+	require.ErrorContains(t, err, `"container":99999`)
+	require.ErrorContains(t, err, "transport must be tcp or udp")
+	require.NotContains(t, err.Error(), "${{ kit.args.port }}")
+	var all spec.ValidationErrors
+	require.ErrorAs(t, err, &all)
+	require.Len(t, all, 2)
 }

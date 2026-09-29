@@ -188,7 +188,7 @@ func (f row) render(out *errWriter, style palette, shape layout) {
 	// A stacked row puts the name on a line of its own and its detail
 	// back under the symbol, which is where a name too wide for the
 	// column goes too.
-	long := shape.stacked || columns(f.name) > shape.nameWidth
+	long := shape.stacked || columns(f.name) > shape.nameWidth || strings.Contains(f.detail, "\n")
 	column := rowIndent + 2 + shape.nameWidth + 1
 	if long {
 		column = rowIndent + 2
@@ -229,8 +229,12 @@ func (f row) render(out *errWriter, style palette, shape layout) {
 
 // wrap breaks text on spaces at width. A word longer than the column —
 // a reference, a path — is left whole: breaking it would make it
-// uncopyable to spare an edge.
+// uncopyable to spare an edge. Multiline details carry deliberate layout,
+// including source excerpts and carets, and are preserved verbatim.
 func wrap(text string, width int) []string {
+	if strings.Contains(text, "\n") {
+		return strings.Split(text, "\n")
+	}
 	if text == "" {
 		return nil
 	}

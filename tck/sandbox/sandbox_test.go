@@ -59,6 +59,39 @@ func TestASingleCapabilityRuntimeIsJudgedOnlyOnItsClaim(t *testing.T) {
 	}
 }
 
+func TestAtomicSelectionForPartialRuntimes(t *testing.T) {
+	for _, tc := range []struct {
+		claim  string
+		broken string
+	}{
+		{capLifecycle, ""},
+		{groupVolume, ""},
+		{capLifecycle, "ordinary-ignore-optional-rejection"},
+		{capLifecycle, "ordinary-ignore-required-rejection"},
+		{capLifecycle, "partial-group-applies-lifecycle"},
+		{capLifecycle, "partial-required-skips-volume"},
+		{groupVolume, "partial-required-skips-lifecycle"},
+		{groupVolume, "partial-group-applies-volume"},
+	} {
+		t.Run(tc.claim+"/"+tc.broken, func(t *testing.T) {
+			a := adapter.New(filepath.Join("testdata", "fake-adapter"))
+			a.Env = []string{"KIT_TCK_FAKE_STATE=" + t.TempDir(), "KIT_TCK_FAKE_CLAIMS=" + tc.claim, "KIT_TCK_FAKE_BROKEN=" + tc.broken}
+			rep, err := Run(t.Context(), &Env{Adapter: a, Fixtures: Fixtures(FixtureDir)})
+			require.NoError(t, err)
+			if tc.broken != "" {
+				require.Contains(t, failedRequirements(rep), "SPEC-v3 §7.1.1/atomic-selection")
+				return
+			}
+			require.False(t, rep.Failed(), "%s", rep)
+			for _, finding := range rep.Findings {
+				if finding.Requirement == "SPEC-v3 §7.1.1/atomic-selection" {
+					require.NotEqual(t, report.Skip, finding.Severity)
+				}
+			}
+		})
+	}
+}
+
 func TestLongRunningNeedsNoHelperCapabilities(t *testing.T) {
 	a := adapter.New(filepath.Join("testdata", "fake-adapter"))
 	a.Env = []string{
@@ -167,25 +200,59 @@ var mutations = map[string][]string{
 	"trusts-any-host-key":                   {"ssh-agent@1/logins-bounded"},
 	"trusts-unverified-binding":             {"ssh-agent@1/binding-verified"},
 	"trusts-forwarding-binding":             {"ssh-agent@1/binding-verified"},
-	"ignores-long-running-mixin":            {"long-running@1/survives-session-disconnect"},
-	"stops-on-disconnect":                   {"long-running@1/survives-session-disconnect"},
-	"loses-background-on-disconnect":        {"long-running@1/survives-session-disconnect"},
-	"restarts-background-on-disconnect":     {"long-running@1/survives-session-disconnect"},
-	"idle-errors":                           {"long-running@1/survives-session-disconnect"},
-	"status-errors":                         {"long-running@1/survives-session-disconnect", "long-running@1/explicit-stop-honored"},
-	"status-malformed":                      {"long-running@1/survives-session-disconnect", "long-running@1/explicit-stop-honored"},
-	"ignores-explicit-stop":                 {"long-running@1/explicit-stop-honored"},
-	"refuses-optional-long-running":         {"conformance.md §2.2/optional-long-running-accepted"},
-	"install-twice":                         {"lifecycle@1/install-once"},
-	"no-startup":                            {"lifecycle@1/startup-every-boot"},
-	"ignores-files":                         {"lifecycle@1/files-written"},
-	"writes-files-as-root":                  {"lifecycle@1/files-written"},
-	"writes-files-read-only":                {"lifecycle@1/files-written"},
-	"leaks-env":                             {"lifecycle@1/hook-env-restricted"},
-	"allows-everything":                     {"network-policy@1/deny-by-default", "network-policy@2/deny-by-default"},
-	"ignores-http-method":                   {"network-policy@2/http-method-enforced"},
-	"ignores-http-path":                     {"network-policy@2/http-path-enforced"},
-	"ignores-http-deny":                     {"network-policy@2/http-deny-precedence"},
+	"group-invalid-expanded":                {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
+	"group-skips-invalid-expanded":          {"SPEC-v3 §7.1.1/validate-expanded-declarations"},
+	"group-reselect-skipped-restart":        {"SPEC-v3 §7.1.1/lifetime"},
+	"group-never-admits-recreate":           {"SPEC-v3 §7.1.1/lifetime"},
+	"group-ignore-required-lifecycle":       {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-ignore-optional-lifecycle":       {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-selected-member-sources":         {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-skipped-member-sources":          {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-member-sources-local":            {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-wrong-source-path":               {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-wrong-source-kit":                {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-accepted-rejection":              {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-extra-rejection":                 {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-required-no-kit":                 {"SPEC-v3 §7.1.1/atomic-selection"},
+
+	"ordinary-ignore-optional-rejection": {"SPEC-v3 §7.1.1/atomic-selection"},
+	"ordinary-ignore-required-rejection": {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-extra-grant":                  {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-conflict-no-kit":              {"SPEC-v3 §7.1.1/conflicts"},
+	"group-file-leak":                    {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-order":                        {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-records":                      {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-member-paths":                 {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-missing-ordinary-record":      {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-missing-independent-record":   {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-accept-required":              {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-drop-conflict":                {"SPEC-v3 §7.1.1/conflicts"},
+	"group-drop-interactive-conflict":    {"SPEC-v3 §7.1.1/conflicts"},
+	"group-reselect-restart":             {"SPEC-v3 §7.1.1/lifetime"},
+	"group-no-recreate":                  {"SPEC-v3 §7.1.1/lifetime"},
+	"group-stale-recreate-records":       {"SPEC-v3 §7.1.1/lifetime"},
+	"group-stale-recreate-hooks":         {"SPEC-v3 §7.1.1/lifetime"},
+	"group-skip-failure":                 {"SPEC-v3 §7.1.1/execution"},
+
+	"ignores-long-running-mixin":        {"long-running@1/survives-session-disconnect"},
+	"stops-on-disconnect":               {"long-running@1/survives-session-disconnect"},
+	"loses-background-on-disconnect":    {"long-running@1/survives-session-disconnect"},
+	"restarts-background-on-disconnect": {"long-running@1/survives-session-disconnect"},
+	"idle-errors":                       {"long-running@1/survives-session-disconnect"},
+	"status-errors":                     {"long-running@1/survives-session-disconnect", "long-running@1/explicit-stop-honored"},
+	"status-malformed":                  {"long-running@1/survives-session-disconnect", "long-running@1/explicit-stop-honored"},
+	"ignores-explicit-stop":             {"long-running@1/explicit-stop-honored"},
+	"refuses-optional-long-running":     {"conformance.md §2.2/optional-long-running-accepted"},
+	"install-twice":                     {"lifecycle@1/install-once"},
+	"no-startup":                        {"lifecycle@1/startup-every-boot"},
+	"ignores-files":                     {"lifecycle@1/files-written"},
+	"writes-files-as-root":              {"lifecycle@1/files-written"},
+	"writes-files-read-only":            {"lifecycle@1/files-written"},
+	"leaks-env":                         {"lifecycle@1/hook-env-restricted"},
+	"allows-everything":                 {"network-policy@1/deny-by-default", "network-policy@2/deny-by-default"},
+	"ignores-http-method":               {"network-policy@2/http-method-enforced"},
+	"ignores-http-path":                 {"network-policy@2/http-path-enforced"},
+	"ignores-http-deny":                 {"network-policy@2/http-deny-precedence"},
 	"leaves-install-egress-open": {
 		"network-policy@1/install-phase-scoped",
 		"network-policy@2/install-phase-scoped",

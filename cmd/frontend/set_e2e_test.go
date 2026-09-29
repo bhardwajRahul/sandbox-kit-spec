@@ -14,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/docker/sandbox-kit-spec/v3/assemble"
+	"github.com/docker/sandbox-kit-spec/v3/fetch"
 	"github.com/docker/sandbox-kit-spec/v3/spec"
 	tckkit "github.com/docker/sandbox-kit-spec/v3/tck/kit"
 )
@@ -207,6 +209,10 @@ kits:
 		require.NoError(t, err)
 		require.NoError(t, report.Err(), "the published set conforms:\n%s", report)
 	}
+	t.Run("conditional declarations", func(t *testing.T) {
+		child := &e2e{t: t, builder: e.builder}
+		child.groupSet(frontend, registry)
+	})
 }
 
 // e2e runs the docker commands the test needs, failing the test on the
@@ -298,6 +304,7 @@ func (e *e2e) publish(root, stem, ref, descriptor string, extra map[string]strin
 	require.NoError(e.t, os.MkdirAll(dir, 0o755))
 	require.NoError(e.t, os.WriteFile(filepath.Join(dir, stem+".yaml"), []byte(descriptor), 0o644))
 	for name, body := range extra {
+		require.NoError(e.t, os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o755))
 		require.NoError(e.t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644))
 	}
 	e.run("docker", "buildx", "--builder", e.builder, "build", dir,
@@ -331,4 +338,104 @@ func (e *e2e) manifest(registry, repository, tag string) publishedManifest {
 	require.Equal(e.t, http.StatusOK, resp.StatusCode, "fetch %s: %s", url, body)
 	require.NoError(e.t, json.Unmarshal(body, &out))
 	return out
+}
+
+// Exercise real layer staging, publication, fetch-time selection and assembly
+// together: neither a schema test nor a merge unit test can see missing bodies.
+func (e *e2e) groupSet(frontend, registry string) {
+	t := e.t
+	dir := t.TempDir()
+	e.publish(dir, "conditional", registry+"/sbx-kit-conditional:1.0.0", `# syntax=`+frontend+`
+schemaVersion: "3"
+kind: mixin
+capabilities:
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      startup: [{command: before}]
+  - type: com.docker.sandbox/agent-context@1
+    config: {contentFile: ./always/context.md}
+  - group:
+      name: Optional feature
+      optional: true
+      capabilities:
+        - type: com.example/feature@1
+        - type: com.docker.sandbox/lifecycle@1
+          config:
+            startup: [{command: inside}]
+        - type: com.docker.sandbox/agent-context@1
+          config: {contentFile: ./optional/context.md}
+`, map[string]string{"always/context.md": "Always available.", "optional/context.md": "Only for the optional feature."})
+	e.publish(dir, "conditional-set", registry+"/sbx-kit-conditional-set:1.0.0", `# syntax=`+frontend+`
+schemaVersion: "3"
+kind: set
+capabilities:
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      startup: [{command: after}]
+  - type: com.docker.sandbox/agent-context@1
+    config: {contentFile: ./own.md}
+kits:
+  - ref: `+registry+`/sbx-kit-base:1.0.0
+  - ref: `+registry+`/sbx-kit-conditional:1.0.0
+`, map[string]string{"own.md": "Set guidance."})
+	ref := registry + "/sbx-kit-conditional-set:1.0.0"
+	client, err := fetch.New(fetch.WithPlainHTTP())
+	require.NoError(t, err)
+	published, err := client.Fetch(t.Context(), ref)
+	require.NoError(t, err)
+	require.True(t, spec.HasGroups(published.Descriptor.Capabilities))
+	var bodies []string
+	for _, entry := range spec.DeclaredCapabilities(published.Descriptor.Capabilities) {
+		if entry.Type == spec.CapabilityAgentContext {
+			var ac spec.AgentContext
+			require.NoError(t, spec.DecodeCapabilityConfig(entry, &ac))
+			bodies = append(bodies, ac.ContentFile)
+		}
+	}
+	require.Len(t, bodies, 4)
+	args := append([]string{"run", "--rm", "--pull=always", "--entrypoint", "cat", ref}, bodies...)
+	text := e.run("docker", args...)
+	for _, body := range []string{"Base guidance.", "Always available.", "Only for the optional feature.", "Set guidance."} {
+		require.Contains(t, text, body)
+	}
+	for _, accept := range []bool{false, true} {
+		calls := 0
+		resolved, err := client.Resolve(t.Context(), []fetch.Request{{Reference: ref}}, fetch.WithCapabilitySelector(func(c spec.Capability) bool { calls++; return accept || c.Type != "com.example/feature@1" }))
+		require.NoError(t, err)
+		lc, err := spec.LifecycleOf(resolved.Descriptor.Capabilities)
+		require.NoError(t, err)
+		var commands []string
+		for _, hook := range lc.Startup {
+			commands = append(commands, strings.Join(hook.Command, " "))
+		}
+		expected := []string{"sh -c before", "sh -c after"}
+		if accept {
+			expected = []string{"sh -c before", "sh -c inside", "sh -c after"}
+		}
+		require.Equal(t, expected, commands)
+		selectedBodies := 0
+		for _, kit := range resolved.Kits {
+			for _, c := range kit.Descriptor.Capabilities {
+				if c.Type == spec.CapabilityAgentContext {
+					selectedBodies++
+				}
+			}
+		}
+		expectedBodies := 3
+		if accept {
+			expectedBodies = 4
+		}
+		require.Equal(t, expectedBodies, selectedBodies)
+		before := calls
+		_, err = assemble.Assemble(t.Context(), resolved.Kits, client.LoadImage)
+		require.NoError(t, err)
+		require.Equal(t, before, calls)
+	}
+	artifacts, err := tckkit.FromRegistryAll(t.Context(), ref)
+	require.NoError(t, err)
+	for _, artifact := range artifacts {
+		rep, err := tckkit.Run(t.Context(), artifact)
+		require.NoError(t, err)
+		require.NoError(t, rep.Err(), "%s", rep)
+	}
 }

@@ -219,12 +219,14 @@ func TestSSHAgentsOf(t *testing.T) {
 	d := sshAgentKit(t, KindMixin,
 		sshAgentEntry("[install, runtime]", true),
 		sshAgentEntry("runtime", false, "unrestricted: false", "sign: [git]"))
+	d.Capabilities[0].Name = "SSH agent"
 	d.Capabilities[0].Description = "User-selected keys"
 	all, err := SSHAgentsOf(d.Capabilities)
 	require.NoError(t, err)
 	require.Len(t, all, 2)
 	require.Equal(t, SSHAgentPhases{"install", "runtime"}, all[0].Phase)
 	require.True(t, all[0].Optional)
+	require.Equal(t, "SSH agent", all[0].Name)
 	require.Equal(t, "User-selected keys", all[0].Description)
 	require.False(t, all[1].Optional)
 	require.True(t, all[1].Bounded())
@@ -261,4 +263,59 @@ func TestSSHAgentMultiPhaseMergeAndSurface(t *testing.T) {
 	raw, err := json.Marshal(SSHAgent{Phase: SSHAgentPhases{"runtime"}})
 	require.NoError(t, err)
 	require.Contains(t, string(raw), `"phase":"runtime"`)
+}
+
+func TestSSHAgentGroupSelectionAndComposition(t *testing.T) {
+	d := sshAgentKit(t, KindWorkload,
+		sshAgentEntry("[install, runtime]", false, "unrestricted: false", "sign: [git]"),
+		sshAgentEntry("runtime", false))
+	d.Capabilities[1] = Capability{Group: &CapabilityGroup{
+		Optional: true, Capabilities: []Capability{d.Capabilities[1], groupHook("signing enabled")},
+	}}
+	_, err := Validate(d)
+	require.NoError(t, err, "phase overlap across declaration blocks is composed after selection")
+	_, err = Compose([]Contribution{{Reference: "agent", Descriptor: d}})
+	require.ErrorContains(t, err, "select groups before composition")
+	published, err := Merge([]Contribution{{Reference: "agent", Descriptor: d}}, MergeOptions{})
+	require.NoError(t, err)
+	require.True(t, HasGroups(published.Descriptor.Capabilities))
+
+	for _, tt := range []struct {
+		name     string
+		selector SelectCapability
+		want     []string
+		skipped  int
+	}{
+		{"accept", Supported(KnownCapabilities()...), []string{"install sign git", "runtime"}, 0},
+		{"skip without lifecycle", Supported(CapabilitySSHAgent), []string{"install sign git", "runtime sign git"}, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			selection, err := SelectCapabilities(published.Descriptor, tt.selector)
+			require.NoError(t, err)
+			require.Len(t, selection.Skipped, tt.skipped)
+			selected := *published.Descriptor
+			selected.Capabilities = selection.Capabilities
+			effective, err := Compose([]Contribution{{Reference: "published", Descriptor: &selected}})
+			require.NoError(t, err)
+			_, err = Validate(effective)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, SurfaceOf(effective).SSHAgent)
+			require.Equal(t, tt.skipped == 0, HasCapability(effective.Capabilities, CapabilityLifecycle))
+			agents, err := SSHAgentsOf(effective.Capabilities)
+			require.NoError(t, err)
+			require.Len(t, agents, 2)
+			for _, a := range agents {
+				require.False(t, a.Optional, "the ordinary required request wins in each phase")
+			}
+		})
+	}
+
+	// A skipped group's invalid config must still be diagnosed before
+	// runtime selection can discard it.
+	d.Capabilities[1].Group.Capabilities[0].Config["phase"] = nil
+	_, err = SelectCapabilities(d, func(Capability) bool {
+		t.Fatal("invalid declarations reached selection")
+		return false
+	})
+	require.ErrorContains(t, err, "capabilities[1].group.capabilities[0].config.phase")
 }
