@@ -125,12 +125,17 @@ func groupSelection(ctx context.Context, e *Env) []report.Finding {
 				if !slices.Equal(r.Members, members) {
 					return []report.Finding{report.Failf("group record lost ordered member locations: got %v, want %v", r.Members, members)}
 				}
-				if r.Source == nil || r.Source.Kit == "" || r.Source.Path == "" {
-					return []report.Finding{report.Failf("group record lost source identity")}
+				if r.Source == nil || r.Source.Path != "capabilities[1]" ||
+					(r.Source.Kit != "groups" && r.Source.Kit != e.Fixtures("groups")) {
+					return []report.Finding{report.Failf("group record has incorrect source identity: %v", r.Source)}
 				}
 				sourceKit = r.Source.Kit
-				if reject && !slices.Contains(r.Rejected, "capabilities[1].group.capabilities[0]") {
-					return []report.Finding{report.Failf("skip record lost rejected member")}
+				var rejected []string
+				if reject {
+					rejected = []string{"capabilities[1].group.capabilities[0]"}
+				}
+				if !slices.Equal(r.Rejected, rejected) {
+					return []report.Finding{report.Failf("incorrect rejected members: got %v, want %v", r.Rejected, rejected)}
 				}
 			}
 		}
@@ -159,7 +164,7 @@ func groupSelection(ctx context.Context, e *Env) []report.Finding {
 	_, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, "groups-required"}, adapter.CreateOptions{RejectCapabilities: []string{groupVolume}})
 	defer cleanup()
 	var refused *adapter.RefusedError
-	if !errors.As(err, &refused) || !strings.Contains(refused.Detail, "capabilities[0].group.capabilities[0]") {
+	if !errors.As(err, &refused) || !strings.Contains(refused.Detail, "groups-required") || !strings.Contains(refused.Detail, "capabilities[0].group.capabilities[0]") {
 		return []report.Finding{report.Failf("required group must refuse and identify rejected member: %v", err)}
 	}
 	return ordinarySelection(ctx, e)

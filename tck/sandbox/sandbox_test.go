@@ -148,6 +148,12 @@ func TestAConformingRuntimePasses(t *testing.T) {
 // requirement — the two network-policy versions state the same duty about
 // the host lists — and dropping it has to fail every one of them.
 var mutations = map[string][]string{
+	"group-wrong-source-path":  {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-wrong-source-kit":   {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-accepted-rejection": {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-extra-rejection":    {"SPEC-v3 §7.1.1/atomic-selection"},
+	"group-required-no-kit":    {"SPEC-v3 §7.1.1/atomic-selection"},
+
 	"ordinary-ignore-optional-rejection": {"SPEC-v3 §7.1.1/atomic-selection"},
 	"ordinary-ignore-required-rejection": {"SPEC-v3 §7.1.1/atomic-selection"},
 	"group-extra-grant":                  {"SPEC-v3 §7.1.1/atomic-selection"},

@@ -46,6 +46,28 @@ write_group_state() {
     if [ "$rejected" != yes ]; then surface='{"services":["group:Feature"],"storagePaths":["/var/tmp/group-volume"]}'; fi
   fi
   printf '{"selection":{"selected":[%s],"skipped":[%s]},"surface":%s}\n' "${records[*]}" "$skipped" "$surface" >"$dir/selection.json"
+  case "$broken" in
+  group-wrong-source-path)
+    sed 's/"source":{"kit":"groups","path":"capabilities\[1\]"}/"source":{"kit":"groups","path":"capabilities[9]"}/' "$dir/selection.json" >"$dir/selection.tmp"
+    mv "$dir/selection.tmp" "$dir/selection.json"
+    ;;
+  group-wrong-source-kit)
+    sed 's/"kit":"groups"/"kit":"other-kit"/g' "$dir/selection.json" >"$dir/selection.tmp"
+    mv "$dir/selection.tmp" "$dir/selection.json"
+    ;;
+  group-accepted-rejection)
+    if [ "$rejected" = no ]; then
+      sed 's/"name":"Feature"/"rejected":["capabilities[1].group.capabilities[1]"],"name":"Feature"/' "$dir/selection.json" >"$dir/selection.tmp"
+      mv "$dir/selection.tmp" "$dir/selection.json"
+    fi
+    ;;
+  group-extra-rejection)
+    if [ "$rejected" = yes ]; then
+      sed 's/"rejected":\["capabilities\[1\].group.capabilities\[0\]"\]/"rejected":["capabilities[1].group.capabilities[0]","capabilities[1].group.capabilities[1]"]/' "$dir/selection.json" >"$dir/selection.tmp"
+      mv "$dir/selection.tmp" "$dir/selection.json"
+    fi
+    ;;
+  esac
   if [ "$broken" = group-order ]; then printf 'independent,base' >"$dir/group-order"; fi
   if [ "$broken" = group-records ]; then echo '{"selection":{},"surface":{}}' >"$dir/selection.json"; fi
   if [ "$broken" = group-member-paths ]; then
@@ -177,7 +199,9 @@ create)
       ;;
     */groups-required)
       if [ "$group_rejected" = yes ] && [ "$broken" != group-accept-required ]; then
-        echo 'groups-required capabilities[0].group.capabilities[0]: rejected' >&2
+        source_kit=groups-required
+        if [ "$broken" = group-required-no-kit ]; then source_kit=''; fi
+        echo "$source_kit capabilities[0].group.capabilities[0]: rejected" >&2
         exit 2
       fi
       ;;
