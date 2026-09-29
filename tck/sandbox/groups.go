@@ -264,6 +264,8 @@ func ordinarySelection(ctx context.Context, e *Env) []report.Finding {
 	return nil
 }
 
+// Refused creates have no inspectable sandbox ID. This checks refusal and
+// attribution; conflicts-before-application has a separate coverage waiver.
 func groupConflicts(ctx context.Context, e *Env) []report.Finding {
 	for _, fixture := range []string{"groups-conflict", "groups-interactive-conflict"} {
 		_, cleanup, err := e.sandbox(ctx, []string{fixtureWorkload, fixture}, nil)

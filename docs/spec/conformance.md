@@ -210,3 +210,10 @@ files, hook ordering, skip attribution, and the effective storage grant.
 that optional groups cannot be discarded to repair a selected conflict;
 `groups-failure` checks that an accepted hook's exit is an execution
 error, not a skip or preflight refusal.
+
+The conflict checks observe refusal and its source diagnostics. A refused
+`create` returns no sandbox ID, and the adapter exposes no effect trace
+for a failed create. The suite therefore cannot inspect whether files or
+hooks were applied before refusal. The before-application duty remains
+required by the specification, with an explicit TCK coverage waiver until
+the adapter can expose those effects.

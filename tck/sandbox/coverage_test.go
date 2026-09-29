@@ -154,7 +154,8 @@ var kitCovers = map[string][]string{
 // with its reason. A waiver is a decision, not a gap: it is reviewed like
 // any other line, and removing one is how coverage grows.
 var waived = map[string]string{
-	"SPEC-v3 §7.1.1/publishing": "publisher ordering, provenance, and separate conditional context staging are judged by spec group publication tests and frontend end-to-end tests; the runtime adapter cannot compare original build inputs with the published artifact",
+	"SPEC-v3 §7.1.1/conflicts-before-application": "a refused create returns no sandbox ID and the adapter exposes no failed-create effect trace; the suite can observe conflict refusal but cannot inspect files or hooks applied before that refusal",
+	"SPEC-v3 §7.1.1/publishing":                   "publisher ordering, provenance, and separate conditional context staging are judged by spec group publication tests and frontend end-to-end tests; the runtime adapter cannot compare original build inputs with the published artifact",
 	// SPEC-v3: composition is the resolver's contract, judged by the
 	// resolve package's own tests; the gate is host UX over surface
 	// diffs, judged by the spec package's tests; authoring rules are the

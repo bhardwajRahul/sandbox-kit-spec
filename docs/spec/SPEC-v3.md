@@ -583,10 +583,12 @@ Only selected contributions merge; groups never merge by name. Lifecycle
 hooks concatenate without deduplicating repeated commands. Conflicting
 file paths or multiple interactive declarations are composition errors.
 
-Selected composition conflicts MUST fail before application; optional <!-- tck: SPEC-v3 §7.1.1/conflicts -->
+Selected composition conflicts MUST fail; optional <!-- tck: SPEC-v3 §7.1.1/conflicts -->
 groups cannot be silently dropped to repair them. The effective
 permission surface contains only selected, merged contributions; groups
 add no grants of their own.
+
+Conflict refusal MUST occur before any selected contribution is applied. <!-- tck: SPEC-v3 §7.1.1/conflicts-before-application -->
 
 Publishing MUST preserve conditional boundaries, relative declaration <!-- tck: SPEC-v3 §7.1.1/publishing -->
 order, referenced content, and source attribution. Publishing does not
