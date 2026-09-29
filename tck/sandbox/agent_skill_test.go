@@ -41,3 +41,47 @@ func TestBundledSkillChecksAndMutations(t *testing.T) {
 		})
 	}
 }
+
+// The claim refusal must be the only reason the bundled request cannot run.
+// An adapter accepting unclaimed types still refuses a skill with no destination.
+func TestBundledSkillRequiredUnclaimedIsRefused(t *testing.T) {
+	for _, destination := range []bool{false, true} {
+		for _, broken := range []string{"", "accepts-required-unclaimed"} {
+			label := "without-destination-claim/" + broken
+			claims := capVolume
+			if destination {
+				label = "with-destination-claim/" + broken
+				claims = capAgentSkillsDirectory
+			}
+			t.Run(label, func(t *testing.T) {
+				a := adapter.New(filepath.Join("testdata", "fake-adapter"))
+				a.Env = []string{"KIT_TCK_FAKE_STATE=" + t.TempDir(), "KIT_TCK_FAKE_BROKEN=" + broken, "KIT_TCK_FAKE_CLAIMS=" + claims}
+				e := &Env{Adapter: a, Fixtures: Fixtures(FixtureDir), Claimed: map[string]bool{claims: true}}
+				var probe *check
+				for i := range checks {
+					if checks[i].requirement == "conformance.md §2.2/required-unclaimed-refused" {
+						probe = &checks[i]
+						break
+					}
+				}
+				require.NotNil(t, probe)
+				var skillFindings []report.Finding
+				for _, f := range probe.run(t.Context(), e) {
+					if strings.Contains(f.Detail, capAgentSkill) {
+						skillFindings = append(skillFindings, f)
+					}
+				}
+				if !destination {
+					require.Len(t, skillFindings, 1, "an unavailable dependency must skip the skill probe explicitly")
+					require.Equal(t, report.Skip, skillFindings[0].Severity)
+				} else if broken != "" {
+					require.Len(t, skillFindings, 1, "accepting the unclaimed skill must be caught independently of other types")
+					require.Equal(t, report.Fail, skillFindings[0].Severity)
+					require.Contains(t, skillFindings[0].Detail, "was accepted")
+				} else {
+					require.Empty(t, skillFindings)
+				}
+			})
+		}
+	}
+}

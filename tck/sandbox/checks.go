@@ -227,6 +227,16 @@ var checks = append(gitIdentityChecks, []check{
 				if probe.alone {
 					compose = []string{probe.fixture}
 				}
+				if probe.capability == capAgentSkill {
+					// Without a supported destination, even an adapter
+					// accepting the unclaimed skill can legitimately refuse.
+					if !e.claims(capAgentSkillsDirectory) {
+						findings = append(findings, report.Skipf(
+							"%s: refusal probe needs claimed %s", capAgentSkill, capAgentSkillsDirectory))
+						continue
+					}
+					compose = []string{fixtureBundledReader, probe.fixture}
+				}
 				id, cleanup, err := e.sandbox(ctx, compose, nil)
 				var refused *adapter.RefusedError
 				switch {
