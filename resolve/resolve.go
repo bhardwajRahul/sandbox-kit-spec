@@ -77,6 +77,8 @@ func (r *Resolution) Ordered() []*Unit {
 }
 
 // Resolve validates the closed set and derives its composition order.
+// Capabilities must already be selected and flattened; use Dependencies
+// to order declarations that still contain groups before selection.
 // Every violation in the set is reported, not just the first: the caller
 // assembled the set by hand and deserves the full picture in one pass.
 func Resolve(units []*Unit) (*Resolution, error) {
@@ -126,6 +128,13 @@ func resolve(units []*Unit, partial, capabilities bool) (*Resolution, error) {
 	provides := providesIndex(units, addProblem)
 	checkOneProviderPerName(provides, addProblem)
 	if capabilities {
+		for _, u := range units {
+			for i, c := range u.Descriptor.Capabilities {
+				if c.Group != nil {
+					addProblem("%s capabilities[%d]: select groups before capability-coherent resolution; use Dependencies to order declarations before selection", u.Reference, i)
+				}
+			}
+		}
 		checkOneCredentialOwner(units, addProblem)
 	}
 	checkRequires(units, provides, addProblem)
