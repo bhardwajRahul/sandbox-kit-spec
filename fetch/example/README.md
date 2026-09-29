@@ -72,6 +72,12 @@ multiple inputs with the same expected diff ID is read once, but each
 Kit retains its file ownership for the collision check. Skipping
 capabilities removes neither layers nor argument environment exports.
 
+Each layer inventory is limited to 250,000 archive entries and 32 MiB of
+combined path and link-name bytes, counting repeated entries. Assembly
+fails when either limit is exceeded, before caching the inventory, and
+closes the layer stream. These limits bound retained metadata even when
+a small compressed layer repeatedly overwrites the same path.
+
 The program prints the result plus its computed manifest:
 
 - `Resolved`: the selected `Descriptor`, dependency-ordered per-Kit

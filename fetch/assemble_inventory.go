@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"strings"
 
 	"github.com/docker/sandbox-kit-spec/v3/assemble"
 	"github.com/docker/sandbox-kit-spec/v3/resolve"
@@ -17,6 +18,31 @@ import (
 type kitInventory struct {
 	reference string
 	layers    [][]tar.Header
+}
+
+// Compressed size does not bound inventory memory: repeated overwritten paths
+// still need archive-order processing. Bound both fixed-size headers and the
+// strings they retain before appending anything to the cacheable inventory.
+const (
+	maxInventoryEntries   = 250_000
+	maxInventoryPathBytes = 32 << 20
+)
+
+type inventoryBudget struct {
+	entriesLeft   int
+	pathBytesLeft int
+}
+
+func (b *inventoryBudget) consume(hdr *tar.Header) error {
+	if b.entriesLeft == 0 {
+		return fmt.Errorf("layer inventory exceeds %d entries", maxInventoryEntries)
+	}
+	if len(hdr.Name) > b.pathBytesLeft || len(hdr.Linkname) > b.pathBytesLeft-len(hdr.Name) {
+		return fmt.Errorf("layer inventory exceeds %d path and link-name bytes", maxInventoryPathBytes)
+	}
+	b.entriesLeft--
+	b.pathBytesLeft -= len(hdr.Name) + len(hdr.Linkname)
+	return nil
 }
 
 func inventoryKits(ctx context.Context, kits []*resolve.Unit, loaded map[string]*LoadedKit, report func(Progress)) ([]kitInventory, error) {
@@ -77,10 +103,15 @@ func readLayerInventory(ctx context.Context, input *LoadedKit, layer ocispec.Des
 	limited := &io.LimitedReader{R: contextReader{ctx: ctx, reader: reader}, N: layer.Size + 1}
 	verifier := layer.Digest.Verifier()
 	verified := io.TeeReader(limited, verifier)
+	budget := inventoryBudget{entriesLeft: maxInventoryEntries, pathBytesLeft: maxInventoryPathBytes}
 	err = assemble.WalkLayerVerified(verified, diffID, func(hdr *tar.Header) error {
+		if err := budget.consume(hdr); err != nil {
+			return err
+		}
+		// Clone names so a short substring cannot retain a larger PAX record.
 		// Keep only extraction metadata, never bodies or extended attributes.
-		files = append(files, tar.Header{Name: hdr.Name, Typeflag: hdr.Typeflag,
-			Linkname: hdr.Linkname, Mode: hdr.Mode, Uid: hdr.Uid, Gid: hdr.Gid,
+		files = append(files, tar.Header{Name: strings.Clone(hdr.Name), Typeflag: hdr.Typeflag,
+			Linkname: strings.Clone(hdr.Linkname), Mode: hdr.Mode, Uid: hdr.Uid, Gid: hdr.Gid,
 			Devmajor: hdr.Devmajor, Devminor: hdr.Devminor})
 		return nil
 	})
