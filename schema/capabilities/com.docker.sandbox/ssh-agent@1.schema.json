@@ -81,9 +81,16 @@
       }
     },
     "unrestricted": {
-      "type": "boolean",
       "default": true,
-      "description": "When true (the default), sign requests are unrestricted. Set false to require the sign or authenticate bounds."
+      "description": "When true (the default), sign requests are unrestricted. Set false to require the sign or authenticate bounds.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "../../definitions/kit-arg.schema.json#/definitions/whole"
+        }
+      ]
     }
   },
   "allOf": [
@@ -91,29 +98,22 @@
       "if": {
         "properties": {
           "unrestricted": {
-            "const": false
+            "type": "boolean"
           }
-        },
-        "required": [
-          "unrestricted"
-        ]
+        }
       },
       "then": {
-        "anyOf": [
-          {
-            "required": [
-              "sign"
-            ]
+        "if": {
+          "properties": {
+            "unrestricted": {
+              "const": false
+            }
           },
-          {
-            "required": [
-              "authenticate"
-            ]
-          }
-        ]
-      },
-      "else": {
-        "not": {
+          "required": [
+            "unrestricted"
+          ]
+        },
+        "then": {
           "anyOf": [
             {
               "required": [
@@ -126,6 +126,22 @@
               ]
             }
           ]
+        },
+        "else": {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "sign"
+                ]
+              },
+              {
+                "required": [
+                  "authenticate"
+                ]
+              }
+            ]
+          }
         }
       }
     }

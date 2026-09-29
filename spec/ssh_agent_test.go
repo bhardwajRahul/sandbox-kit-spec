@@ -106,6 +106,29 @@ func TestSSHAgentPresenceRulesDoNotWaitForArgs(t *testing.T) {
 
 func boolPtr(v bool) *bool { return &v }
 
+func TestSSHAgentParameterizedUnrestricted(t *testing.T) {
+	for _, bounds := range []string{"", "      sign: [git]\n", "      authenticate: [git@github.com]\n"} {
+		raw := []byte("schemaVersion: '3'\nkind: mixin\nargs:\n  unrestricted: {required: true}\ncapabilities:\n" +
+			sshAgentEntry("runtime", false, "unrestricted: ${{ kit.args.unrestricted }}") + bounds)
+		d, err := Decode(raw)
+		require.NoError(t, err)
+		_, err = ValidateRaw(raw, d)
+		require.NoError(t, err)
+		for _, value := range []string{"true", "false", "not-a-boolean"} {
+			effective, err := ExpandCreateArgs(raw, d.Args, map[string]string{"unrestricted": value})
+			require.NoError(t, err)
+			expanded, err := Decode(effective)
+			require.NoError(t, err)
+			_, err = ValidateEffective(effective, expanded)
+			if (value == "true" && bounds == "") || (value == "false" && bounds != "") {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err, "unrestricted=%s bounds=%q", value, bounds)
+			}
+		}
+	}
+}
+
 func TestSSHAgentBounded(t *testing.T) {
 	require.False(t, SSHAgent{Phase: SSHAgentPhases{"runtime"}}.Bounded())
 	require.True(t, SSHAgent{Phase: SSHAgentPhases{"runtime"}, Unrestricted: boolPtr(false), Sign: []string{"git"}}.Bounded())
