@@ -964,11 +964,21 @@ func validatePresenceRules(path string, i int, n Capability) error {
 		if err := validateSSHAgentNulls(path, i, n); err != nil {
 			return err
 		}
-		var a SSHAgent
-		if err := DecodeCapabilityConfig(n, &a); err != nil {
-			return nil
+		// Only the boolean placeholder prevents typed decoding. Choose a
+		// presence-compatible value in a copy; expansion still judges the
+		// actual boolean, while literal siblings and duplicates are checked now.
+		if v, ok := n.Config["unrestricted"].(string); ok && ContainsArgRef(v) {
+			config := make(map[string]any, len(n.Config))
+			for k, v := range n.Config {
+				config[k] = v
+			}
+			_, sign := config["sign"]
+			_, authenticate := config["authenticate"]
+			config["unrestricted"] = !sign && !authenticate
+			n.Config = config
 		}
-		return validateSSHAgentPresence(path, i, a)
+		_, err := validateSSHAgentNeed(path, i, n)
+		return err
 	}
 	if n.Type != CapabilityAgentContext {
 		return errs.err()

@@ -342,3 +342,26 @@ func TestSSHAgentGroupSelectionAndComposition(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "capabilities[1].group.capabilities[0].config.phase")
 }
+
+func TestSSHAgentParameterizedLiteralValidation(t *testing.T) {
+	for _, boolean := range []string{"false", `"${{ kit.args.bound }}"`} {
+		for _, tc := range []struct{ phase, extra, want string }{
+			{`[always, "${{ kit.args.value }}"]`, "sign: [git]", "phase must be"},
+			{`["${{ kit.args.value }}", "${{ kit.args.value }}"]`, "sign: [git]", "twice"},
+			{"runtime", `sign: ["bad namespace", "${{ kit.args.value }}"]`, "printable ASCII"},
+			{"runtime", `sign: ["${{ kit.args.value }}", "${{ kit.args.value }}"]`, "twice"},
+			{"runtime", `authenticate: [192.0.2.1, "${{ kit.args.value }}"]`, "IP address"},
+			{"runtime", `authenticate: ["*.example.com", "${{ kit.args.value }}"]`, "literal lowercase"},
+			{"runtime", `authenticate: ["${{ kit.args.value }}", "${{ kit.args.value }}"]`, "twice"},
+			{`[runtime, "${{ kit.args.value }}"]`, `sign: [git, "${{ kit.args.value }}"]`, ""},
+		} {
+			doc := "schemaVersion: \"3\"\nkind: mixin\nargs:\n  value: {default: git}\n  bound: {default: false}\ncapabilities:\n" + sshAgentEntry(tc.phase, false, "unrestricted: "+boolean, tc.extra)
+			_, err := Validate(mustDecode(t, doc))
+			if tc.want == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.want)
+			}
+		}
+	}
+}
