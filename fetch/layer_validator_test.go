@@ -32,7 +32,7 @@ func TestAssembleWithoutLayerValidatorPreservesResult(t *testing.T) {
 	requests := fixtureRequests(2)
 	requests[0].Args = map[string]string{"team": "alpha"}
 	workdir := "/workspace"
-	options := Options{LayerValidator: ValidateLayers, Loader: fixtureLoader(base, mixin), Overrides: Overrides{
+	options := Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(base, mixin), Overrides: Overrides{
 		Env: map[string]string{"HOME": "/home/runtime"}, WorkingDir: &workdir,
 	}}
 	want, err := Assemble(t.Context(), requests, options)
@@ -64,7 +64,7 @@ func TestAssembleWithoutLayerValidatorPreservesResult(t *testing.T) {
 func TestAssembleWithoutLayerValidatorSkipsCollisions(t *testing.T) {
 	base, _ := assemblyFixture(t, spec.KindWorkload, "base", "shared")
 	mixin, _ := assemblyFixture(t, spec.KindMixin, "tool", "shared")
-	options := Options{LayerValidator: ValidateLayers, Loader: fixtureLoader(base, mixin)}
+	options := Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(base, mixin)}
 	_, err := Assemble(t.Context(), fixtureRequests(2), options)
 	require.ErrorContains(t, err, "file collisions")
 	options.LayerValidator = nil
@@ -105,7 +105,7 @@ func TestAssembleWithoutLayerReaders(t *testing.T) {
 	result, err := Assemble(t.Context(), fixtureRequests(2), options)
 	require.NoError(t, err)
 	require.Len(t, result.Image.Layers, 2)
-	options.LayerValidator = ValidateLayers
+	options.LayerValidator = DefaultLayerValidator
 	result, err = Assemble(t.Context(), fixtureRequests(2), options)
 	require.ErrorContains(t, err, "LayerLoader")
 	require.Nil(t, result)

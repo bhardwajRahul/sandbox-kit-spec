@@ -12,7 +12,7 @@ import (
 // KitLoader supplies verified metadata for the requested reference. It owns
 // authentication, platform selection, and its backing store. The returned
 // digest pins the requested manifest or index, not a subsequently moved tag.
-// Assemble always validates declarations. ValidateLayers verifies both blob
+// Assemble always validates declarations. DefaultLayerValidator verifies both blob
 // digests and diff IDs when selected as Options.LayerValidator.
 type KitLoader func(context.Context, string) (*LoadedKit, error)
 
@@ -30,8 +30,8 @@ type LoadedKit struct {
 	// present. If empty, Assemble reads the selected manifest's annotation.
 	Descriptor []byte
 	// LayerLoader opens a fresh stream of the blob as described by the manifest,
-	// with its original compression. ValidateLayers closes each returned stream.
-	// Nil is allowed for metadata-only assembly; ValidateLayers requires it.
+	// with its original compression. DefaultLayerValidator closes each returned stream.
+	// Nil is allowed for metadata-only assembly; DefaultLayerValidator requires it.
 	LayerLoader LayerLoader
 }
 

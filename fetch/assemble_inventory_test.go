@@ -47,7 +47,7 @@ func TestAssembleRejectsDeepPathsBeforeBuildingFilesystem(t *testing.T) {
 	reader := &assemblyStream{Reader: bytes.NewReader(blob.Bytes())}
 	input.LayerLoader = func(context.Context, ocispec.Descriptor) (io.ReadCloser, error) { return reader, nil }
 	var events []Progress
-	result, err := Assemble(t.Context(), fixtureRequests(1), Options{LayerValidator: ValidateLayers,
+	result, err := Assemble(t.Context(), fixtureRequests(1), Options{LayerValidator: DefaultLayerValidator,
 		Loader: fixtureLoader(input), OnProgress: func(p Progress) { events = append(events, p) },
 	})
 	require.Nil(t, result)
@@ -111,7 +111,7 @@ func TestAssembleInventoryBudgetSpansLayersKitsAndCacheReplays(t *testing.T) {
 					}
 					var events []Progress
 					requests := fixtureRequests(len(inputs))
-					result, err := Assemble(t.Context(), requests, Options{LayerValidator: ValidateLayers,
+					result, err := Assemble(t.Context(), requests, Options{LayerValidator: DefaultLayerValidator,
 						Loader: fixtureLoader(inputs...), OnProgress: func(p Progress) { events = append(events, p) },
 					})
 					require.Nil(t, result)
@@ -138,7 +138,7 @@ func TestAssembleInventoryBudgetCountsEmptyLayers(t *testing.T) {
 			reads++
 			return open(ctx, layer)
 		}
-		result, err := Assemble(t.Context(), fixtureRequests(1), Options{LayerValidator: ValidateLayers, Loader: fixtureLoader(input)})
+		result, err := Assemble(t.Context(), fixtureRequests(1), Options{LayerValidator: DefaultLayerValidator, Loader: fixtureLoader(input)})
 		if count == maxInventoryLayers {
 			require.NoError(t, err)
 			require.NotNil(t, result)
@@ -201,7 +201,7 @@ func TestAssembleRejectsOversizedInventoryAndClosesStream(t *testing.T) {
 	reader := &assemblyStream{Reader: bytes.NewReader(blob.Bytes())}
 	input.LayerLoader = func(context.Context, ocispec.Descriptor) (io.ReadCloser, error) { return reader, nil }
 	var events []Progress
-	result, err := Assemble(t.Context(), fixtureRequests(1), Options{LayerValidator: ValidateLayers,
+	result, err := Assemble(t.Context(), fixtureRequests(1), Options{LayerValidator: DefaultLayerValidator,
 		Loader: fixtureLoader(input), OnProgress: func(p Progress) { events = append(events, p) },
 	})
 	require.Nil(t, result)

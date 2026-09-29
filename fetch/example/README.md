@@ -33,7 +33,7 @@ the host or apply capabilities.
 
 ```go
 result, err := fetch.Assemble(ctx, requests, fetch.Options{
-    LayerValidator: fetch.ValidateLayers,
+    LayerValidator: fetch.DefaultLayerValidator,
     CapabilitySelector: spec.Supported(claimedTypes...),
     Overrides: fetch.Overrides{
         Env: map[string]string{"WORKSPACE_DIR": "/workspace"},
@@ -64,7 +64,7 @@ Supply the complete dependency set, containing exactly one workload.
 `Assemble` does not discover missing dependencies or publish an image.
 It loads verified metadata, resolves arguments and capability decisions,
 composes image defaults, and invokes `LayerValidator` when supplied.
-`fetch.ValidateLayers` reads layer inventories and rejects files
+`fetch.DefaultLayerValidator` reads layer inventories and rejects files
 contributed by multiple Kits. Collision checks resolve each Kit's layers
 with the shared overlay filesystem model before comparing them in image
 order: cleaned paths, symlink aliases, whiteouts, opaque directories,
@@ -84,7 +84,7 @@ argument and `kit.env` expansion, atomic group selection, and the same
 remains responsible for layer integrity, safe extraction, resource
 limits, and cross-Kit file collision checks before using the image.
 
-`fetch.ValidateLayers` limits assembly to 4,096 layer occurrences, 250,000
+`fetch.DefaultLayerValidator` limits assembly to 4,096 layer occurrences, 250,000
 archive entries, 250,000 path components, and 32 MiB of combined path
 and link-name bytes across all Kits. Components in both entry names and
 link targets count before path cleaning, limiting implied directory
@@ -142,7 +142,7 @@ function. `Descriptor` optionally carries the original annotation from
 an index; otherwise the platform manifest's annotation is used. A loader
 must resolve metadata consistently to the returned digest and select a
 platform. Assembly validates the metadata and declarations. When selected,
-`fetch.ValidateLayers` streams, verifies, and closes layer blobs without
+`fetch.DefaultLayerValidator` streams, verifies, and closes layer blobs without
 buffering their bodies.
 
 The default loader uses Docker credentials and Linux on the caller's
@@ -157,7 +157,7 @@ if err != nil {
     return err
 }
 result, err := fetch.Assemble(ctx, requests, fetch.Options{
-    LayerValidator: fetch.ValidateLayers,
+    LayerValidator: fetch.DefaultLayerValidator,
     Loader: client.LoadKit,
 })
 ```
@@ -165,7 +165,7 @@ result, err := fetch.Assemble(ctx, requests, fetch.Options{
 For anonymous registries use `fetch.New()`. For a local content store,
 supply a loader that opens blobs from that store. `LayerLoader` returns
 fresh streams in the manifest's original compression and honors the
-provided context. `fetch.ValidateLayers` accepts tar, gzip, and zstd. It
+provided context. `fetch.DefaultLayerValidator` accepts tar, gzip, and zstd. It
 verifies both the manifest's stored-blob digest and the config's
 uncompressed diff ID,
 including archive padding and compression trailers. Every opened stream
@@ -194,7 +194,7 @@ assembly. Progress callbacks, when supplied, run synchronously.
 `LoadedKit.OpenLayer` is now `LoadedKit.LayerLoader`, with the same stream
 contract. Rename the field in custom loaders. Layer validation is now
 opt-in: callers that previously used `Options{}` or supplied only a loader
-add `LayerValidator: fetch.ValidateLayers` to retain the previous checks.
+add `LayerValidator: fetch.DefaultLayerValidator` to retain the previous checks.
 Leaving it nil deliberately skips them. These are Go API changes; the
 Kit descriptor grammar is unchanged.
 
@@ -219,7 +219,7 @@ never reads the host environment or image configs. `Resolved.ContainerEnv`
 still reports only argument exports, so apply the same precedence when
 creating the container.
 
-With `LayerValidator: fetch.ValidateLayers`, the one-call API also reads
+With `LayerValidator: fetch.DefaultLayerValidator`, the one-call API also reads
 and checks layer inventories. With a nil validator it reads metadata only.
 
 Descriptor errors include original locations and source excerpts where

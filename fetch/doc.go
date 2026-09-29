@@ -8,7 +8,7 @@
 // claims and policy. Options.OnProgress reports stages. Client.LoadKit supplies
 // a loader with custom credentials and platform.
 //
-// Layer validation is opt-in: set Options.LayerValidator to ValidateLayers for
+// Layer validation is opt-in: set Options.LayerValidator to DefaultLayerValidator for
 // the built-in integrity, safe-extraction, inventory-limit, and cross-Kit file
 // collision checks. A custom LayerValidator can use a runtime's verified store.
 // Nil enables metadata-only assembly for consent-time resolution or images

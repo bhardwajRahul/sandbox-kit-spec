@@ -15,7 +15,7 @@ import (
 
 // Options configures Assemble. Its zero value loads from registries using
 // Docker credentials and accepts the library's known capability types.
-// Layer validation is opt-in; set LayerValidator to ValidateLayers to run
+// Layer validation is opt-in; set LayerValidator to DefaultLayerValidator to run
 // the built-in layer integrity, extraction, and collision checks.
 type Options struct {
 	Loader KitLoader
@@ -27,7 +27,7 @@ type Options struct {
 	// LayerValidator checks the complete set after metadata composition and
 	// descriptor resolution. Nil skips layer checks without calling LayerLoader;
 	// the caller is responsible for integrity, safe extraction, resource limits,
-	// and cross-Kit collisions before using the image. Use ValidateLayers for
+	// and cross-Kit collisions before using the image. Use DefaultLayerValidator for
 	// the built-in checks or supply a validator backed by the runtime's store.
 	LayerValidator LayerValidator
 	// OnProgress receives serialized callbacks on the calling goroutine. It must
