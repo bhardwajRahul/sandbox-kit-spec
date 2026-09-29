@@ -566,7 +566,8 @@ same grant, so a host given both would have to guess which bounds the
 other.
 
 **Instance-shaped types appear once per thing requested**, deduplicated on
-their own key: `credential@1` on (service, phase), `volume@1` on path,
+their own key: `credential@1` on (service, phase), with each listed phase
+participating independently, `volume@1` on path,
 `agent-skills@1` on path,
 `agent-skill@1` on effective name, `port@1` on (container, transport),
 `ssh-agent@1` on each phase it names.

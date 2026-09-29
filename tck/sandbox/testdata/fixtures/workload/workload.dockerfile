@@ -155,9 +155,13 @@ ENV KIT_TCK_CANARY=image-baseline
 ENV KIT_GREETING=image-greeting
 
 # Capture the entrypoint's own environment before it starts waiting: exec
-# commands can have SSH_AUTH_SOCK even if the original workload did not.
+# commands can have different credential and SSH grants from the original
+# workload. Publish the credential record atomically so an empty value is
+# evidence of absence, not a read before the write completed.
 COPY --chmod=0755 <<'ENTRY' /usr/local/bin/kit-tck-workload-entrypoint
 #!/bin/sh
+printf '%s' "${KIT_TCK_PHASE_TOKEN:-}" > /var/tmp/kit-tck-workload-credential.tmp
+mv /var/tmp/kit-tck-workload-credential.tmp /var/tmp/kit-tck-workload-credential
 printf '%s' "${SSH_AUTH_SOCK:-}" > /var/tmp/kit-tck-workload-ssh-sock
 kit-tck-ssh-agent observe > /var/tmp/kit-tck-workload-ssh-sock-proof.tmp 2>&1 || true
 mv /var/tmp/kit-tck-workload-ssh-sock-proof.tmp /var/tmp/kit-tck-workload-ssh-sock-proof

@@ -410,6 +410,27 @@ func mergeCapabilities(contributions []Contribution) ([]Capability, []ContextSou
 			if n.Source != nil {
 				reference = fmt.Sprintf("%s (%s %s)", c.Reference, n.Source.Kit, n.Source.Path)
 			}
+			if n.Type == CapabilityCredential {
+				var credential Credential
+				if err := decodeForMerge(reference, n, &credential); err != nil {
+					return nil, nil, err
+				}
+				if len(credential.Phase) == 0 {
+					return nil, nil, fmt.Errorf("merge: %s: credential phase is empty", reference)
+				}
+				for _, phase := range credential.Phase {
+					one := credential
+					one.Phase = Phases{phase}
+					entry, err := CapabilityWithConfig(n, one)
+					if err != nil {
+						return nil, nil, err
+					}
+					if err := m.add(reference, *entry); err != nil {
+						return nil, nil, err
+					}
+				}
+				continue
+			}
 			if n.Type == CapabilitySSHAgent {
 				var a SSHAgent
 				if err := decodeForMerge(reference, n, &a); err != nil {
@@ -644,7 +665,10 @@ func (m *capabilityMerge) instanceKey(reference string, n Capability) (string, e
 		if err := decodeForMerge(reference, n, &c); err != nil {
 			return "", err
 		}
-		return n.Type + "\x00" + c.Service + "\x00" + c.Phase, nil
+		if len(c.Phase) != 1 {
+			return "", fmt.Errorf("merge: %s: credential needs exactly one phase after expansion", reference)
+		}
+		return n.Type + "\x00" + c.Service + "\x00" + c.Phase[0], nil
 	case CapabilitySSHAgent:
 		// One socket per phase, whichever kits asked: two asks for the
 		// same phase are one ask, unlike a credential's single owner.

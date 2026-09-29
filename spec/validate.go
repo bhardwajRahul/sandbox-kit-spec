@@ -588,6 +588,23 @@ func validateCapabilityBlock(d *Descriptor) error {
 			}
 		}
 
+		if n.Type == CapabilityCredential {
+			service, literal := n.Config["service"].(string)
+			phaseOnly, err := credentialPhases(n)
+			if err == nil && literal && !ContainsArgRef(service) && !ContainsEnvRef(service) {
+				for _, phase := range phaseOnly {
+					if ContainsArgRef(phase) || ContainsEnvRef(phase) {
+						continue
+					}
+					key := service + "\x00" + phase
+					if prev, dup := seenCredential[key]; dup && prev != i {
+						errs.add(fieldErrorf(path+".config.service", "capabilities[%d]: credential for service %q phase %q already declared at capabilities[%d]", i, service, phase, prev))
+					}
+					seenCredential[key] = i
+				}
+			}
+		}
+
 		// A parameterized entry — its config references a kit arg — defers
 		// its typed validation to ValidateEffective, after expansion has
 		// resolved every placeholder: a string placeholder cannot pass a
@@ -626,17 +643,12 @@ func validateCapabilityBlock(d *Descriptor) error {
 				errs.add(err)
 			}
 		case CapabilityCredential:
-			c, err := validateCredentialNeed(path, i, n)
+			_, err := validateCredentialNeed(path, i, n)
 			if err != nil {
 				errs.add(err)
 				invalidCredentials[i] = true
 				continue
 			}
-			key := c.Service + "\x00" + c.Phase
-			if prev, dup := seenCredential[key]; dup {
-				errs.add(fieldErrorf(path+".config.service", "capabilities[%d]: credential for service %q phase %q already declared at capabilities[%d]", i, c.Service, c.Phase, prev))
-			}
-			seenCredential[key] = i
 		case CapabilitySSHAgent:
 			_, err := validateSSHAgentNeed(path, i, n)
 			if err != nil {
@@ -961,6 +973,13 @@ func validateNetworkEntry(path string, i int, phase string, r NetworkEntry) erro
 // not hide.
 func validatePresenceRules(path string, i int, n Capability) error {
 	var errs ValidationErrors
+	if n.Type == CapabilityCredential {
+		phases, err := credentialPhases(n)
+		if err != nil {
+			return fieldErrorf(path+".config.phase", "capabilities[%d]: %v", i, err)
+		}
+		return validatePhases(path, i, phases)
+	}
 	if n.Type == CapabilityNetworkPolicyV2 {
 		var p PhasedNetworkV2
 		if err := DecodeCapabilityConfig(n, &p); err != nil {
@@ -1050,9 +1069,7 @@ func validateCredentialNeed(path string, i int, n Capability) (*Credential, erro
 	} else if !handleName.MatchString(c.Service) {
 		errs.add(fieldErrorf(path+".config.service", "capabilities[%d]: invalid service name %q", i, c.Service))
 	}
-	if c.Phase != "install" && c.Phase != "runtime" {
-		errs.add(fieldErrorf(path+".config.phase", "capabilities[%d] (%s): phase must be \"install\" or \"runtime\", got %q", i, c.Service, c.Phase))
-	}
+	errs.add(validatePhases(path, i, c.Phase))
 	if c.APIKey == nil && c.OAuth == nil {
 		errs.add(fieldErrorf(path+".config", "capabilities[%d] (%s): declare apiKey or oauth", i, c.Service))
 	}
@@ -1159,16 +1176,18 @@ func validateInjectWithinAllow(needs []Capability, invalidCredentials map[int]bo
 		if c.APIKey == nil {
 			continue
 		}
-		allow := phaseAllow(policy, c.Phase)
-		for j, inj := range c.APIKey.Inject {
-			// A bare "*" (or "**") allow entry grants every host, so any
-			// inject domain is covered. Narrower glob patterns are not
-			// expanded here: the exact-match rule keeps published inject
-			// domains auditable against the allow list without
-			// reimplementing the enforcement matcher.
-			if !allow[stripPort(inj.Domain)] && !allow["*"] && !allow["**"] {
-				errs.add(fieldErrorf(fmt.Sprintf("capabilities[%d].config.apiKey.inject[%d].domain", i, j),
-					"capabilities[%d] (%s): inject domain %q is not in the network policy's %s allow list", i, c.Service, inj.Domain, c.Phase))
+		for _, phase := range c.Phase {
+			allow := phaseAllow(policy, phase)
+			for j, inj := range c.APIKey.Inject {
+				// A bare "*" (or "**") allow entry grants every host, so any
+				// inject domain is covered. Narrower glob patterns are not
+				// expanded here: the exact-match rule keeps published inject
+				// domains auditable against the allow list without
+				// reimplementing the enforcement matcher.
+				if !allow[stripPort(inj.Domain)] && !allow["*"] && !allow["**"] {
+					errs.add(fieldErrorf(fmt.Sprintf("capabilities[%d].config.apiKey.inject[%d].domain", i, j),
+						"capabilities[%d] (%s): inject domain %q is not in the network policy's %s allow list", i, c.Service, inj.Domain, phase))
+				}
 			}
 		}
 	}

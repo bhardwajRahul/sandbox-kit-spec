@@ -4,7 +4,8 @@ One service the workload authenticates to, and how the runtime presents
 proof — never where the secret lives. The host's credential store is the
 sole source; a Kit declares the need, the user's bindings answer it.
 
-- **Shape**: instance — one entry per (service, phase); duplicates rejected.
+- **Shape**: instance — one entry may name one or both phases; overlapping
+  (service, phase) pairs in the same declaration block are rejected.
 - **Permission surface**: yes — the service name, per phase.
 
 ## Config
@@ -15,7 +16,7 @@ sole source; a Kit declares the need, the user's bindings answer it.
   description: GitHub API access for gh
   config:
     service: github                    # REQUIRED: identifier in the host credential store
-    phase: runtime                     # REQUIRED: "install" | "runtime"
+    phase: [install, runtime]          # REQUIRED: one phase or a list
     apiKey:                            # api-key presentation
       name: GH_TOKEN
       proxyManaged: true
@@ -40,11 +41,11 @@ sole source; a Kit declares the need, the user's bindings answer it.
 | Field | Type | Rules |
 |---|---|---|
 | `service` | string | REQUIRED. Lowercase-kebab name in the host credential store. |
-| `phase` | string | REQUIRED. `install` or `runtime`. |
+| `phase` | string or list\<string\> | REQUIRED. `install`, `runtime`, or a non-empty list of distinct phases. The same credential configuration applies to every listed phase. |
 | `apiKey` | object | conditional. At least one of `apiKey`/`oauth` MUST be declared. | <!-- tck: credential@1/one-of-apikey-oauth -->
 | `apiKey.name` | string | In-container env var name. Empty or omitted with `inject` rules present declares an inject-only credential: outbound rewrites with no environment presence, not even a sentinel. At least one of `name`/`inject` MUST be declared. | <!-- tck: credential@1/name-or-inject -->
 | `apiKey.proxyManaged` | bool | The real value stays on the host. A named key's variable carries a sentinel; an inject-only key has no in-container presence, and the boundary presents the real value outbound either way. |
-| `apiKey.inject[]` | list | Outbound rewrite rules. `domain` REQUIRED and MUST appear in the network policy's matching-phase allow list, whether the Kit declares [`@1`](network-policy@1.md) or [`@2`](network-policy@2.md). | <!-- tck: credential@1/inject-domain-in-allow -->
+| `apiKey.inject[]` | list | Outbound rewrite rules. `domain` REQUIRED and MUST appear in the network policy's allow list for every declared phase, whether the Kit declares [`@1`](network-policy@1.md) or [`@2`](network-policy@2.md). | <!-- tck: credential@1/inject-domain-in-allow -->
 | `apiKey.inject[].header` / `format` | string | Header to set; `format` renders the value (e.g. `"Bearer %s"`). |
 | `apiKey.inject[].scheme` / `username` | string | Non-header presentation, e.g. `basic` with `username` (credential as password). |
 | `oauth.tokenEndpoint` | object | `host` REQUIRED when `tokenEndpoint` is set. |
@@ -61,6 +62,9 @@ and `{{.RefreshToken}}` (strings), `{{.ExpiresAt}}` (a number),
 enclosing key is omitted when no key is captured). Unknown placeholders are
 errors. Each placeholder renders in the target encoding's own type.
 
+Scalar phase declarations remain valid. The list form requires a reader
+implementing this extension; older readers reject it.
+
 ## Runtime behavior
 
 A conforming runtime:
@@ -76,9 +80,18 @@ A conforming runtime:
 - **MUST** intercept the OAuth `tokenEndpoint` and serve sentinel tokens, <!-- tck: credential@1/oauth-token-endpoint-intercepted -->
   refreshing host-side; `passthrough: true` is the explicit opt-out and a
   security downgrade a runtime MAY refuse.
-- **MUST** scope by phase: an `install` credential is injectable only while <!-- tck: credential@1/phase-scoped -->
+- **MUST** scope by phase: an install-only credential is injectable only while <!-- tck: credential@1/phase-scoped -->
   install hooks run and is revoked before the workload's entrypoint starts;
-  a `runtime` credential is the agent's steady state.
+  a runtime-only credential is unavailable to install hooks and is the
+  agent's steady state. When both phases are listed, the credential is
+  available in both, with the same configuration.
+- **MUST** scope a bound, named, proxy-managed API key's sentinel to its <!-- tck: credential@1/sentinel-phase-scoped -->
+  declared phases. This includes install hooks that declare its
+  variable in `env`, the workload's initial environment, and later runtime
+  commands: each receives a sentinel in a granted phase and none outside
+  the granted phases. This is the environment-visible part of the broader
+  phase boundary above; outbound injection and OAuth presentations remain
+  subject to that boundary independently.
 - **MUST** fail resolution when a **required** entry has no binding; an <!-- tck: credential@1/required-without-binding-fails -->
   **optional** entry with no binding is skipped and recorded, and the Kit
   runs unauthenticated.
@@ -90,8 +103,10 @@ A conforming runtime:
 
 ## Composition
 
-Entries union across the set. Two Kits declaring the same (service, phase)
-is a composition conflict — one credential, one owner.
+Each listed phase participates independently in composition. Entries
+union across the set. Two Kits declaring the same (service, phase) is a
+composition conflict — one credential, one owner — even when one entry
+uses a scalar and the other lists both phases.
 
 ## Gate
 

@@ -390,6 +390,32 @@ func TestResolveRefusesTwoCredentialOwners(t *testing.T) {
 	require.ErrorContains(t, err, "reg.io/base:1, reg.io/tool:1")
 }
 
+func TestResolveCredentialPhaseLists(t *testing.T) {
+	for _, phase := range []string{"install", "runtime"} {
+		base := unit("reg.io/base:1", spec.KindWorkload)
+		base.Descriptor.Capabilities = []spec.Capability{{
+			Type: spec.CapabilityCredential,
+			Config: map[string]any{
+				"service": "github", "phase": []string{"install", "runtime"},
+				"apiKey": map[string]any{"name": "GH_TOKEN"},
+			},
+		}}
+		tool := unit("reg.io/tool:1", spec.KindMixin)
+		tool.Descriptor.Capabilities = []spec.Capability{{
+			Type: spec.CapabilityCredential,
+			Config: map[string]any{
+				"service": "github", "phase": phase,
+				"apiKey": map[string]any{"name": "GH_TOKEN"},
+			},
+		}}
+		_, err := Resolve([]*Unit{base, tool})
+		require.ErrorContains(t, err, "credential (github, "+phase+") is declared by more than one kit")
+		tool.Descriptor.Capabilities[0].Config["service"] = "gitlab"
+		_, err = Resolve([]*Unit{base, tool})
+		require.NoError(t, err)
+	}
+}
+
 // A set of overlays is a legitimate thing to publish: it composes onto a
 // workload later, exactly as its own kits would have. ResolvePartial
 // judges it complete while holding every other rule.
