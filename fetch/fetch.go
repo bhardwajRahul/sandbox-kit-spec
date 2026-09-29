@@ -300,7 +300,6 @@ func mergeKits(kits []*Kit, args []map[string]string, partial bool, opts ...Reso
 	exports := make([]map[string]string, len(kits))
 	values := make([]map[string]string, len(kits))
 	for i, k := range kits {
-		hadEnvironment = hadEnvironment || (k != nil && spec.ContainsEnvRef(string(k.Raw)))
 		var err error
 		values[i], exports[i], err = resolveKitArgs(k, args[i])
 		if err != nil {
@@ -322,6 +321,7 @@ func mergeKits(kits []*Kit, args []map[string]string, partial bool, opts ...Reso
 		}
 		cp := *k
 		cp.Descriptor = expanded.descriptor
+		hadEnvironment = hadEnvironment || expanded.hadEnvironment
 		prepared[i] = &cp
 	}
 	units, err := Units(prepared)
@@ -411,10 +411,11 @@ func withSelectionSources(d *spec.Descriptor, reference string) *spec.Descriptor
 }
 
 type expandedKit struct {
-	descriptor *spec.Descriptor
-	raw        []byte
-	args       map[string]string
-	env        map[string]string
+	descriptor     *spec.Descriptor
+	raw            []byte
+	args           map[string]string
+	env            map[string]string
+	hadEnvironment bool
 }
 
 // expandKit resolves one kit's create-phase args into its published
@@ -461,11 +462,7 @@ func expandResolvedKit(k *Kit, values, exports, environment map[string]string) (
 	if err != nil {
 		return nil, spec.WithSource(err, k.Reference+" (expanded descriptor)", expanded)
 	}
-	hadEnvironment := false
-	for _, c := range spec.DeclaredCapabilities(d.Capabilities) {
-		raw, _ := json.Marshal(c.Config)
-		hadEnvironment = hadEnvironment || spec.ContainsEnvRef(string(raw))
-	}
+	hadEnvironment := spec.HasEnvReferences(d.Capabilities)
 	if hadEnvironment {
 		d, err = spec.ExpandEnvironment(d, environment)
 		if err != nil {
@@ -485,7 +482,7 @@ func expandResolvedKit(k *Kit, values, exports, environment map[string]string) (
 		return nil, spec.WithSource(err, k.Reference+" (expanded descriptor)", expanded)
 	}
 	d.Args = nil
-	return &expandedKit{descriptor: d, raw: expanded, args: values, env: exports}, nil
+	return &expandedKit{descriptor: d, raw: expanded, args: values, env: exports, hadEnvironment: hadEnvironment}, nil
 }
 
 // argExports collects the variables one kit's create-phase args bind.

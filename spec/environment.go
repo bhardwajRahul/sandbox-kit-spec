@@ -132,11 +132,37 @@ func ExpandEnvironment(d *Descriptor, environment map[string]string) (*Descripto
 	return out, nil
 }
 
-func containsEnvironment(items []Capability) bool {
+// HasEnvReferences reports references in decoded configuration strings and keys,
+// including group members. Checking serialized bytes would miss escaped whitespace.
+func HasEnvReferences(items []Capability) bool {
 	for _, c := range DeclaredCapabilities(items) {
-		raw, _ := json.Marshal(c.Config)
-		if ContainsEnvRef(string(raw)) {
+		raw, err := json.Marshal(c.Config)
+		if err != nil {
+			continue // Configuration validation owns values JSON cannot represent.
+		}
+		var config any
+		if json.Unmarshal(raw, &config) == nil && containsEnvValue(config) {
 			return true
+		}
+	}
+	return false
+}
+
+func containsEnvValue(value any) bool {
+	switch v := value.(type) {
+	case string:
+		return ContainsEnvRef(v)
+	case map[string]any:
+		for key, child := range v {
+			if ContainsEnvRef(key) || containsEnvValue(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if containsEnvValue(child) {
+				return true
+			}
 		}
 	}
 	return false

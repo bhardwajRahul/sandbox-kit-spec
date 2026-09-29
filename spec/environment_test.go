@@ -139,3 +139,25 @@ func TestEnvironmentExpansionPreservesUnrelatedNumbers(t *testing.T) {
 	require.JSONEq(t, `{"counter":9007199254740993,"message":"data"}`, string(raw))
 	require.Contains(t, string(raw), `9007199254740993`)
 }
+
+func TestEnvironmentReferencesWithEscapedWhitespace(t *testing.T) {
+	d := environmentDescriptor("${{\nkit.env.VALUE}}")
+	d.Capabilities[0].Config["files"].([]any)[0].(map[string]any)["path"] = "${{\nkit.env.HOME}}/config"
+	d.Capabilities = []Capability{{Group: &CapabilityGroup{Capabilities: d.Capabilities}}}
+	require.True(t, HasEnvReferences(d.Capabilities))
+	raw, err := json.Marshal(d)
+	require.NoError(t, err)
+	require.False(t, ContainsEnvRef(string(raw)))
+	_, err = ValidatePublished(raw, d)
+	require.NoError(t, err)
+	_, err = SelectCapabilities(d, func(Capability) bool { t.Fatal("unexpanded reference reached selector"); return false })
+	require.ErrorContains(t, err, "environment")
+	_, err = ValidateEffective(raw, d)
+	require.ErrorContains(t, err, "kit.env")
+	merged, err := Merge([]Contribution{{Reference: "kit", Descriptor: d}}, MergeOptions{})
+	require.NoError(t, err)
+	require.True(t, HasEnvReferences(merged.Descriptor.Capabilities))
+	out, err := ExpandEnvironment(d, map[string]string{"HOME": "/home/user", "VALUE": "data"})
+	require.NoError(t, err)
+	require.False(t, HasEnvReferences(out.Capabilities))
+}

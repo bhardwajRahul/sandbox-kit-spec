@@ -571,22 +571,21 @@ func TestStageSetContextRejectsReExportedBodyBeforeWriting(t *testing.T) {
 }
 
 func TestKitDeclarationsPreserveFinalEnvironment(t *testing.T) {
-	published, err := spec.Decode([]byte(`schemaVersion: "3"
-kind: mixin
-capabilities:
-  - type: com.docker.sandbox/lifecycle@1
-    config:
-      files:
-        - path: '${{ kit.env.HOME }}/.config/tool'
-          content: configured
-`))
-	require.NoError(t, err)
-	d, _, err := kitDeclarations(published, spec.Kit{}, nil)
-	require.NoError(t, err)
-	merged, err := spec.Merge([]spec.Contribution{{Reference: "tool", Descriptor: d}}, spec.MergeOptions{})
-	require.NoError(t, err)
-	members := spec.DeclaredCapabilities(merged.Descriptor.Capabilities)
-	lc, err := spec.LifecycleOf(members)
-	require.NoError(t, err)
-	require.Equal(t, "${{ kit.env.HOME }}/.config/tool", lc.Files[0].Path)
+	for _, reference := range []string{"${{ kit.env.HOME }}", "${{\nkit.env.HOME}}"} {
+		t.Run(reference, func(t *testing.T) {
+			published := &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindMixin,
+				Capabilities: []spec.Capability{{Type: spec.CapabilityLifecycle, Config: map[string]any{
+					"files": []any{map[string]any{"path": reference + "/.config/tool", "content": "configured"}},
+				}}},
+			}
+			d, _, err := kitDeclarations(published, spec.Kit{}, nil)
+			require.NoError(t, err)
+			merged, err := spec.Merge([]spec.Contribution{{Reference: "tool", Descriptor: d}}, spec.MergeOptions{})
+			require.NoError(t, err)
+			members := spec.DeclaredCapabilities(merged.Descriptor.Capabilities)
+			lc, err := spec.LifecycleOf(members)
+			require.NoError(t, err)
+			require.Equal(t, reference+"/.config/tool", lc.Files[0].Path)
+		})
+	}
 }

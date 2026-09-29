@@ -966,7 +966,7 @@ func capabilityIsParameterized(n Capability) bool {
 	if err != nil {
 		return false
 	}
-	return ContainsArgRef(string(data)) || ContainsEnvRef(string(data))
+	return ContainsArgRef(string(data)) || HasEnvReferences([]Capability{n})
 }
 
 // validateCredentialNeed decodes and checks one credential entry.

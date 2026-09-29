@@ -328,7 +328,7 @@ func SelectCapabilities(d *Descriptor, selectCapability SelectCapability) (Selec
 			return result, fmt.Errorf("select capabilities: capabilities[%d] still contains unresolved arguments", i)
 		}
 	}
-	if containsEnvironment(items) {
+	if HasEnvReferences(items) {
 		return result, fmt.Errorf("select capabilities: expand the final container environment before selection")
 	}
 	var errs ValidationErrors
@@ -435,7 +435,7 @@ func cloneConfigValue(v reflect.Value) reflect.Value {
 
 func contributionsNeedDeferredMerge(contributions []Contribution) bool {
 	for _, c := range contributions {
-		if c.Descriptor != nil && (HasGroups(c.Descriptor.Capabilities) || containsEnvironment(c.Descriptor.Capabilities)) {
+		if c.Descriptor != nil && (HasGroups(c.Descriptor.Capabilities) || HasEnvReferences(c.Descriptor.Capabilities)) {
 			return true
 		}
 	}
