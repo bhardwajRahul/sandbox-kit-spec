@@ -1,6 +1,13 @@
 // Package fetch reads published Kit descriptors and image metadata from OCI
 // registries. Credentials, transport, and platform selection belong to Client.
 //
+// Assemble is the single-call runtime API: OCI requests and Options produce
+// selected declarations, image metadata, final container settings, and checked
+// layer inventories. It defaults to Docker credentials and known capabilities;
+// supply Options.Loader for another store or Options.CapabilitySelector for
+// the runtime's actual claims and policy. Options.OnProgress reports stages.
+// Client.LoadKit supplies a loader with custom credentials and platform.
+//
 // Resolve fetches a closed set of requests, resolves create arguments, validates
 // every input, orders the dependency graph, selects capability groups,
 // reconciles the selected descriptors with
