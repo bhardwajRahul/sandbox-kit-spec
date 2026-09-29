@@ -2,8 +2,8 @@
 
 The user's runtime-provided Git author identity, supplied as `user.name`
 and `user.email` defaults inside the sandbox. This requests attribution,
-not authentication, signing authority or evidence of user review. Those
-remain separate grants, such as `credential@1` and `ssh-agent@1`.
+not authentication, signing authority or evidence of user review.
+Authentication uses separate grants such as `credential@1`.
 
 - **Shape**: singleton, **config-less**.
 - **Permission surface**: **yes** — presence discloses the selected name
