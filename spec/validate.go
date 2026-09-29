@@ -1011,6 +1011,9 @@ func validatePresenceRules(path string, i int, n Capability) error {
 		_, err := validateSSHAgentNeed(path, i, n)
 		return err
 	}
+	if n.Type == CapabilityAgentSkill {
+		return validateParameterizedSkillSource(path, n)
+	}
 	if n.Type != CapabilityAgentContext {
 		return errs.err()
 	}

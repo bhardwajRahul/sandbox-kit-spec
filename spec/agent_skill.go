@@ -45,6 +45,24 @@ func AgentSkillName(s AgentSkill) string {
 	return path.Base(s.Path)
 }
 
+// A name chosen at create does not defer the source's literal grammar:
+// publishers and artifact checks need a usable image path already.
+func validateParameterizedSkillSource(field string, n Capability) error {
+	source, ok := n.Config["path"].(string)
+	if !ok {
+		return fieldErrorf(field+".config.path", "skill source path must be a string")
+	}
+	if ContainsArgRef(source) || ContainsEnvRef(source) {
+		// Authored sources may still contain build arguments. Publication
+		// separately rejects any references that remain after that expansion.
+		return nil
+	}
+	if source == "/" || !canonicalAbsPath(source) {
+		return fieldErrorf(field+".config.path", "skill path %q must be absolute and canonical, not the root", source)
+	}
+	return nil
+}
+
 func validateBundledSkill(field string, n Capability) (string, error) {
 	var source, key string
 	if n.Type == CapabilityAgentSkill {

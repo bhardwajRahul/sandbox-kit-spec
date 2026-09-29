@@ -246,3 +246,46 @@ func TestAgentSkillEnvironmentExpansion(t *testing.T) {
 	_, err = ValidatePublished(raw, d)
 	require.ErrorContains(t, err, "published skill source path must be literal")
 }
+
+func TestAgentSkillLiteralSourceWithParameterizedName(t *testing.T) {
+	for _, name := range []string{"${{ kit.args.name }}", "${{ kit.env.SKILL_NAME }}"} {
+		for _, grouped := range []bool{false, true} {
+			for _, tc := range []struct {
+				label string
+				path  any
+			}{
+				{"missing", nil}, {"null", nil}, {"number", 1}, {"boolean", true},
+				{"array", []any{"/skills/review"}}, {"empty", ""}, {"relative", "skills/review"},
+				{"root", "/"}, {"dot", "/skills/./review"}, {"parent", "/skills/../review"},
+				{"separator", "/skills//review"}, {"trailing", "/skills/review/"},
+				{"valid", "/skills/review"},
+			} {
+				t.Run(name+"/"+tc.label+"/"+map[bool]string{false: "ordinary", true: "group"}[grouped], func(t *testing.T) {
+					c := Capability{Type: CapabilityAgentSkill, Config: map[string]any{"name": name}}
+					if tc.label != "missing" {
+						c.Config["path"] = tc.path
+					}
+					field := "capabilities[0].config.path"
+					if grouped {
+						c = Capability{Group: &CapabilityGroup{Optional: true, Capabilities: []Capability{c}}}
+						field = "capabilities[0].group.capabilities[0].config.path"
+					}
+					d := &Descriptor{SchemaVersion: SchemaVersion, Kind: KindMixin, Args: map[string]Arg{"name": {}}, Capabilities: []Capability{c}}
+					raw, err := json.Marshal(d)
+					require.NoError(t, err)
+					decoded, err := Decode(raw)
+					require.NoError(t, err)
+					_, authoredErr := ValidateRaw(raw, decoded)
+					_, publishedErr := ValidatePublished(raw, decoded)
+					if tc.label == "valid" {
+						require.NoError(t, authoredErr)
+						require.NoError(t, publishedErr)
+					} else {
+						require.ErrorContains(t, authoredErr, field)
+						require.ErrorContains(t, publishedErr, field)
+					}
+				})
+			}
+		}
+	}
+}
