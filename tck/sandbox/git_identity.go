@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/docker/sandbox-kit-spec/v3/spec"
 	"github.com/docker/sandbox-kit-spec/v3/tck/adapter"
 	"github.com/docker/sandbox-kit-spec/v3/tck/report"
 )
@@ -149,8 +150,10 @@ func gitIdentitySkipped(ctx context.Context, e *Env, id string) []report.Finding
 		if record.Source == nil || (record.Source.Kit != fixtureGitIdentityOptional && record.Source.Kit != fixtureRef) {
 			continue
 		}
-		if record.Source.Path != "capabilities[0]" || record.Path == "" ||
-			!slices.Equal(record.Members, []string{record.Path}) || !slices.Equal(record.Rejected, []string{record.Path}) {
+		if record.Source.Path != "capabilities[0]" || record.Path != "capabilities[0]" ||
+			!slices.Equal(record.Members, []string{"capabilities[0]"}) ||
+			!slices.Equal(record.Rejected, []string{"capabilities[0]"}) ||
+			!slices.Equal(record.MemberSources, []spec.CapabilitySource{*record.Source}) {
 			return []report.Finding{report.Failf("optional identity skip record incomplete: %+v", record)}
 		}
 		found++

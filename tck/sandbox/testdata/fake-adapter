@@ -313,6 +313,18 @@ create)
   echo running >"$dir/status"
   if [ -n "$identity_optional" ] && { [ -z "$identity_name" ] || [ -z "$identity_email" ]; }; then
     record='{"path":"capabilities[0]","source":{"kit":"git-identity-optional","path":"capabilities[0]"},"members":["capabilities[0]"],"memberSources":[{"kit":"git-identity-optional","path":"capabilities[0]"}],"rejected":["capabilities[0]"]}'
+    case "$broken" in
+    identity-skip-wrong-path)
+      record=$(printf '%s' "$record" | sed 's/"path":"capabilities\[0\]","source"/"path":"capabilities[9]","source"/; s/"members":\["capabilities\[0\]"\]/"members":["capabilities[9]"]/; s/"rejected":\["capabilities\[0\]"\]/"rejected":["capabilities[9]"]/') ;;
+    identity-skip-wrong-source-path)
+      record=$(printf '%s' "$record" | sed 's/"kit":"git-identity-optional","path":"capabilities\[0\]"/"kit":"git-identity-optional","path":"capabilities[9]"/g') ;;
+    identity-skip-missing-member-sources)
+      record=$(printf '%s' "$record" | sed 's/"memberSources":\[{[^}]*}\]/"memberSources":[]/') ;;
+    identity-skip-wrong-member-kit)
+      record=$(printf '%s' "$record" | sed 's/"memberSources":\[{"kit":"git-identity-optional"/"memberSources":[{"kit":"wrong-kit"/') ;;
+    identity-skip-wrong-member-path)
+      record=$(printf '%s' "$record" | sed 's/"memberSources":\[{"kit":"git-identity-optional","path":"capabilities\[0\]"/"memberSources":[{"kit":"git-identity-optional","path":"capabilities[9]"/') ;;
+    esac
     selected='[]'
     skipped="[$record]"
     case "$broken" in
