@@ -157,6 +157,8 @@ ENV KIT_TCK_CANARY=image-baseline
 COPY --chmod=0755 <<'ENTRY' /usr/local/bin/kit-tck-workload-entrypoint
 #!/bin/sh
 printf '%s' "${SSH_AUTH_SOCK:-}" > /var/tmp/kit-tck-workload-ssh-sock
+kit-tck-ssh-agent observe > /var/tmp/kit-tck-workload-ssh-sock-proof.tmp 2>&1 || true
+mv /var/tmp/kit-tck-workload-ssh-sock-proof.tmp /var/tmp/kit-tck-workload-ssh-sock-proof
 exec sleep infinity
 ENTRY
 

@@ -162,6 +162,9 @@ func (r *relay) handle(msg []byte, bound **binding, forward func([]byte) ([]byte
 	if r.broken == "ssh-agent-relays-everything" {
 		return forward(msg)
 	}
+	if r.broken == "ssh-agent-forwards-constrained-rsa" && msg[0] == 24 {
+		return forward(msg)
+	}
 	switch msg[0] {
 	case msgRequestIdentities:
 		return forward(msg)

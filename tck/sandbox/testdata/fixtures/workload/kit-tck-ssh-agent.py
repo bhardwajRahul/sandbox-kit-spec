@@ -3,6 +3,7 @@
 
 kit-tck-ssh-agent socket                    print SSH_AUTH_SOCK (empty when unset)
 kit-tck-ssh-agent list                      print the offered keys, one authorized_keys line each
+kit-tck-ssh-agent observe                   list keys and sign random bytes with the first key
 kit-tck-ssh-agent sign KEY                  sign random bytes: a signature for no protocol
 kit-tck-ssh-agent sshsig NAMESPACE KEY      sign a namespaced (SSHSIG) signature
 kit-tck-ssh-agent login USER KEY SID [BIND] [KEY_OVERRIDE] [ALGORITHM] sign a login for session SID, after the
@@ -137,17 +138,24 @@ def main(argv):
         print(os.environ.get("SSH_AUTH_SOCK", ""))
         return
     agent = Agent()
-    if op == "list":
+    if op in ("list", "observe"):
         kind, body = agent.call(REQUEST_IDENTITIES)
         if kind != IDENTITIES_ANSWER:
             sys.exit(1)
         (count,) = struct.unpack_from(">I", body, 0)
         off = 4
+        keys = []
         for _ in range(count):
             blob, off = read_string(body, off)
             _, off = read_string(body, off)
             name, _ = read_string(blob, 0)
-            print(name.decode(), base64.b64encode(blob).decode())
+            key = name.decode() + " " + base64.b64encode(blob).decode()
+            keys.append(key)
+            print(key)
+        if op == "observe":
+            if not keys:
+                sys.exit(1)
+            sign(agent, keys[0], secrets.token_bytes(32))
         return
     if op == "sign" and len(args) == 1:
         sign(agent, args[0], secrets.token_bytes(32))

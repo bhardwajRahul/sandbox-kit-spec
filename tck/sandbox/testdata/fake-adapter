@@ -347,12 +347,19 @@ create)
     fi
   fi
   if [ -f "$dir/ssh-agent" ]; then
-    if [ "$broken" != "ssh-agent-missing-workload-env" ]; then
-      printf '%s' /run/kit-tck/ssh-agent.sock >"$dir/workload-ssh-sock"
-    fi
-    if [ "$broken" != "ssh-agent-missing-startup-env" ]; then
-      printf '%s' /run/kit-tck/ssh-agent.sock >"$dir/startup-ssh-sock"
-    fi
+    for process in workload startup; do
+      process_agent="$offered_agent"
+      process_socket=/run/kit-tck/ssh-agent.sock
+      if [ "$broken" = "ssh-agent-missing-$process-env" ]; then
+        process_agent=""
+        process_socket=""
+      elif [ "$broken" = "ssh-agent-bogus-$process-socket" ]; then
+        process_agent="$dir/nonexistent-agent.sock"
+        process_socket=/run/kit-tck/nonexistent-agent.sock
+      fi
+      printf '%s' "$process_socket" >"$dir/$process-ssh-sock"
+      SSH_AUTH_SOCK="$process_agent" python3 "$(cat "$dir/ssh-agent-probe")" observe >"$dir/$process-ssh-sock-proof" 2>&1 || true
+    done
   fi
   # The entrypoint records an empty value when no runtime-phase grant
   # exists; only the leak mutation writes a non-empty value instead.
@@ -552,6 +559,8 @@ exec)
     /var/tmp/hook.env) cat "$dir/hook.env" ;;
     /var/tmp/kit-tck-workload-ssh-sock) cat "$dir/workload-ssh-sock" ;;
     /var/tmp/kit-tck-startup-ssh-sock) cat "$dir/startup-ssh-sock" ;;
+    /var/tmp/kit-tck-workload-ssh-sock-proof) cat "$dir/workload-ssh-sock-proof" ;;
+    /var/tmp/kit-tck-startup-ssh-sock-proof) cat "$dir/startup-ssh-sock-proof" ;;
     /var/tmp/ssh-agent-at-install)
       if [ -f "$dir/ssh-agent-at-install" ]; then cat "$dir/ssh-agent-at-install"; else
         echo "no such file: $2" >&2

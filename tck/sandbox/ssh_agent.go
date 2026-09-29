@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/docker/sandbox-kit-spec/v3/tck/adapter"
 	"github.com/docker/sandbox-kit-spec/v3/tck/report"
@@ -26,7 +27,7 @@ const (
 // OpenSSH's PROTOCOL.agent: adding keys (plain and constrained), removing
 // one or all, adding and removing smartcard keys (plain and constrained),
 // locking, and unlocking.
-var sshAgentMutatingRequests = []int{17, 18, 19, 20, 21, 22, 23, 25, 26}
+var sshAgentMutatingRequests = []int{17, 18, 19, 20, 21, 22, 23, 24, 25, 26}
 
 // withBackingAgent runs a check against a fresh agent the suite owns, so
 // every observation starts from a known key and a zero request count.
@@ -67,16 +68,20 @@ func probeSign(ctx context.Context, e *Env, id string, a *backingAgent, args ...
 	default:
 		return refused, failing("%s %s: exit %d: %s", sshAgentProbe, args[0], res.ExitCode, strings.TrimSpace(res.Stderr))
 	}
+	if err := verifyAgentSignature(a, res.Stdout); err != nil {
+		return signed, failing("%s %s returned a signature the backing agent's key did not make: %v", sshAgentProbe, args[0], err)
+	}
+	return signed, nil
+}
+
+func verifyAgentSignature(a *backingAgent, output string) error {
 	fields := map[string]string{}
-	for _, line := range strings.Split(res.Stdout, "\n") {
+	for _, line := range strings.Split(output, "\n") {
 		if k, v, ok := strings.Cut(strings.TrimSpace(line), " "); ok {
 			fields[k] = v
 		}
 	}
-	if err := a.Verify(fields["data"], fields["signature"]); err != nil {
-		return signed, failing("%s %s returned a signature the backing agent's key did not make: %v", sshAgentProbe, args[0], err)
-	}
-	return signed, nil
+	return a.Verify(fields["data"], fields["signature"])
 }
 
 // expectSigned asserts a request the entry admits is signed by the
@@ -167,6 +172,10 @@ func sshAgentReachable(ctx context.Context, e *Env) []report.Finding {
 			return []report.Finding{*f}
 		}
 		for _, path := range []string{"/var/tmp/kit-tck-workload-ssh-sock", "/var/tmp/kit-tck-startup-ssh-sock"} {
+			proof, f := initialAgentProof(ctx, e, id, path+"-proof")
+			if f != nil {
+				return []report.Finding{*f}
+			}
 			socket, f := execOutput(ctx, e, id, "cat", path)
 			if f != nil {
 				return []report.Finding{report.Failf("read initial SSH_AUTH_SOCK from %s: %s", path, f.Detail)}
@@ -174,9 +183,34 @@ func sshAgentReachable(ctx context.Context, e *Env) []report.Finding {
 			if strings.TrimSpace(socket) == "" {
 				return []report.Finding{report.Failf("SSH_AUTH_SOCK was absent from %s", path)}
 			}
+			if !strings.Contains(proof, a.PublicKey()) {
+				return []report.Finding{report.Failf("the initial process at %s did not list the backing agent's key", path)}
+			}
+			if err := verifyAgentSignature(a, proof); err != nil {
+				return []report.Finding{report.Failf("the initial process at %s did not obtain a valid backing-agent signature: %v", path, err)}
+			}
 		}
 		return nil
 	})
+}
+
+// Creation can return before the entrypoint finishes its probe. Fixtures
+// rename the completed record into place so an early exec never judges
+// a partially written signature as a broken agent.
+func initialAgentProof(ctx context.Context, e *Env, id, path string) (string, *report.Finding) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	for {
+		proof, f := execOutput(ctx, e, id, "cat", path)
+		if f == nil {
+			return proof, nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", failing("read initial agent proof from %s: %s", path, f.Detail)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }
 
 // sshAgentRestricted sends every request that would change the backing

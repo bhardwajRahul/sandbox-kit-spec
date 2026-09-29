@@ -11,6 +11,9 @@ capabilities:
     optional: true
     config:
       startup:
-        - command: sh -c 'printf "%s" "$SSH_AUTH_SOCK" > /var/tmp/kit-tck-startup-ssh-sock'
+        - command: >-
+            sh -c 'printf "%s" "$SSH_AUTH_SOCK" > /var/tmp/kit-tck-startup-ssh-sock;
+            kit-tck-ssh-agent observe > /var/tmp/kit-tck-startup-ssh-sock-proof.tmp 2>&1 || true;
+            mv /var/tmp/kit-tck-startup-ssh-sock-proof.tmp /var/tmp/kit-tck-startup-ssh-sock-proof'
           env: [SSH_AUTH_SOCK]
-          description: Records the socket granted to startup hooks
+          description: Records the startup socket and proves its agent can list keys and sign
