@@ -8,21 +8,41 @@ import (
 )
 
 func finalEnvironmentPrecedence(ctx context.Context, e *Env) []report.Finding {
-	// The workload supplies image-greeting. Every case exports arg-greeting,
-	// so an override must beat two different earlier values, not coincide
-	// with a value a runtime could obtain without applying the override.
+	// Keep the image-only fixture free of argument exports: an argument's
+	// default would replace the image value even with no create arguments.
 	for _, tc := range []struct {
-		name string
-		env  map[string]string
-		want string
+		name    string
+		fixture string
+		opts    adapter.CreateOptions
+		want    string
 	}{
-		{"argument export", nil, "arg-greeting"},
-		{"runtime override", map[string]string{"KIT_GREETING": "runtime-greeting"}, "runtime-greeting"},
-		{"empty override", map[string]string{"KIT_GREETING": ""}, ""},
+		{
+			name: "image default", fixture: "files-image-env",
+			want: "image-greeting",
+		},
+		{
+			name: "argument export", fixture: fixtureFiles,
+			opts: adapter.CreateOptions{Args: map[string]string{"greeting": "arg-greeting"}},
+			want: "arg-greeting",
+		},
+		{
+			name: "runtime override", fixture: fixtureFiles,
+			opts: adapter.CreateOptions{
+				Args: map[string]string{"greeting": "arg-greeting"},
+				Env:  map[string]string{"KIT_GREETING": "runtime-greeting"},
+			},
+			want: "runtime-greeting",
+		},
+		{
+			name: "empty override", fixture: fixtureFiles,
+			opts: adapter.CreateOptions{
+				Args: map[string]string{"greeting": "arg-greeting"},
+				Env:  map[string]string{"KIT_GREETING": ""},
+			},
+			want: "",
+		},
 	} {
-		id, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, fixtureFiles}, adapter.CreateOptions{
-			Args: map[string]string{"greeting": "arg-greeting"}, Env: tc.env,
-		})
+		id, cleanup, err := e.sandboxWith(ctx, []string{fixtureWorkload, tc.fixture}, tc.opts)
 		if err != nil {
 			cleanup()
 			return []report.Finding{report.Failf("create for %s: %v", tc.name, err)}

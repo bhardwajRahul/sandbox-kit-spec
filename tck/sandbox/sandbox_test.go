@@ -192,6 +192,7 @@ func TestBackingAgentCloseWithIdleClient(t *testing.T) {
 // requirement — the two network-policy versions state the same duty about
 // the host lists — and dropping it has to fail every one of them.
 var mutations = map[string][]string{
+	"drops-image-env-defaults":                       {"SPEC-v3 §6/env-expanded"},
 	"ignores-env-overrides":                          {"SPEC-v3 §6/env-expanded"},
 	"drops-empty-env-overrides":                      {"SPEC-v3 §6/env-expanded"},
 	"ssh-agent-create-workload-forward-refused-sign": {"ssh-agent@1/signatures-bounded"},

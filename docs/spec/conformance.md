@@ -79,7 +79,8 @@ before expanding `${{ kit.env.NAME }}` references. An empty value is a
 present override; values are literal and are not shell-expanded. These
 flags do not change the adapter process's own environment. The
 `SPEC-v3 §6/env-expanded` check compares a declared file's content with
-its final environment value, including a distinct runtime override and
+its final environment value: an image default without any argument
+exports, a distinct argument export, a distinct runtime override, and
 an empty override.
 
 `capabilities` is what makes a partial implementation testable: the suite
