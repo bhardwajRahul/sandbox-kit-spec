@@ -99,6 +99,35 @@ func TestResolveValidatesSkippedMembersAfterExpansion(t *testing.T) {
 	require.ErrorContains(t, err, "capabilities[0].group.capabilities[0]")
 }
 
+func TestRepublishedRejectionNamesOriginalMember(t *testing.T) {
+	reg := newRegistry(t)
+	base := &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindMixin, Capabilities: []spec.Capability{{Type: spec.CapabilityLifecycle, Config: map[string]any{"startup": []any{map[string]any{"command": "true"}}}}}}
+	original := &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindMixin, Capabilities: []spec.Capability{
+		{Group: &spec.CapabilityGroup{Capabilities: []spec.Capability{
+			{Type: spec.CapabilityVolume, Config: map[string]any{"path": "/cache"}},
+		}}},
+	}}
+	published, err := spec.Merge([]spec.Contribution{
+		{Reference: "registry.example/base:1.0.0", Descriptor: base},
+		{Reference: "registry.example/feature:1.0.0", Descriptor: original},
+	}, spec.MergeOptions{})
+	require.NoError(t, err)
+	// Republish once more: the original member's attribution must survive.
+	published, err = spec.Merge([]spec.Contribution{{Reference: "registry.example/first-set:1.0.0", Descriptor: published.Descriptor}}, spec.MergeOptions{})
+	require.NoError(t, err)
+	reg.tag("kits/republished", "1.0.0", reg.image(t, kitJSON(t, published.Descriptor)))
+	client, err := New()
+	require.NoError(t, err)
+	ref := reg.ref("kits/republished", "1.0.0")
+	result, err := client.ResolvePartial(t.Context(), reqs(ref), WithCapabilitySelector(spec.Supported(spec.CapabilityLifecycle)))
+	require.Nil(t, result)
+	require.ErrorContains(t, err, ref)
+	require.ErrorContains(t, err, "registry.example/feature:1.0.0 capabilities[0].group.capabilities[0]")
+	var field *spec.FieldError
+	require.ErrorAs(t, err, &field)
+	require.Equal(t, "capabilities[1].group.capabilities[0]", field.Path)
+}
+
 func TestResolveCompletesSelectionSourcesWithoutMutatingDeclarations(t *testing.T) {
 	for _, grouped := range []bool{false, true} {
 		for _, accept := range []bool{false, true} {

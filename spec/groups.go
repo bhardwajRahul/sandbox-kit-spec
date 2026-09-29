@@ -353,6 +353,13 @@ func SelectCapabilities(d *Descriptor, selectCapability SelectCapability) (Selec
 			record.MemberSources = append(record.MemberSources, origin)
 			if !selectCapability(cloneSelectionCapability(c)) {
 				record.Rejected = append(record.Rejected, memberPath)
+				if !optional {
+					detail := fmt.Sprintf("required capability selection rejected (item %s)", at)
+					if origin.Kit != "" || origin.Path != memberPath {
+						detail += fmt.Sprintf("; original source %s %s", origin.Kit, origin.Path)
+					}
+					errs.add(fieldErrorf(memberPath, "%s", detail))
+				}
 			}
 			if c.Source == nil {
 				c.Source = &CapabilitySource{Path: memberPath}
@@ -361,11 +368,6 @@ func SelectCapabilities(d *Descriptor, selectCapability SelectCapability) (Selec
 		}
 		if len(record.Rejected) > 0 {
 			result.Skipped = append(result.Skipped, record)
-			if !optional {
-				for _, memberPath := range record.Rejected {
-					errs.add(fieldErrorf(memberPath, "required capability selection rejected (item %s)", at))
-				}
-			}
 		} else {
 			result.Selected = append(result.Selected, record)
 			result.Capabilities = append(result.Capabilities, selected...)
