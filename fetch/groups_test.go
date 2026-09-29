@@ -167,3 +167,30 @@ func TestResolveCompletesSelectionSourcesWithoutMutatingDeclarations(t *testing.
 		}
 	}
 }
+
+func TestRequiredRejectionCompletesPathOnlySources(t *testing.T) {
+	for _, grouped := range []bool{false, true} {
+		t.Run(fmt.Sprint(grouped), func(t *testing.T) {
+			reg := newRegistry(t)
+			entry := spec.Capability{Type: spec.CapabilityVolume, Config: map[string]any{"path": "/cache"}, Source: &spec.CapabilitySource{Path: "capabilities[7]"}}
+			if grouped {
+				entry = spec.Capability{Group: &spec.CapabilityGroup{Capabilities: []spec.Capability{entry}}, Source: &spec.CapabilitySource{Path: "capabilities[8]"}}
+			}
+			d := &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindMixin, Capabilities: []spec.Capability{entry}}
+			reg.tag("kits/source", "1.0.0", reg.image(t, kitJSON(t, d)))
+			client, err := New()
+			require.NoError(t, err)
+			ref := reg.ref("kits/source", "1.0.0")
+			_, err = client.ResolvePartial(t.Context(), reqs(ref), WithCapabilitySelector(spec.Supported()))
+			require.ErrorContains(t, err, "original source "+ref+" capabilities[7]")
+			// Normalization must copy both group and member source pointers.
+			copy := withSelectionSources(d, ref)
+			require.Equal(t, "", d.Capabilities[0].Source.Kit)
+			require.NotSame(t, d.Capabilities[0].Source, copy.Capabilities[0].Source)
+			if grouped {
+				require.Equal(t, "", d.Capabilities[0].Group.Capabilities[0].Source.Kit)
+				require.NotSame(t, d.Capabilities[0].Group.Capabilities[0].Source, copy.Capabilities[0].Group.Capabilities[0].Source)
+			}
+		})
+	}
+}

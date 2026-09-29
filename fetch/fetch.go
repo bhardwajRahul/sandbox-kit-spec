@@ -324,33 +324,9 @@ func mergeKits(kits []*Kit, args []map[string]string, partial bool, opts ...Reso
 	contributions := make([]spec.Contribution, 0, len(ordered))
 	for i, u := range ordered {
 		original := originals[u.Reference]
-		selected, err := spec.SelectCapabilities(u.Descriptor, options.selector)
+		selected, err := spec.SelectCapabilities(withSelectionSources(u.Descriptor, u.Reference), options.selector)
 		if err != nil {
 			return nil, spec.WithSource(err, u.Reference, original.Raw)
-		}
-		for j := range selected.Capabilities {
-			source := *selected.Capabilities[j].Source
-			if source.Kit == "" {
-				source.Kit = u.Reference
-			}
-			selected.Capabilities[j].Source = &source
-		}
-		for _, records := range [][]spec.SelectionRecord{selected.Selected, selected.Skipped} {
-			for j := range records {
-				source := spec.CapabilitySource{Path: records[j].Path}
-				if records[j].Source != nil {
-					source = *records[j].Source
-				}
-				if source.Kit == "" {
-					source.Kit = u.Reference
-				}
-				records[j].Source = &source
-				for k := range records[j].MemberSources {
-					if records[j].MemberSources[k].Kit == "" {
-						records[j].MemberSources[k].Kit = u.Reference
-					}
-				}
-			}
 		}
 		selections = append(selections, KitSelection{Reference: u.Reference, Original: u.Descriptor, Raw: original.Raw, Selection: selected})
 		cp := *u
@@ -380,6 +356,36 @@ func mergeKits(kits []*Kit, args []map[string]string, partial bool, opts ...Reso
 		return nil, spec.WithSource(err, "merged descriptor", raw)
 	}
 	return result, nil
+}
+
+// Complete source metadata before selection so refusal errors and successful
+// records use the same attribution. Copy only what normalization changes;
+// SelectCapabilities isolates configs before handing entries to policy.
+func withSelectionSources(d *spec.Descriptor, reference string) *spec.Descriptor {
+	var copyItems func([]spec.Capability, string) []spec.Capability
+	copyItems = func(items []spec.Capability, prefix string) []spec.Capability {
+		out := append([]spec.Capability(nil), items...)
+		for i := range out {
+			path := fmt.Sprintf("%s[%d]", prefix, i)
+			source := spec.CapabilitySource{Path: path}
+			if out[i].Source != nil {
+				source = *out[i].Source
+			}
+			if source.Kit == "" {
+				source.Kit = reference
+			}
+			out[i].Source = &source
+			if out[i].Group != nil {
+				group := *out[i].Group
+				group.Capabilities = copyItems(group.Capabilities, path+".group.capabilities")
+				out[i].Group = &group
+			}
+		}
+		return out
+	}
+	cp := *d
+	cp.Capabilities = copyItems(d.Capabilities, "capabilities")
+	return &cp
 }
 
 type expandedKit struct {
