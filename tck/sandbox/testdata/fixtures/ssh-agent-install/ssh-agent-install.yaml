@@ -11,6 +11,8 @@ capabilities:
     optional: true
     config:
       install:
-        - command: sh -c 'ssh-add -L > /var/tmp/ssh-agent-at-install 2>&1 || true'
+        - command: >-
+            sh -c 'printf "%s" "$SSH_AUTH_SOCK" > /var/tmp/ssh-agent-install-sock;
+            ssh-add -L > /var/tmp/ssh-agent-at-install 2>&1 || true'
           env: [SSH_AUTH_SOCK]
           description: Records the identities the agent offered during install, so the install grant is observable before its end is

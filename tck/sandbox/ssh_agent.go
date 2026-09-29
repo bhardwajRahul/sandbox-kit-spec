@@ -563,6 +563,18 @@ func sshAgentPhaseScoped(ctx context.Context, e *Env) []report.Finding {
 		if socket := strings.TrimSpace(entrypoint); socket != "" {
 			return []report.Finding{report.Failf("install-only SSH agent leaked into the workload entrypoint as SSH_AUTH_SOCK=%q", socket)}
 		}
+		saved, f := execOutput(ctx, e, id, "cat", "/var/tmp/ssh-agent-install-sock")
+		if f != nil {
+			return []report.Finding{*f}
+		}
+		if strings.TrimSpace(saved) == "" {
+			return []report.Finding{report.Failf("the install hook did not record its socket path")}
+		}
+		before := a.Requests()
+		res, err := e.Adapter.Exec(ctx, id, sshAgentProbe, "saved", "/var/tmp/ssh-agent-install-sock")
+		if err != nil || res.ExitCode != 2 || a.Requests() != before {
+			return []report.Finding{report.Failf("the saved install socket %q did not close: exit %d, error %v, %d backing requests", strings.TrimSpace(saved), res.ExitCode, err, a.Requests()-before)}
+		}
 		return agentUnreachable(ctx, e, id, a, "the install-phase grant should have ended before the workload started")
 	})
 }

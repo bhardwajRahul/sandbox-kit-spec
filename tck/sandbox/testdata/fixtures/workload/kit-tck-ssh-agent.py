@@ -4,6 +4,7 @@
 kit-tck-ssh-agent socket                    print SSH_AUTH_SOCK (empty when unset)
 kit-tck-ssh-agent list                      print the offered keys, one authorized_keys line each
 kit-tck-ssh-agent observe                   record a git signature and filtering probes
+kit-tck-ssh-agent saved PATH                list keys through the socket path saved in PATH
 kit-tck-ssh-agent sign KEY                  sign random bytes: a signature for no protocol
 kit-tck-ssh-agent sshsig NAMESPACE KEY      sign a namespaced (SSHSIG) signature
 kit-tck-ssh-agent login USER KEY SID [BIND] [KEY_OVERRIDE] [ALGORITHM] sign a login for session SID, after the
@@ -138,6 +139,10 @@ def main(argv):
     if op == "socket":
         print(os.environ.get("SSH_AUTH_SOCK", ""))
         return
+    if op == "saved" and len(args) == 1:
+        with open(args[0], encoding="utf-8") as record:
+            os.environ["SSH_AUTH_SOCK"] = record.read().strip()
+        op = "list"
     agent = Agent()
     if op in ("list", "observe"):
         kind, body = agent.call(REQUEST_IDENTITIES)

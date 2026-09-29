@@ -369,16 +369,18 @@ create)
   printf '%s' "$agent_config" >"$dir/ssh-agent.json"
   if [ -n "$known_hosts" ]; then cp "$known_hosts" "$dir/known_hosts"; fi
   # The agent a runtime grant reaches. Only the socket's presence matters
-  # inside the sandbox; the fake relays to the backing agent on exec.
+  # inside the sandbox; every process probe reaches it through the relay.
   if [ -n "$offered_agent" ]; then
     if [ "$agent_phase" = install ]; then
       # The install hook runs with the agent granted and records what it
-      # offered, through a real ssh-add against the backing agent.
+      # offered, through the workload probe and the relay.
       if [ "$broken" = "ssh-agent-install-missing" ]; then
         echo "Could not open a connection to your authentication agent." >"$dir/ssh-agent-at-install"
       else
-        SSH_AUTH_SOCK="$offered_agent" ssh-add -L >"$dir/ssh-agent-at-install" 2>&1 || true
+        run_ssh_probe "$dir" "$offered_agent" "$broken" list >"$dir/ssh-agent-at-install" 2>&1 || true
       fi
+      printf '%s' /run/kit-tck/install-agent.sock >"$dir/install-ssh-sock"
+      printf '%s' "$offered_agent" >"$dir/install-agent"
       if [ "$broken" = "leaves-install-ssh-agent-open" ]; then printf '%s' "$offered_agent" >"$dir/ssh-agent"; fi
       if [ "$broken" = "leaks-install-ssh-agent-to-entrypoint" ]; then
         printf '%s' /run/kit-tck/ssh-agent.sock >"$dir/workload-ssh-sock"
@@ -592,6 +594,7 @@ exec)
     /var/tmp/kit-tck-startup-ssh-sock) cat "$dir/startup-ssh-sock" ;;
     /var/tmp/kit-tck-workload-ssh-sock-proof) cat "$dir/workload-ssh-sock-proof" ;;
     /var/tmp/kit-tck-startup-ssh-sock-proof) cat "$dir/startup-ssh-sock-proof" ;;
+    /var/tmp/ssh-agent-install-sock) cat "$dir/install-ssh-sock" ;;
     /var/tmp/ssh-agent-at-install)
       if [ -f "$dir/ssh-agent-at-install" ]; then cat "$dir/ssh-agent-at-install"; else
         echo "no such file: $2" >&2
@@ -850,6 +853,13 @@ exec)
     # for this one call by the relay, which enforces the sandbox's entry
     # in front of the backing agent. What reaches the backing agent is
     # what the suite judges, as it would for a real runtime.
+    if [ "$2" = saved ]; then
+      if [ "$broken" = install-socket-still-reachable ] && [ -f "$dir/install-agent" ]; then
+        run_ssh_probe "$dir" "$(cat "$dir/install-agent")" "$broken" list
+        exit $?
+      fi
+      exit 2
+    fi
     if [ "$2" = socket ]; then
       if [ -f "$dir/ssh-agent" ]; then echo /run/kit-tck/ssh-agent.sock; else echo; fi
       exit 0
