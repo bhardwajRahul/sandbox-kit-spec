@@ -99,8 +99,25 @@ write_republished_state() {
   printf '{"selection":{"selected":[%s],"skipped":[%s]},"surface":%s}\n' "$selected" "$skipped" "$surface" >"$dir/selection.json"
 }
 
+run_ssh_probe() (
+  local dir="$1" backing="$2" relay_broken="$3" relay_dir relay_pid status
+  shift 3
+  : "${KIT_TCK_FAKE_RELAY:?KIT_TCK_FAKE_RELAY names the built ssh-relay}"
+  # A Unix socket path is capped near 104 bytes on macOS, which the
+  # state directory can exceed.
+  relay_dir="$(mktemp -d /tmp/kit-tck-relay-XXXXXX)"
+  "$KIT_TCK_FAKE_RELAY" -listen "$relay_dir/agent.sock" -backing "$backing" \
+    -config "$dir/ssh-agent.json" -known-hosts "$dir/known_hosts" -broken "$relay_broken" 2>/dev/null &
+  relay_pid=$!
+  trap 'kill "$relay_pid" 2>/dev/null || true; wait "$relay_pid" 2>/dev/null || true; rm -rf "$relay_dir"' EXIT
+  for _ in $(seq 1 100); do [ -S "$relay_dir/agent.sock" ] && break; sleep 0.02; done
+  status=0
+  SSH_AUTH_SOCK="$relay_dir/agent.sock" python3 "$(cat "$dir/ssh-agent-probe")" "$@" || status=$?
+  exit "$status"
+)
+
 record_ssh_processes() {
-  local dir="$1" boot="$2" process process_agent process_socket
+  local dir="$1" boot="$2" process process_agent process_socket process_broken
   for process in workload startup; do
     process_agent="$(cat "$dir/ssh-agent")"
     process_socket=/run/kit-tck/ssh-agent.sock
@@ -112,7 +129,15 @@ record_ssh_processes() {
       process_socket=/run/kit-tck/nonexistent-agent.sock
     fi
     printf '%s' "$process_socket" >"$dir/$process-ssh-sock"
-    SSH_AUTH_SOCK="$process_agent" python3 "$(cat "$dir/ssh-agent-probe")" observe >"$dir/$process-ssh-sock-proof" 2>&1 || true
+    process_broken="$broken"
+    if [ "$broken" = "ssh-agent-$boot-$process-unfiltered-sign" ]; then process_broken=ssh-agent-unfiltered-sign; fi
+    if [ "$broken" = "ssh-agent-$boot-$process-forward-refused-sign" ]; then process_broken=ssh-agent-sign-forwards-refused; fi
+    if [ "$broken" = "ssh-agent-$boot-$process-unfiltered-operations" ]; then process_broken=ssh-agent-forwards-constrained-rsa; fi
+    if [ -S "$process_agent" ]; then
+      run_ssh_probe "$dir" "$process_agent" "$process_broken" observe >"$dir/$process-ssh-sock-proof" 2>&1 || true
+    else
+      SSH_AUTH_SOCK="$process_agent" python3 "$(cat "$dir/ssh-agent-probe")" observe >"$dir/$process-ssh-sock-proof" 2>&1 || true
+    fi
   done
 }
 
@@ -833,21 +858,8 @@ exec)
       echo "Could not open a connection to your authentication agent." >&2
       exit 2
     fi
-    : "${KIT_TCK_FAKE_RELAY:?KIT_TCK_FAKE_RELAY names the built ssh-relay}"
-    # A Unix socket path is capped near 104 bytes on macOS, which the
-    # state directory can exceed.
-    relay_dir="$(mktemp -d /tmp/kit-tck-relay-XXXXXX)"
-    "$KIT_TCK_FAKE_RELAY" -listen "$relay_dir/agent.sock" -backing "$(cat "$dir/ssh-agent")" \
-      -config "$dir/ssh-agent.json" -known-hosts "$dir/known_hosts" -broken "$broken" 2>/dev/null &
-    relay_pid=$!
-    for _ in $(seq 1 100); do [ -S "$relay_dir/agent.sock" ] && break; sleep 0.02; done
     shift
-    status=0
-    SSH_AUTH_SOCK="$relay_dir/agent.sock" python3 "$(cat "$dir/ssh-agent-probe")" "$@" || status=$?
-    kill "$relay_pid" 2>/dev/null || true
-    wait "$relay_pid" 2>/dev/null || true
-    rm -rf "$relay_dir"
-    exit "$status"
+    run_ssh_probe "$dir" "$(cat "$dir/ssh-agent")" "$broken" "$@"
     ;;
   kit-tck-privileged)
     if [ "$broken" = "ignores-privileged" ]; then echo "no"; else echo "yes"; fi

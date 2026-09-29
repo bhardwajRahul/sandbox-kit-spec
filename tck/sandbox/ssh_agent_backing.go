@@ -37,7 +37,8 @@ type backingAgent struct {
 	// agent library answers some request types (smartcard loading,
 	// malformed requests) without calling a method, and a relay passing
 	// those on must still be seen passing them.
-	requests atomic.Int64
+	requests     atomic.Int64
+	requestTypes [256]atomic.Int64
 
 	// signed records, in order, what each sign request that reached the
 	// agent was for, as classifySignature names it. The bounds are judged
@@ -114,7 +115,7 @@ func (a *backingAgent) serve() {
 			wire := struct {
 				io.Reader
 				io.Writer
-			}{&frameCounter{r: conn, n: &a.requests}, conn}
+			}{&frameCounter{r: conn, n: &a.requests, types: &a.requestTypes}, conn}
 			_ = agent.ServeAgent(recordingAgent{ExtendedAgent: a.keyring, record: a.record}, wire)
 		}()
 	}
@@ -147,6 +148,8 @@ func (a *backingAgent) Holds() (bool, error) {
 
 // Requests is how many request frames have reached the agent so far.
 func (a *backingAgent) Requests() int64 { return a.requests.Load() }
+
+func (a *backingAgent) RequestsOfType(kind byte) int64 { return a.requestTypes[kind].Load() }
 
 // Signed returns what each sign request that reached the agent was for.
 func (a *backingAgent) Signed() []string {
@@ -247,17 +250,23 @@ func (r recordingAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agen
 // frameCounter counts agent-protocol frames (a four-byte length, then
 // that many bytes) as they are read, however the reads split them.
 type frameCounter struct {
-	r      io.Reader
-	n      *atomic.Int64
-	header [4]byte
-	have   int    // header bytes seen of the current frame
-	left   uint32 // body bytes still to come
+	r         io.Reader
+	n         *atomic.Int64
+	types     *[256]atomic.Int64
+	firstBody bool
+	header    [4]byte
+	have      int    // header bytes seen of the current frame
+	left      uint32 // body bytes still to come
 }
 
 func (f *frameCounter) Read(p []byte) (int, error) {
 	n, err := f.r.Read(p)
 	for b := p[:n]; len(b) > 0; {
 		if f.left > 0 {
+			if f.firstBody {
+				f.types[b[0]].Add(1)
+				f.firstBody = false
+			}
 			step := min(uint32(len(b)), f.left)
 			f.left -= step
 			b = b[step:]
@@ -269,6 +278,7 @@ func (f *frameCounter) Read(p []byte) (int, error) {
 		if f.have == 4 {
 			f.have = 0
 			f.left = binary.BigEndian.Uint32(f.header[:])
+			f.firstBody = true
 			f.n.Add(1)
 		}
 	}

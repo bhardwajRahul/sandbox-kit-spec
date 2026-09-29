@@ -192,6 +192,18 @@ func TestBackingAgentCloseWithIdleClient(t *testing.T) {
 // requirement — the two network-policy versions state the same duty about
 // the host lists — and dropping it has to fail every one of them.
 var mutations = map[string][]string{
+	"ssh-agent-create-workload-forward-refused-sign": {"ssh-agent@1/signatures-bounded"},
+	"ssh-agent-restart-startup-forward-refused-sign": {"ssh-agent@1/signatures-bounded"},
+
+	"ssh-agent-create-workload-unfiltered-sign":        {"ssh-agent@1/signatures-bounded"},
+	"ssh-agent-create-workload-unfiltered-operations":  {"ssh-agent@1/operations-restricted"},
+	"ssh-agent-create-startup-unfiltered-sign":         {"ssh-agent@1/signatures-bounded"},
+	"ssh-agent-create-startup-unfiltered-operations":   {"ssh-agent@1/operations-restricted"},
+	"ssh-agent-restart-workload-unfiltered-sign":       {"ssh-agent@1/signatures-bounded"},
+	"ssh-agent-restart-workload-unfiltered-operations": {"ssh-agent@1/operations-restricted"},
+	"ssh-agent-restart-startup-unfiltered-sign":        {"ssh-agent@1/signatures-bounded"},
+	"ssh-agent-restart-startup-unfiltered-operations":  {"ssh-agent@1/operations-restricted"},
+
 	"ssh-agent-restart-missing-workload-env": {"ssh-agent@1/every-boot"},
 	"ssh-agent-restart-missing-startup-env":  {"ssh-agent@1/every-boot"},
 	"ssh-agent-stale-boot-proofs":            {"ssh-agent@1/every-boot"},

@@ -3,7 +3,7 @@
 
 kit-tck-ssh-agent socket                    print SSH_AUTH_SOCK (empty when unset)
 kit-tck-ssh-agent list                      print the offered keys, one authorized_keys line each
-kit-tck-ssh-agent observe                   list keys and sign random bytes with the first key
+kit-tck-ssh-agent observe                   record a git signature and filtering probes
 kit-tck-ssh-agent sign KEY                  sign random bytes: a signature for no protocol
 kit-tck-ssh-agent sshsig NAMESPACE KEY      sign a namespaced (SSHSIG) signature
 kit-tck-ssh-agent login USER KEY SID [BIND] [KEY_OVERRIDE] [ALGORITHM] sign a login for session SID, after the
@@ -91,21 +91,22 @@ def key_type(line):
     return line.split()[0]
 
 
-def sign(agent, key, data):
+def sign(agent, key, data, report=True):
     kind, body = agent.call(SIGN_REQUEST, string(key_blob(key)) + string(data) + struct.pack(">I", 0))
     if kind == FAILURE and not body:
-        sys.exit(1)
+        return 1
     if kind != SIGN_RESPONSE:
-        sys.exit(65)
+        return 65
     try:
         signature, off = read_string(body, 0)
     except struct.error:
-        sys.exit(65)
+        return 65
     if off != len(body):
-        sys.exit(65)
-    print("data", data.hex())
-    print("signature", signature.hex())
-    sys.exit(0)
+        return 65
+    if report:
+        print("data", data.hex())
+        print("signature", signature.hex())
+    return 0
 
 
 def sshsig_data(namespace):
@@ -155,12 +156,26 @@ def main(argv):
         if op == "observe":
             if not keys:
                 sys.exit(1)
-            sign(agent, keys[0], secrets.token_bytes(32))
+            status = sign(agent, keys[0], sshsig_data("git"))
+            if status:
+                return status
+            for name, data in (
+                ("other", secrets.token_bytes(32)),
+                ("file", sshsig_data("file")),
+                ("login", login_data("git", keys[0], secrets.token_bytes(32))),
+            ):
+                print("probe-" + name, sign(agent, keys[0], data, report=False))
+            for kind in range(17, 27):
+                reply, body = agent.call(kind)
+                print("raw-" + str(kind), 1 if reply == FAILURE and not body else 65)
+            for name in ("query", "kit-tck-unknown@example.com"):
+                reply, body = agent.call(EXTENSION, string(name))
+                print("extension-" + name, 1 if reply == FAILURE and not body else 65)
         return
     if op == "sign" and len(args) == 1:
-        sign(agent, args[0], secrets.token_bytes(32))
+        return sign(agent, args[0], secrets.token_bytes(32))
     if op == "sshsig" and len(args) == 2:
-        sign(agent, args[1], sshsig_data(args[0]))
+        return sign(agent, args[1], sshsig_data(args[0]))
     if op in ("login", "hostbound") and len(args) in (3, 4, 5, 6):
         user, key, sid = args[0], args[1], bytes.fromhex(args[2])
         binding = args[3] if len(args) >= 4 else None
@@ -175,7 +190,7 @@ def main(argv):
         hostkey = args[4] if op == "hostbound" and len(args) == 5 else None
         override = args[4] if op == "login" and len(args) >= 5 else None
         algorithm = args[5] if op == "login" and len(args) == 6 else None
-        sign(agent, key, login_data(user, key, sid, hostkey, override, algorithm))
+        return sign(agent, key, login_data(user, key, sid, hostkey, override, algorithm))
     if op == "raw" and len(args) == 1:
         kind, body = agent.call(int(args[0]))
         sys.exit(0 if kind == SUCCESS and not body else 1 if kind == FAILURE and not body else 65)
@@ -186,4 +201,4 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    sys.exit(main(sys.argv[1:]))

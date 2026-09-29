@@ -172,6 +172,9 @@ func (r *relay) handle(msg []byte, bound **binding, forward func([]byte) ([]byte
 		if r.signAllowed(msg[1:], *bound) {
 			return forward(msg)
 		}
+		if r.broken == "ssh-agent-sign-forwards-refused" {
+			_, _ = forward(msg)
+		}
 		return []byte{msgFailure}, nil
 	case msgExtension:
 		name, rest, ok := sshString(msg[1:])
@@ -219,6 +222,9 @@ func (r *relay) verifyBinding(body []byte) (*binding, error) {
 }
 
 func (r *relay) signAllowed(body []byte, bound *binding) bool {
+	if r.broken == "ssh-agent-unfiltered-sign" {
+		return true
+	}
 	requestedKey, rest, ok := sshString(body)
 	if !ok {
 		return false

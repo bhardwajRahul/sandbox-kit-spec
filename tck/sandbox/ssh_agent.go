@@ -75,13 +75,18 @@ func probeSign(ctx context.Context, e *Env, id string, a *backingAgent, args ...
 }
 
 func verifyAgentSignature(a *backingAgent, output string) error {
+	fields := agentProbeFields(output)
+	return a.Verify(fields["data"], fields["signature"])
+}
+
+func agentProbeFields(output string) map[string]string {
 	fields := map[string]string{}
 	for _, line := range strings.Split(output, "\n") {
 		if k, v, ok := strings.Cut(strings.TrimSpace(line), " "); ok {
 			fields[k] = v
 		}
 	}
-	return a.Verify(fields["data"], fields["signature"])
+	return fields
 }
 
 // expectSigned asserts a request the entry admits is signed by the
@@ -231,6 +236,64 @@ func initialAgentProof(ctx context.Context, e *Env, id, path, previous string) (
 	}
 }
 
+// Initial processes run the same probes on each boot. Responses alone
+// cannot prove filtering: the backing agent also records request types
+// and signed data, including a rejected request that was forwarded first.
+func initialProcessRestrictions(ctx context.Context, e *Env, id string, a *backingAgent, bounded bool) *report.Finding {
+	var previous map[string]string
+	for boot := 0; boot < 2; boot++ {
+		if boot > 0 {
+			if err := e.Adapter.Stop(ctx, id); err != nil {
+				return failing("stop: %v", err)
+			}
+			if err := e.Adapter.Start(ctx, id); err != nil {
+				return failing("start: %v", err)
+			}
+		}
+		proofs, f := initialAgentsServe(ctx, e, id, a, previous)
+		if f != nil {
+			return f
+		}
+		for path, proof := range proofs {
+			fields := agentProbeFields(proof)
+			for _, kind := range sshAgentMutatingRequests {
+				if fields[fmt.Sprintf("raw-%d", kind)] != "1" {
+					return failing("%s on boot %d did not refuse operation %d", path, boot+1, kind)
+				}
+			}
+			for _, extension := range []string{"query", "kit-tck-unknown@example.com"} {
+				if fields["extension-"+extension] != "1" {
+					return failing("%s on boot %d did not refuse extension %s", path, boot+1, extension)
+				}
+			}
+			want := "0"
+			if bounded {
+				want = "1"
+			}
+			for _, probe := range []string{"other", "file", "login"} {
+				if fields["probe-"+probe] != want {
+					return failing("%s on boot %d: signing probe %s returned %q, want %s", path, boot+1, probe, fields["probe-"+probe], want)
+				}
+			}
+		}
+		// These probes send only forbidden extensions, never session bindings.
+		for _, kind := range append(append([]int{}, sshAgentMutatingRequests...), 27) {
+			if count := a.RequestsOfType(byte(kind)); count != 0 {
+				return failing("initial processes forwarded %d request(s) of type %d on boot %d", count, kind, boot+1)
+			}
+		}
+		if bounded {
+			for _, request := range a.Signed() {
+				if request != "sshsig git" {
+					return failing("initial processes forwarded forbidden signing request %s on boot %d", request, boot+1)
+				}
+			}
+		}
+		previous = proofs
+	}
+	return nil
+}
+
 // sshAgentRestricted sends every request that would change the backing
 // agent, and extensions nothing grants, through an unbounded entry: even
 // the widest grant is a grant to use keys, not to manage the agent.
@@ -241,6 +304,9 @@ func sshAgentRestricted(ctx context.Context, e *Env) []report.Finding {
 			return []report.Finding{report.Failf("create: %v", err)}
 		}
 		defer cleanup()
+		if f := initialProcessRestrictions(ctx, e, id, a, false); f != nil {
+			return []report.Finding{*f}
+		}
 		// Reaching the agent first is what makes the refusals mean
 		// anything: a sandbox that never reached it cannot change it
 		// either.
@@ -286,6 +352,9 @@ func sshAgentSignaturesBounded(ctx context.Context, e *Env) []report.Finding {
 			return []report.Finding{report.Failf("create: %v", err)}
 		}
 		defer cleanup()
+		if f := initialProcessRestrictions(ctx, e, id, a, true); f != nil {
+			return []report.Finding{*f}
+		}
 		if f := expectSigned(ctx, e, id, a, "sshsig git", "sshsig", "git", a.PublicKey()); f != nil {
 			return []report.Finding{*f}
 		}

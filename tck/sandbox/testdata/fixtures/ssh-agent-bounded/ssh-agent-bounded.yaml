@@ -12,3 +12,13 @@ capabilities:
       # A name the suite hands the runtime host keys for through
       # --ssh-known-hosts; .example is reserved, so no real server answers.
       authenticate: [git@kit-tck.example, any-user.kit-tck.example]
+  - type: com.docker.sandbox/lifecycle@1
+    optional: true
+    config:
+      startup:
+        - command: >-
+            sh -c 'printf "%s" "$SSH_AUTH_SOCK" > /var/tmp/kit-tck-startup-ssh-sock;
+            kit-tck-ssh-agent observe > /var/tmp/kit-tck-startup-ssh-sock-proof.tmp 2>&1 || true;
+            mv /var/tmp/kit-tck-startup-ssh-sock-proof.tmp /var/tmp/kit-tck-startup-ssh-sock-proof'
+          env: [SSH_AUTH_SOCK]
+          description: Records the startup socket and proves its agent can list keys and sign
