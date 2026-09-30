@@ -146,6 +146,17 @@ platform. Assembly validates the metadata and declarations. When selected,
 `fetch.DefaultLayerValidator` streams, verifies, and closes layer blobs without
 buffering their bodies.
 
+For source-form Kits, such as `./my-kit` or a git URL, a custom loader
+builds the source and sets `LoadedKit.Image` to its runtime-resolvable
+image reference. Assembly keeps the request's `Reference` as the Kit's
+identity in diagnostics, selection records, and locks; `Image` identifies
+the built content. The loader keeps that image reference consistent with
+the returned digest and metadata. When `Image` is empty, assembly derives
+a digest-pinned image from the request reference, which must then be an
+OCI image reference. The default registry loader supplies its pinned
+image reference directly. Lower-level callers can also set `Kit.Image`
+before calling `fetch.Units`.
+
 The default loader uses Docker credentials and Linux on the caller's
 architecture. Customize registry behavior with the existing client:
 

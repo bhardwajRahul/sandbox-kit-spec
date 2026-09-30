@@ -346,6 +346,7 @@ func TestLoadKitKeepsIndexDescriptorAndPinnedImage(t *testing.T) {
 	loaded, err := client.LoadKit(t.Context(), reg.ref("kit", "1.0.0"))
 	require.NoError(t, err)
 	require.Equal(t, digest.FromBytes(index), loaded.Digest)
+	require.Equal(t, reg.Listener.Addr().String()+"/kit@"+loaded.Digest.String(), loaded.Image)
 	require.Equal(t, descriptor, string(loaded.Descriptor))
 	require.Empty(t, loaded.Manifest.Annotations)
 	require.Empty(t, loaded.Manifest.MediaType)

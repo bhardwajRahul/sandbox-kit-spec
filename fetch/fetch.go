@@ -22,7 +22,7 @@ import (
 // manifest carries no kit descriptor annotation.
 var ErrNotAKit = fmt.Errorf("manifest carries no %s annotation", spec.AnnotationDescriptor)
 
-// Kit is one published kit as the registry served it.
+// Kit is one published kit with its consumption reference.
 type Kit struct {
 	// Reference is the reference the caller named.
 	Reference string
@@ -30,6 +30,10 @@ type Kit struct {
 	// Digest is the digest the reference resolved to. A multi-platform
 	// kit pins the index; a single-platform kit pins its manifest.
 	Digest string
+
+	// Image is the runtime-resolvable reference for this Kit's content.
+	// When empty, Units derives a digest-pinned image from Reference and Digest.
+	Image string
 
 	// Descriptor is the published descriptor.
 	Descriptor *spec.Descriptor
@@ -160,6 +164,8 @@ func (c *Client) Fetch(ctx context.Context, ref string) (*Kit, error) {
 // values, keyed by its own arg names, so two kits that declare the
 // same name still receive their own values.
 type Request struct {
+	// Reference is the caller's Kit identity. Client.Resolve requires an OCI
+	// reference; Assemble can use source references with a custom KitLoader.
 	Reference string
 	Args      map[string]string
 }
@@ -293,6 +299,8 @@ func (c *Client) resolve(ctx context.Context, reqs []Request, partial bool, opts
 // Each descriptor is copied and its version set to the one the
 // reference's tag supplies, so a merge records the same version the
 // resolver judged. The fetched Kit is left as the registry served it.
+// An explicit Kit.Image is used unchanged; otherwise Reference must be an
+// image reference from which a digest-pinned image can be derived.
 func Units(kits []*Kit) ([]*resolve.Unit, error) {
 	units := make([]*resolve.Unit, 0, len(kits))
 	for _, k := range kits {
@@ -301,9 +309,13 @@ func Units(kits []*Kit) ([]*resolve.Unit, error) {
 		}
 		d := *k.Descriptor
 		d.Version = resolve.EffectiveProvideVersion(k.Reference, k.Descriptor)
-		image, err := pinnedImage(k.Reference, k.Digest)
-		if err != nil {
-			return nil, fmt.Errorf("fetch: kit %s: %w", k.Reference, err)
+		image := k.Image
+		if image == "" {
+			var err error
+			image, err = pinnedImage(k.Reference, k.Digest)
+			if err != nil {
+				return nil, fmt.Errorf("fetch: kit %s: %w", k.Reference, err)
+			}
 		}
 		units = append(units, &resolve.Unit{
 			Reference:  k.Reference,
