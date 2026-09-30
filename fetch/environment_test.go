@@ -211,6 +211,8 @@ func TestResolvePreservesOriginalEnvironmentReferencesBesideArguments(t *testing
 	lc, err := spec.LifecycleOf(result.Descriptor.Capabilities)
 	require.NoError(t, err)
 	require.Equal(t, "é-prefix:public:suffixpublic", lc.Files[0].Content)
+	require.Equal(t, d, result.Selections[0].PublishedDescriptor, "published argument and environment references are retained")
+	require.JSONEq(t, string(result.Selections[0].PublishedBytes), string(kitJSON(t, result.Selections[0].PublishedDescriptor)))
 }
 
 func TestResolveInvalidEnvironmentGroupKeepsMemberLocation(t *testing.T) {

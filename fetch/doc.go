@@ -26,10 +26,12 @@
 // WithCapabilitySelector supplies runtime decisions over expanded entries.
 // The default selector accepts this library's known types; runtimes should
 // supply their actual claims with spec.Supported or a stricter callback.
-// Resolved.Selections retains original declarations and create-time decisions.
+// Resolved.Selections retains published descriptors, their original bytes,
+// and create-time decisions.
 // Resolved.Kits retains only selected contributions, pinned image identities,
-// and resolved arguments in dependency order. Resolved.ContainerEnv contains
-// env: exports for container creation; these override image defaults at runtime.
+// resolved arguments, and each Kit's Env exports in dependency order.
+// Resolved.ContainerEnv contains their conflict-checked union for container
+// creation; these override image defaults at runtime.
 // Resolved.Warnings contains advisory findings from final validation.
 //
 // LoadImage implements assemble.ImageLoader using the same credentials and

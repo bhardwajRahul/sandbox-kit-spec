@@ -103,7 +103,14 @@ func TestResolvePreservesExpandedInputsAndIdentity(t *testing.T) {
 		require.Equal(t, strings.TrimSuffix(input.Reference, ":2.0.0")+"@"+input.Digest, kit.Image)
 		require.Equal(t, "2.0.0", kit.Descriptor.Version)
 		require.Equal(t, map[string]string{"message": message}, kit.Args)
+		require.Equal(t, map[string]string{fmt.Sprintf("MESSAGE_%d", inputIndex): message}, kit.Env)
 		require.Empty(t, kit.Descriptor.Args)
+		require.Equal(t, input.Descriptor, result.Selections[i].PublishedDescriptor)
+		require.Equal(t, input.Raw, result.Selections[i].PublishedBytes)
+		published, err := spec.Decode(result.Selections[i].PublishedBytes)
+		require.NoError(t, err)
+		require.Equal(t, input.Descriptor.Args, published.Args)
+		require.JSONEq(t, string(input.Raw), string(kitJSON(t, result.Selections[i].PublishedDescriptor)))
 		require.Equal(t, input.Descriptor.Requires, kit.Descriptor.Requires)
 		require.Equal(t, input.Descriptor.Capabilities[0].Name, kit.Descriptor.Capabilities[0].Name)
 		lifecycle, err := spec.LifecycleOf(kit.Descriptor.Capabilities)
@@ -121,6 +128,39 @@ func TestResolvePreservesExpandedInputsAndIdentity(t *testing.T) {
 	require.Equal(t, string(before), string(after), "assembly leaves the fetched descriptors and raw bytes intact")
 	result.Kits[1].Args["message"] = "changed"
 	require.Equal(t, "custom workload", args[0]["message"], "resolved values do not alias caller arguments")
+	result.Kits[1].Env["MESSAGE_0"] = "changed"
+	require.Equal(t, "custom workload", result.ContainerEnv["MESSAGE_0"], "per-Kit exports do not alias the union")
+}
+
+func TestResolvePerKitEnvExportRules(t *testing.T) {
+	value, empty := "default", ""
+	for _, tc := range []struct {
+		name  string
+		decls map[string]spec.Arg
+		args  map[string]string
+		env   map[string]string
+	}{
+		{name: "no args"},
+		{name: "private and build args", decls: map[string]spec.Arg{
+			"private": {Default: &value}, "build": {Default: &value, BuildArg: "BUILD_VALUE"},
+		}},
+		{name: "default export", decls: map[string]spec.Arg{"value": {Default: &value, Env: "VALUE"}}, env: map[string]string{"VALUE": value}},
+		{name: "supplied export", decls: map[string]spec.Arg{"value": {Default: &value, Env: "VALUE"}}, args: map[string]string{"value": "supplied"}, env: map[string]string{"VALUE": "supplied"}},
+		{name: "empty default", decls: map[string]spec.Arg{"value": {Default: &empty, Env: "VALUE"}}, env: map[string]string{"VALUE": ""}},
+		{name: "empty supplied value", decls: map[string]spec.Arg{"value": {Required: true, Env: "VALUE"}}, args: map[string]string{"value": ""}, env: map[string]string{"VALUE": ""}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindMixin, Args: tc.decls}
+			raw := kitJSON(t, d)
+			kit := &Kit{Reference: "example.com/tool:1.0.0", Digest: digest.FromBytes(raw).String(), Descriptor: d, Raw: raw}
+			result, err := mergeKits([]*Kit{kit}, []map[string]string{tc.args}, true,
+				WithEnvironment(map[string]string{"IMAGE_DEFAULT": "image"}, map[string]string{"VALUE": "runtime"}))
+			require.NoError(t, err)
+			require.Len(t, result.Kits, 1)
+			require.Equal(t, tc.env, result.Kits[0].Env)
+			require.Equal(t, tc.env, result.ContainerEnv)
+		})
+	}
 }
 
 func TestResolvePartialPreservesContextWithoutStaging(t *testing.T) {

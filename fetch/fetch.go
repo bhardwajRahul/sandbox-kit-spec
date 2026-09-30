@@ -167,8 +167,8 @@ type Request struct {
 // Resolved is a runtime composition. Keep Kits alongside Descriptor so
 // capability handlers can inspect each contributor's declarations.
 type Resolved struct {
-	// Selections records decisions in dependency order, alongside the original
-	// expanded declarations. Kits contains only selected contributions.
+	// Selections records decisions in dependency order, alongside the published
+	// descriptors. Kits contains expanded, selected contributions.
 	Selections []KitSelection
 
 	// Descriptor is the reconciled, selected declaration set. It does not retain
@@ -178,8 +178,8 @@ type Resolved struct {
 	// Kits are selected, unmerged contributions in dependency order, providers before
 	// requirers (including the workload wherever its dependencies put it).
 	// Each retains its consumption reference, pinned image identity, and
-	// resolved create arguments, including defaults. Descriptor.Args is
-	// cleared because the values have already been applied.
+	// resolved create arguments and their Env exports, including defaults.
+	// Descriptor.Args is cleared because the values have already been applied.
 	// This is declaration order; image layers start with the workload.
 	// A Kit can contribute several selected lifecycle/context entries. Apply
 	// lifecycle from Descriptor; use spec.AgentContextsOf for per-Kit bodies.
@@ -188,7 +188,8 @@ type Resolved struct {
 	// ContainerEnv contains resolved env: argument exports. Apply them as
 	// environment overrides when creating the container, after the image's
 	// environment defaults. They are not baked into the assembled image.
-	// Two Kits exporting different values for the same name is an error.
+	// This is the union of Kits' Env maps. Two Kits exporting different
+	// values for the same name is an error.
 	ContainerEnv map[string]string
 
 	// Warnings contains advisory findings from validating the merged
@@ -199,8 +200,16 @@ type Resolved struct {
 // KitSelection retains the source needed to explain or persist a decision.
 type KitSelection struct {
 	Reference string
-	Original  *spec.Descriptor
-	Raw       []byte
+
+	// PublishedDescriptor is the decoded published descriptor before argument
+	// and environment expansion or capability selection. It retains argument
+	// declarations.
+	PublishedDescriptor *spec.Descriptor
+
+	// PublishedBytes holds the exact published descriptor bytes, preserving
+	// source formatting for diagnostics and persistence.
+	PublishedBytes []byte
+
 	Selection spec.Selection
 }
 
@@ -348,25 +357,31 @@ func mergeKits(kits []*Kit, args []map[string]string, partial bool, opts ...Reso
 	}
 	for i, unit := range units {
 		unit.Args = values[i]
+		unit.Env = exports[i]
 	}
 	resolution, err := resolve.Dependencies(units, partial)
 	if err != nil {
 		return nil, err
 	}
-	originals := make(map[string]*Kit, len(prepared))
-	for _, k := range prepared {
-		originals[k.Reference] = k
+	publishedByReference := make(map[string]*Kit, len(kits))
+	for _, k := range kits {
+		publishedByReference[k.Reference] = k
 	}
 	ordered := resolution.Topological()
 	var selections []KitSelection
 	contributions := make([]spec.Contribution, 0, len(ordered))
 	for i, u := range ordered {
-		original := originals[u.Reference]
+		published := publishedByReference[u.Reference]
 		selected, err := spec.SelectCapabilities(withSelectionSources(u.Descriptor, u.Reference), options.selector)
 		if err != nil {
-			return nil, spec.WithSource(err, u.Reference, original.Raw)
+			return nil, spec.WithSource(err, u.Reference, published.Raw)
 		}
-		selections = append(selections, KitSelection{Reference: u.Reference, Original: u.Descriptor, Raw: original.Raw, Selection: selected})
+		selections = append(selections, KitSelection{
+			Reference:           u.Reference,
+			PublishedDescriptor: published.Descriptor,
+			PublishedBytes:      published.Raw,
+			Selection:           selected,
+		})
 		cp := *u
 		d := *u.Descriptor
 		d.Capabilities = selected.Capabilities
