@@ -514,21 +514,27 @@ group_skip_record() {
 		"$kit" "$rejected"
 }
 
-# Whether this runtime can grant volume@1. Absent from the default claim
-# list: sbx still mounts nothing at a declared volume path.
+# Whether this runtime can grant volume@1 / lifecycle@1. volume@1 is
+# absent from the default claim list (sbx mounts nothing at a declared
+# volume path); lifecycle@1 is present, but an override may drop it.
 claims_volume() {
 	claims com.docker.sandbox/volume@1
 }
+claims_lifecycle() {
+	claims com.docker.sandbox/lifecycle@1
+}
 
 # An optional volume+lifecycle group is withheld from sbx when any member
-# is unavailable, so a partially supported group cannot apply its
-# lifecycle file. The kit still appears in retain_selection as skipped.
+# is unavailable (unclaimed or rejected), so a partially supported group
+# cannot apply its lifecycle file. The kit still appears in
+# retain_selection as skipped.
 omit_unsatisfiable_group_kit() {
 	local base
 	base="$(basename "$1")"
 	case "$base" in
 	groups-partial)
-		if ! claims_volume || rejected_capability com.docker.sandbox/volume@1 ||
+		if ! claims_volume || ! claims_lifecycle ||
+			rejected_capability com.docker.sandbox/volume@1 ||
 			rejected_capability com.docker.sandbox/lifecycle@1; then
 			return 0
 		fi
@@ -602,8 +608,16 @@ refuse_rejected_required() {
 			;;
 		groups-required)
 			# Partial support: identify the member this runtime cannot grant.
-			if ! claims_volume || rejected_capability com.docker.sandbox/volume@1; then
+			if ! claims_volume; then
 				echo "refusing: groups-required capabilities[0].group.capabilities[0]: unclaimed com.docker.sandbox/volume@1" >&2
+				exit 2
+			fi
+			if rejected_capability com.docker.sandbox/volume@1; then
+				echo "refusing: groups-required capabilities[0].group.capabilities[0]: rejected com.docker.sandbox/volume@1" >&2
+				exit 2
+			fi
+			if ! claims_lifecycle; then
+				echo "refusing: groups-required capabilities[0].group.capabilities[1]: unclaimed com.docker.sandbox/lifecycle@1" >&2
 				exit 2
 			fi
 			if rejected_capability com.docker.sandbox/lifecycle@1; then
@@ -743,11 +757,12 @@ retain_selection() {
 
 	# Optional volume+lifecycle group: any unavailable member skips the
 	# whole group with no surface leak (atomicSelection / groups-partial).
+	# Prefer the unclaimed/rejected member the suite's claim matrix names.
 	if [ -n "$groups_partial" ]; then
 		local rejected_member=""
 		if ! claims_volume || rejected_capability com.docker.sandbox/volume@1; then
 			rejected_member='capabilities[0].group.capabilities[0]'
-		elif rejected_capability com.docker.sandbox/lifecycle@1; then
+		elif ! claims_lifecycle || rejected_capability com.docker.sandbox/lifecycle@1; then
 			rejected_member='capabilities[0].group.capabilities[1]'
 		fi
 		if [ -n "$rejected_member" ]; then
@@ -953,14 +968,11 @@ create)
 	id="$(new_id)"
 	# Snapshot identity before argv is remembered so recreate replays the
 	# pinned pair, not later suite edits to the mutable config path.
-	# A rejected identity grant is not imported, and no snapshot is kept:
-	# there was no create-time selection to pin.
-	if rejected_capability com.docker.sandbox/git-identity@1; then
-		git_identity_config=""
-		rm -f "$state/$id.git-identity-config" "$state/$id.git-identity-snapshot"
-	else
-		git_identity_config="$(snapshot_git_identity "$id" "$git_identity_config")"
-	fi
+	# Keep the snapshot even when create rejects the grant: a later
+	# selection-policy that clears rejections must be able to restore it
+	# via filter_argv_for_rejects, which withholds --git-identity-config
+	# only while the rejection is active.
+	git_identity_config="$(snapshot_git_identity "$id" "$git_identity_config")"
 	# Remember the full create shape (every mixin, identity snapshot, known
 	# hosts) so a later selection-policy that clears rejections can restore
 	# grants. filter_argv_for_rejects applies the active policy at create

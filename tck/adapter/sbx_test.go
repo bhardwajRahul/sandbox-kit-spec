@@ -237,36 +237,54 @@ func TestSbxRejectCapabilitySkipsOrdinaryOptional(t *testing.T) {
 	require.NoError(t, a.Remove(t.Context(), id))
 }
 
-func TestSbxGroupsPartialSkippedWhenVolumeUnclaimed(t *testing.T) {
-	a, observed := selectionAdapter(t, "com.docker.sandbox/lifecycle@1")
-	id, err := a.Create(t.Context(), []string{"workload", "groups-partial"}, CreateOptions{})
-	require.NoError(t, err)
-	raw, err := os.ReadFile(observed)
-	require.NoError(t, err)
-	require.NotContains(t, string(raw), "groups-partial", "unsatisfiable optional group must not reach sbx")
-	state, err := a.Selection(t.Context(), id)
-	require.NoError(t, err)
-	surface, err := json.Marshal(state.Surface)
-	require.NoError(t, err)
-	require.Equal(t, "{}", string(surface))
-	require.Len(t, state.Selection.Skipped, 1)
-	rec := state.Selection.Skipped[0]
-	require.Contains(t, rec.Source.Kit, "groups-partial")
-	require.Equal(t, []string{"capabilities[0].group.capabilities[0]"}, rec.Rejected)
-	require.Equal(t, []string{
-		"capabilities[0].group.capabilities[0]",
-		"capabilities[0].group.capabilities[1]",
-	}, rec.Members)
-	require.NoError(t, a.Remove(t.Context(), id))
+func TestSbxGroupsPartialSkippedWhenMemberUnclaimed(t *testing.T) {
+	for _, tc := range []struct {
+		name, claims, rejected string
+	}{
+		{"volume-unclaimed", "com.docker.sandbox/lifecycle@1", "capabilities[0].group.capabilities[0]"},
+		{"lifecycle-unclaimed", "com.docker.sandbox/volume@1", "capabilities[0].group.capabilities[1]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, observed := selectionAdapter(t, tc.claims)
+			id, err := a.Create(t.Context(), []string{"workload", "groups-partial"}, CreateOptions{})
+			require.NoError(t, err)
+			raw, err := os.ReadFile(observed)
+			require.NoError(t, err)
+			require.NotContains(t, string(raw), "groups-partial", "unsatisfiable optional group must not reach sbx")
+			state, err := a.Selection(t.Context(), id)
+			require.NoError(t, err)
+			surface, err := json.Marshal(state.Surface)
+			require.NoError(t, err)
+			require.Equal(t, "{}", string(surface))
+			require.Len(t, state.Selection.Skipped, 1)
+			rec := state.Selection.Skipped[0]
+			require.Contains(t, rec.Source.Kit, "groups-partial")
+			require.Equal(t, []string{tc.rejected}, rec.Rejected)
+			require.Equal(t, []string{
+				"capabilities[0].group.capabilities[0]",
+				"capabilities[0].group.capabilities[1]",
+			}, rec.Members)
+			require.NoError(t, a.Remove(t.Context(), id))
+		})
+	}
 }
 
-func TestSbxGroupsRequiredRefusesWhenVolumeUnclaimed(t *testing.T) {
-	a, _ := selectionAdapter(t, "com.docker.sandbox/lifecycle@1")
-	_, err := a.Create(t.Context(), []string{"workload", "groups-required"}, CreateOptions{})
-	var refused *RefusedError
-	require.ErrorAs(t, err, &refused)
-	require.Contains(t, refused.Detail, "groups-required")
-	require.Contains(t, refused.Detail, "capabilities[0].group.capabilities[0]")
+func TestSbxGroupsRequiredRefusesWhenMemberUnclaimed(t *testing.T) {
+	for _, tc := range []struct {
+		name, claims, member string
+	}{
+		{"volume-unclaimed", "com.docker.sandbox/lifecycle@1", "capabilities[0].group.capabilities[0]"},
+		{"lifecycle-unclaimed", "com.docker.sandbox/volume@1", "capabilities[0].group.capabilities[1]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, _ := selectionAdapter(t, tc.claims)
+			_, err := a.Create(t.Context(), []string{"workload", "groups-required"}, CreateOptions{})
+			var refused *RefusedError
+			require.ErrorAs(t, err, &refused)
+			require.Contains(t, refused.Detail, "groups-required")
+			require.Contains(t, refused.Detail, tc.member)
+		})
+	}
 }
 
 func TestSbxSelectionPolicyAppliedOnRecreate(t *testing.T) {
@@ -325,6 +343,35 @@ func TestSbxGitIdentitySnapshotReplayedOnRecreate(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, state.Selection.Selected, 1)
 	require.Contains(t, state.Selection.Selected[0].Source.Kit, "git-identity")
+	require.NoError(t, a.Remove(t.Context(), id))
+}
+
+func TestSbxGitIdentityRestoredAfterClearedSelectionPolicy(t *testing.T) {
+	a, observed := selectionAdapter(t, "com.docker.sandbox/git-identity@1")
+	cfg := filepath.Join(t.TempDir(), "identity.gitconfig")
+	require.NoError(t, os.WriteFile(cfg, []byte("[user]\n\tname = Alice\n\temail = alice@example.com\n"), 0600))
+	id, err := a.Create(t.Context(), []string{"workload", "git-identity-optional"}, CreateOptions{
+		GitIdentityConfig:  cfg,
+		RejectCapabilities: []string{"com.docker.sandbox/git-identity@1"},
+	})
+	require.NoError(t, err)
+	raw := string(mustRead(t, observed))
+	require.NotContains(t, raw, "git-identity-snapshot", "rejected create must withhold identity from sbx")
+	require.NotContains(t, raw, "git-identity-optional", "rejected optional identity kit must not reach sbx")
+	state, err := a.Selection(t.Context(), id)
+	require.NoError(t, err)
+	require.Len(t, state.Selection.Skipped, 1)
+	// Clear future rejections: recreate must restore the remembered snapshot.
+	require.NoError(t, a.RejectCapabilities(t.Context(), id))
+	require.NoError(t, a.Recreate(t.Context(), id))
+	lines := strings.Split(strings.TrimSpace(string(mustRead(t, observed))), "\n")
+	require.GreaterOrEqual(t, len(lines), 2)
+	require.Contains(t, lines[len(lines)-1], "git-identity-snapshot")
+	require.Contains(t, lines[len(lines)-1], "git-identity-optional")
+	fresh, err := a.Selection(t.Context(), id)
+	require.NoError(t, err)
+	require.Len(t, fresh.Selection.Selected, 1)
+	require.Contains(t, fresh.Selection.Selected[0].Source.Kit, "git-identity-optional")
 	require.NoError(t, a.Remove(t.Context(), id))
 }
 
