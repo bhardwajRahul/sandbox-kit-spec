@@ -57,7 +57,7 @@ type Result struct {
 	WorkingDir  string
 }
 
-// Assemble loads a closed set of OCI Kit references, composes image defaults,
+// Assemble loads a closed set of Kit references, composes image defaults,
 // expands and selects declarations using the final container environment, and
 // invokes Options.LayerValidator when non-nil.
 // It does not publish blobs, create a container, or apply capabilities.
@@ -108,7 +108,7 @@ func Assemble(ctx context.Context, requests []Request, options Options) (*Result
 	}
 	var image *assemble.Image
 	err := progressStep(ctx, options.OnProgress, Progress{Stage: StageCompose}, func() error {
-		// Assembly asks for pinned image references, while the retained inputs are
+		// Assembly asks for runtime image references, while the retained inputs are
 		// indexed by consumption reference so two tags never silently share metadata.
 		units, err := Units(kits)
 		if err != nil {
@@ -262,7 +262,7 @@ func validateLoadedKit(ref string, input *LoadedKit) (*Kit, error) {
 	if _, err := spec.ValidatePublished(raw, descriptor); err != nil {
 		return nil, spec.WithSource(err, ref, raw)
 	}
-	return &Kit{Reference: ref, Digest: input.Digest.String(), Descriptor: descriptor, Raw: append([]byte(nil), raw...)}, nil
+	return &Kit{Reference: ref, Digest: input.Digest.String(), Image: input.Image, Descriptor: descriptor, Raw: append([]byte(nil), raw...)}, nil
 }
 
 // Stage identifies work independently of a caller's display strings.

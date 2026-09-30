@@ -26,6 +26,13 @@ type LoadedKit struct {
 	Digest   digest.Digest
 	Manifest ocispec.Manifest
 	Config   ocispec.Image
+
+	// Image is the runtime-resolvable reference for this Kit's content, such
+	// as the store-local tag a source Kit was built under. The loader must
+	// keep it consistent with the returned digest and metadata. When empty,
+	// Assemble derives a digest-pinned image from the request reference.
+	Image string
+
 	// Descriptor is the published annotation, including an index annotation when
 	// present. If empty, Assemble reads the selected manifest's annotation.
 	Descriptor []byte
@@ -60,7 +67,7 @@ func (c *Client) LoadKit(ctx context.Context, ref string) (*LoadedKit, error) {
 		return nil, err
 	}
 	return &LoadedKit{
-		Digest: digest.Digest(kit.Digest), Manifest: image.Manifest, Config: image.Config, Descriptor: kit.Raw,
+		Digest: digest.Digest(kit.Digest), Manifest: image.Manifest, Config: image.Config, Image: pinned, Descriptor: kit.Raw,
 		LayerLoader: func(ctx context.Context, layer ocispec.Descriptor) (io.ReadCloser, error) {
 			reader, err := repo.Fetch(ctx, layer)
 			if err != nil {
