@@ -84,11 +84,13 @@ marker_line="Placed by tck/adapters/sbx"
 #   for sbx's client-socket path) and --ssh-known-hosts as the host keys
 #   authenticate destinations are matched against.
 #
-#   git-identity@1 is present because a v3 kit set receives the runtime
-#   author identity only when it asks: pinned at create, kept across
-#   restart/recreate while the set still requests it, and refused when
-#   a required grant has no usable pair. create accepts
-#   --git-identity-config as the suite-owned binding (or off).
+#   git-identity@1 is absent even though the runtime pins author
+#   identity for kits that ask: the suite's unavailable-optional check
+#   needs the adapter's `selection` verb, and this adapter has no
+#   translation of sbx's retained selected/skipped records yet. create
+#   still accepts --git-identity-config so a narrowed claim list that
+#   opts the type in can exercise the binding path; the default stays
+#   off until selection can answer.
 #
 #   sbx@1 is present for the opposite reason of the absences above: it
 #   is the platform contract this runtime is named for, so a duty it
@@ -103,8 +105,7 @@ com.docker.sandbox/agent-context@1
 com.docker.sandbox/agent-skills@1
 com.docker.sandbox/resources@1
 com.docker.sandbox/privileged@1
-com.docker.sandbox/ssh-agent@1
-com.docker.sandbox/git-identity@1"
+com.docker.sandbox/ssh-agent@1"
 
 # Which failures are refusals. The distinction is load-bearing: several
 # requirements are satisfied only by refusing something, and an adapter
