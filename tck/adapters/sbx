@@ -689,17 +689,16 @@ snapshot_git_identity() {
 		printf 'off\n'
 		return 0
 	fi
-	name="$(git config --file "$config" --get user.name 2>/dev/null || true)"
-	email="$(git config --file "$config" --get user.email 2>/dev/null || true)"
+	# NUL-delimited reads preserve newlines in the values; command
+	# substitution would strip trailing newlines from the selected pair.
+	IFS= read -r -d '' name < <(git config --file "$config" --null --get user.name 2>/dev/null) || true
+	IFS= read -r -d '' email < <(git config --file "$config" --null --get user.email 2>/dev/null) || true
 	if [ -n "$name" ] && [ -n "$email" ]; then
 		snap="$state/$id.git-identity-snapshot"
-		# Quote values the way the suite writes them so hostile-looking
-		# names survive a round trip through git config --file.
-		{
-			printf '[user]\n'
-			printf '\tname = %s\n' "$(printf '%s' "$name" | sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$/"/')"
-			printf '\temail = %s\n' "$(printf '%s' "$email" | sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$/"/')"
-		} >"$snap"
+		# Git's writer escapes quotes, backslashes, tabs and newlines as
+		# config data without importing unrelated source settings.
+		git config --file "$snap" user.name "$name" || return
+		git config --file "$snap" user.email "$email" || return
 		printf '%s\n' "$snap" >"$state/$id.git-identity-config"
 		printf '%s\n' "$snap"
 		return 0

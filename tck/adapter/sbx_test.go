@@ -3,6 +3,7 @@ package adapter
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -372,6 +373,42 @@ func TestSbxGitIdentityRestoredAfterClearedSelectionPolicy(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, fresh.Selection.Selected, 1)
 	require.Contains(t, fresh.Selection.Selected[0].Source.Kit, "git-identity-optional")
+	require.NoError(t, a.Remove(t.Context(), id))
+}
+
+func TestSbxGitIdentitySnapshotPreservesValues(t *testing.T) {
+	a, observed := selectionAdapter(t, "com.docker.sandbox/git-identity@1")
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "identity.gitconfig")
+	marker := filepath.Join(dir, "executed")
+	values := map[string]string{
+		"user.name":  "Alice\n\t\"quoted\" \\path; $(touch " + marker + ")\n",
+		"user.email": "alice@example.invalid",
+	}
+	for key, value := range values {
+		require.NoError(t, exec.Command("git", "config", "--file", cfg, key, value).Run())
+	}
+	require.NoError(t, exec.Command("git", "config", "--file", cfg, "alias.source-only", "!false").Run())
+	before := mustRead(t, cfg)
+	id, err := a.Create(t.Context(), []string{"workload", "git-identity"}, CreateOptions{GitIdentityConfig: cfg})
+	require.NoError(t, err)
+	var snapshot string
+	for _, arg := range strings.Fields(string(mustRead(t, observed))) {
+		if strings.HasSuffix(arg, ".git-identity-snapshot") {
+			snapshot = arg
+		}
+	}
+	require.NotEmpty(t, snapshot)
+	for key, want := range values {
+		value, err := exec.Command("git", "config", "--file", snapshot, "--null", "--get", key).Output()
+		require.NoError(t, err)
+		require.Equal(t, want+"\x00", string(value), key)
+	}
+	keys, err := exec.Command("git", "config", "--file", snapshot, "--name-only", "--list").Output()
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"user.name", "user.email"}, strings.Fields(string(keys)))
+	require.NoFileExists(t, marker)
+	require.Equal(t, before, mustRead(t, cfg), "snapshotting leaves the identity source intact")
 	require.NoError(t, a.Remove(t.Context(), id))
 }
 
