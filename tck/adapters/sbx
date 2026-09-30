@@ -89,8 +89,10 @@ marker_line="Placed by tck/adapters/sbx"
 #   restart/recreate while the set still requests it, and refused when
 #   a required grant has no usable pair. create accepts
 #   --git-identity-config as the suite-owned binding (or off). The
-#   adapter's selection verb retains the create-time selected/skipped
-#   records the suite reads for unavailable optional identity.
+#   adapter retains create-time selected/skipped records (and an empty
+#   surface when a partially supported optional group is skipped): sbx
+#   inspect does not yet expose retained selection, so `selection`
+#   returns that retained decision rather than reselecting.
 #
 #   sbx@1 is present for the opposite reason of the absences above: it
 #   is the platform contract this runtime is named for, so a duty it
@@ -504,6 +506,40 @@ selection_record() {
 	fi
 }
 
+# Skipped optional group whose members could not all be granted. Surface
+# stays empty: no member grant may leak when the group is skipped.
+group_skip_record() {
+	local kit="$1" rejected="$2"
+	printf '{"path":"capabilities[0]","source":{"kit":"%s","path":"capabilities[0]"},"members":["capabilities[0].group.capabilities[0]","capabilities[0].group.capabilities[1]"],"rejected":["%s"]}' \
+		"$kit" "$rejected"
+}
+
+# Whether this runtime can grant volume@1. Absent from the default claim
+# list: sbx still mounts nothing at a declared volume path.
+claims_volume() {
+	claims com.docker.sandbox/volume@1
+}
+
+# An optional volume+lifecycle group is withheld from sbx when any member
+# is unavailable, so a partially supported group cannot apply its
+# lifecycle file. The kit still appears in retain_selection as skipped.
+omit_unsatisfiable_group_kit() {
+	local base
+	base="$(basename "$1")"
+	case "$base" in
+	groups-partial)
+		if ! claims_volume || rejected_capability com.docker.sandbox/volume@1 ||
+			rejected_capability com.docker.sandbox/lifecycle@1; then
+			return 0
+		fi
+		return 1
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
 # Whether the suite arranged a false selection answer for this type.
 rejected_capability() {
 	local typ="$1" entry
@@ -537,7 +573,8 @@ omit_rejected_optional_kit() {
 	esac
 }
 
-# Refuse a required fixture entry the suite arranged as unavailable.
+# Refuse a required fixture entry the suite arranged as unavailable, or a
+# required group whose members this claim list cannot all grant.
 # Fixture basenames match the suite's kit directories; the messages name
 # the capability so refusal classification can spot them.
 refuse_rejected_required() {
@@ -560,6 +597,17 @@ refuse_rejected_required() {
 			fi
 			if rejected_capability com.docker.sandbox/ssh-agent@1 && [[ "$base" == ssh-agent* ]]; then
 				echo "refusing: $base capabilities[0]: rejected com.docker.sandbox/ssh-agent@1" >&2
+				exit 2
+			fi
+			;;
+		groups-required)
+			# Partial support: identify the member this runtime cannot grant.
+			if ! claims_volume || rejected_capability com.docker.sandbox/volume@1; then
+				echo "refusing: groups-required capabilities[0].group.capabilities[0]: unclaimed com.docker.sandbox/volume@1" >&2
+				exit 2
+			fi
+			if rejected_capability com.docker.sandbox/lifecycle@1; then
+				echo "refusing: groups-required capabilities[0].group.capabilities[1]: rejected com.docker.sandbox/lifecycle@1" >&2
 				exit 2
 			fi
 			;;
@@ -594,7 +642,7 @@ filter_argv_for_rejects() {
 			shift 2
 			;;
 		--kit)
-			if omit_rejected_optional_kit "$next"; then
+			if omit_rejected_optional_kit "$next" || omit_unsatisfiable_group_kit "$next"; then
 				shift 2
 				continue
 			fi
@@ -648,11 +696,10 @@ snapshot_git_identity() {
 }
 
 # Retain the create-time selection the suite's `selection` verb reads.
-# Records are written when the decision is made, not recomputed later:
-# unavailable optional identity/skills land in skipped, granted ordinary
-# entries in selected, with Source.Kit as the fixture basename the suite
-# also accepts as a full path. rejects (global) are create-time or
-# selection-policy answers applied to this decision.
+# sbx inspect does not yet expose retained selected/skipped records or an
+# effective surface, so the adapter records the decision it arranged for
+# this create (which kits and grants reached sbx, which rejects applied)
+# and `selection` returns that file unchanged — it does not reselect.
 retain_selection() {
 	local id="$1" identity_config="$2" skills_mode="$3" skills_store="$4"
 	shift 4
@@ -661,11 +708,12 @@ retain_selection() {
 	local identity_required="" identity_optional="" identity_requested=""
 	local required_skills="" optional_skills=""
 	local bundle_optional="" bundle_reader=""
+	local ordinary_optional="" groups_partial=""
+	local surface='{}'
 	# Host skills mode/store narrow access; they do not skip the destination
 	# record. Accepted so recreate can pass the same create-time inputs.
 	: "$skills_mode" "$skills_store"
 
-	local ordinary_optional=""
 	for kit in "${kits[@]}"; do
 		base="$(basename "$kit")"
 		case "$base" in
@@ -676,6 +724,7 @@ retain_selection() {
 		bundled-optional) bundle_optional=1 ;;
 		bundled-reader) bundle_reader=1 ;;
 		ordinary-optional) ordinary_optional=1 ;;
+		groups-partial) groups_partial=1 ;;
 		workload)
 			if claims com.docker.sandbox/agent-context@1; then
 				selected+=("$(selection_record workload)")
@@ -689,6 +738,21 @@ retain_selection() {
 			skipped+=("$(selection_record ordinary-optional capabilities[0])")
 		else
 			selected+=("$(selection_record ordinary-optional)")
+		fi
+	fi
+
+	# Optional volume+lifecycle group: any unavailable member skips the
+	# whole group with no surface leak (atomicSelection / groups-partial).
+	if [ -n "$groups_partial" ]; then
+		local rejected_member=""
+		if ! claims_volume || rejected_capability com.docker.sandbox/volume@1; then
+			rejected_member='capabilities[0].group.capabilities[0]'
+		elif rejected_capability com.docker.sandbox/lifecycle@1; then
+			rejected_member='capabilities[0].group.capabilities[1]'
+		fi
+		if [ -n "$rejected_member" ]; then
+			skipped+=("$(group_skip_record groups-partial "$rejected_member")")
+			surface='{}'
 		fi
 	fi
 
@@ -742,8 +806,8 @@ retain_selection() {
 	local selected_json="[]" skipped_json="[]" IFS=,
 	if [ "${#selected[@]}" -gt 0 ]; then selected_json="[${selected[*]}]"; fi
 	if [ "${#skipped[@]}" -gt 0 ]; then skipped_json="[${skipped[*]}]"; fi
-	printf '{"selection":{"selected":%s,"skipped":%s},"surface":{}}\n' \
-		"$selected_json" "$skipped_json" >"$state/$id.selection.json"
+	printf '{"selection":{"selected":%s,"skipped":%s},"surface":%s}\n' \
+		"$selected_json" "$skipped_json" "$surface" >"$state/$id.selection.json"
 }
 
 # One create, from the argument list a later recreate can replay. The

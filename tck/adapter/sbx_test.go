@@ -1,8 +1,10 @@
 package adapter
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -183,4 +185,152 @@ func TestSbxSSHAgentReplaysBindingOnRecreate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "set:"+socket+"\nset:"+socket+"\n", string(raw))
 	require.NoError(t, a.Remove(t.Context(), id))
+}
+
+// Record create argv so selection/policy/identity adapter paths are
+// observable without a real daemon.
+const selectionStub = `#!/bin/sh
+set -eu
+if [ "${1:-}" = --app-name ]; then shift 2; fi
+case "$1" in
+create)
+  shift
+  printf '%s\n' "$*" >>"$STUB_OBSERVED"
+  ;;
+rm | stop) ;;
+run) ;;
+ls) echo '[]' ;;
+*) echo "unexpected stub call: $*" >&2; exit 1 ;;
+esac
+`
+
+func selectionAdapter(t *testing.T, claims string) (*Adapter, string) {
+	t.Helper()
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "sbx")
+	require.NoError(t, os.WriteFile(stub, []byte(selectionStub), 0700))
+	state, observed := filepath.Join(dir, "state"), filepath.Join(dir, "observed")
+	a := New(filepath.Join("..", "adapters", "sbx"))
+	a.Env = []string{
+		"SBX=" + stub, "SBX_TCK_STATE=" + state, "SBX_TCK_APP_NAME=selection-probe",
+		"SBX_TCK_CAPABILITIES=" + claims, "STUB_OBSERVED=" + observed,
+	}
+	return a, observed
+}
+
+func TestSbxRejectCapabilitySkipsOrdinaryOptional(t *testing.T) {
+	a, observed := selectionAdapter(t, "com.docker.sandbox/lifecycle@1")
+	id, err := a.Create(t.Context(), []string{"workload", "ordinary-optional"}, CreateOptions{
+		RejectCapabilities: []string{"com.docker.sandbox/lifecycle@1"},
+	})
+	require.NoError(t, err)
+	raw, err := os.ReadFile(observed)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "ordinary-optional", "rejected optional kit must not reach sbx")
+	require.NotContains(t, string(raw), "--reject-capability", "contract flag is adapter-side, not an sbx option")
+	state, err := a.Selection(t.Context(), id)
+	require.NoError(t, err)
+	require.Empty(t, state.Selection.Selected)
+	require.Len(t, state.Selection.Skipped, 1)
+	require.Equal(t, []string{"capabilities[0]"}, state.Selection.Skipped[0].Rejected)
+	require.Contains(t, state.Selection.Skipped[0].Source.Kit, "ordinary-optional")
+	require.NoError(t, a.Remove(t.Context(), id))
+}
+
+func TestSbxGroupsPartialSkippedWhenVolumeUnclaimed(t *testing.T) {
+	a, observed := selectionAdapter(t, "com.docker.sandbox/lifecycle@1")
+	id, err := a.Create(t.Context(), []string{"workload", "groups-partial"}, CreateOptions{})
+	require.NoError(t, err)
+	raw, err := os.ReadFile(observed)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "groups-partial", "unsatisfiable optional group must not reach sbx")
+	state, err := a.Selection(t.Context(), id)
+	require.NoError(t, err)
+	surface, err := json.Marshal(state.Surface)
+	require.NoError(t, err)
+	require.Equal(t, "{}", string(surface))
+	require.Len(t, state.Selection.Skipped, 1)
+	rec := state.Selection.Skipped[0]
+	require.Contains(t, rec.Source.Kit, "groups-partial")
+	require.Equal(t, []string{"capabilities[0].group.capabilities[0]"}, rec.Rejected)
+	require.Equal(t, []string{
+		"capabilities[0].group.capabilities[0]",
+		"capabilities[0].group.capabilities[1]",
+	}, rec.Members)
+	require.NoError(t, a.Remove(t.Context(), id))
+}
+
+func TestSbxGroupsRequiredRefusesWhenVolumeUnclaimed(t *testing.T) {
+	a, _ := selectionAdapter(t, "com.docker.sandbox/lifecycle@1")
+	_, err := a.Create(t.Context(), []string{"workload", "groups-required"}, CreateOptions{})
+	var refused *RefusedError
+	require.ErrorAs(t, err, &refused)
+	require.Contains(t, refused.Detail, "groups-required")
+	require.Contains(t, refused.Detail, "capabilities[0].group.capabilities[0]")
+}
+
+func TestSbxSelectionPolicyAppliedOnRecreate(t *testing.T) {
+	a, observed := selectionAdapter(t, "com.docker.sandbox/lifecycle@1")
+	id, err := a.Create(t.Context(), []string{"workload", "ordinary-optional"}, CreateOptions{})
+	require.NoError(t, err)
+	before, err := a.Selection(t.Context(), id)
+	require.NoError(t, err)
+	require.Len(t, before.Selection.Selected, 1)
+	require.Contains(t, before.Selection.Selected[0].Source.Kit, "ordinary-optional")
+	require.NoError(t, a.RejectCapabilities(t.Context(), id, "com.docker.sandbox/lifecycle@1"))
+	// Restart must keep the original decision.
+	require.NoError(t, a.Stop(t.Context(), id))
+	require.NoError(t, a.Start(t.Context(), id))
+	afterStop, err := a.Selection(t.Context(), id)
+	require.NoError(t, err)
+	require.Equal(t, before, afterStop)
+	require.NoError(t, a.Recreate(t.Context(), id))
+	fresh, err := a.Selection(t.Context(), id)
+	require.NoError(t, err)
+	require.Empty(t, fresh.Selection.Selected)
+	require.Len(t, fresh.Selection.Skipped, 1)
+	require.Equal(t, []string{"capabilities[0]"}, fresh.Selection.Skipped[0].Rejected)
+	lines := strings.Split(strings.TrimSpace(string(mustRead(t, observed))), "\n")
+	require.GreaterOrEqual(t, len(lines), 2)
+	require.Contains(t, lines[0], "ordinary-optional")
+	require.NotContains(t, lines[len(lines)-1], "ordinary-optional")
+	require.NoError(t, a.Remove(t.Context(), id))
+}
+
+func TestSbxGitIdentitySnapshotReplayedOnRecreate(t *testing.T) {
+	a, observed := selectionAdapter(t, "com.docker.sandbox/git-identity@1")
+	cfg := filepath.Join(t.TempDir(), "identity.gitconfig")
+	require.NoError(t, os.WriteFile(cfg, []byte("[user]\n\tname = Alice\n\temail = alice@example.com\n"), 0600))
+	id, err := a.Create(t.Context(), []string{"workload", "git-identity"}, CreateOptions{GitIdentityConfig: cfg})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(cfg, []byte("[user]\n\tname = Eve\n\temail = eve@example.com\n"), 0600))
+	require.NoError(t, a.Recreate(t.Context(), id))
+	raw := string(mustRead(t, observed))
+	require.NotContains(t, raw, cfg, "recreate must not reread the mutable suite path")
+	require.Contains(t, raw, "git-identity-snapshot")
+	// Argv carries the snapshot path; its contents must stay the create-time pair.
+	var snapPath string
+	for _, line := range strings.Split(raw, "\n") {
+		for _, field := range strings.Fields(line) {
+			if strings.Contains(field, "git-identity-snapshot") {
+				snapPath = field
+			}
+		}
+	}
+	require.NotEmpty(t, snapPath)
+	snapBody := string(mustRead(t, snapPath))
+	require.Contains(t, snapBody, "Alice")
+	require.NotContains(t, snapBody, "Eve")
+	state, err := a.Selection(t.Context(), id)
+	require.NoError(t, err)
+	require.Len(t, state.Selection.Selected, 1)
+	require.Contains(t, state.Selection.Selected[0].Source.Kit, "git-identity")
+	require.NoError(t, a.Remove(t.Context(), id))
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return raw
 }
