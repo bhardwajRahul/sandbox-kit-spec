@@ -84,13 +84,13 @@ marker_line="Placed by tck/adapters/sbx"
 #   for sbx's client-socket path) and --ssh-known-hosts as the host keys
 #   authenticate destinations are matched against.
 #
-#   git-identity@1 is absent even though the runtime pins author
-#   identity for kits that ask: the suite's unavailable-optional check
-#   needs the adapter's `selection` verb, and this adapter has no
-#   translation of sbx's retained selected/skipped records yet. create
-#   still accepts --git-identity-config so a narrowed claim list that
-#   opts the type in can exercise the binding path; the default stays
-#   off until selection can answer.
+#   git-identity@1 is present because a v3 kit set receives the runtime
+#   author identity only when it asks: pinned at create, kept across
+#   restart/recreate while the set still requests it, and refused when
+#   a required grant has no usable pair. create accepts
+#   --git-identity-config as the suite-owned binding (or off). The
+#   adapter's selection verb retains the create-time selected/skipped
+#   records the suite reads for unavailable optional identity.
 #
 #   sbx@1 is present for the opposite reason of the absences above: it
 #   is the platform contract this runtime is named for, so a duty it
@@ -105,7 +105,8 @@ com.docker.sandbox/agent-context@1
 com.docker.sandbox/agent-skills@1
 com.docker.sandbox/resources@1
 com.docker.sandbox/privileged@1
-com.docker.sandbox/ssh-agent@1"
+com.docker.sandbox/ssh-agent@1
+com.docker.sandbox/git-identity@1"
 
 # Which failures are refusals. The distinction is load-bearing: several
 # requirements are satisfied only by refusing something, and an adapter
@@ -490,6 +491,92 @@ new_id() {
 	printf 'kit-tck-%s\n' "$(od -An -tx1 -N5 /dev/urandom | tr -d ' \n')"
 }
 
+# One selection record for an ordinary (non-group) capability entry at
+# capabilities[0], optionally with a rejected member path when skipped.
+selection_record() {
+	local kit="$1" rejected="${2:-}"
+	if [ -n "$rejected" ]; then
+		printf '{"path":"capabilities[0]","source":{"kit":"%s","path":"capabilities[0]"},"members":["capabilities[0]"],"memberSources":[{"kit":"%s","path":"capabilities[0]"}],"rejected":["%s"]}' \
+			"$kit" "$kit" "$rejected"
+	else
+		printf '{"path":"capabilities[0]","source":{"kit":"%s","path":"capabilities[0]"},"members":["capabilities[0]"],"memberSources":[{"kit":"%s","path":"capabilities[0]"}]}' \
+			"$kit" "$kit"
+	fi
+}
+
+# Retain the create-time selection the suite's `selection` verb reads.
+# Records are written when the decision is made, not recomputed later:
+# unavailable optional identity/skills land in skipped, granted ordinary
+# entries in selected, with Source.Kit as the fixture basename the suite
+# also accepts as a full path.
+retain_selection() {
+	local id="$1" identity_config="$2" skills_mode="$3" skills_store="$4"
+	shift 4
+	local kits=("$@")
+	local selected=() skipped=() kit base identity_name="" identity_email=""
+	local identity_required="" identity_optional="" identity_requested=""
+	local required_skills="" optional_skills=""
+	local bundle_optional="" bundle_reader=""
+	# Host skills mode/store narrow access; they do not skip the destination
+	# record. Accepted so recreate can pass the same create-time inputs.
+	: "$skills_mode" "$skills_store"
+
+	for kit in "${kits[@]}"; do
+		base="$(basename "$kit")"
+		case "$base" in
+		git-identity) identity_required=1; identity_requested=1 ;;
+		git-identity-optional) identity_optional=1; identity_requested=1 ;;
+		skills) required_skills=1 ;;
+		skills-optional) optional_skills=1 ;;
+		bundled-optional) bundle_optional=1 ;;
+		bundled-reader) bundle_reader=1 ;;
+		workload)
+			if claims com.docker.sandbox/agent-context@1; then
+				selected+=("$(selection_record workload)")
+			fi
+			;;
+		esac
+	done
+
+	if [ -n "$identity_config" ] && [ "$identity_config" != off ]; then
+		identity_name="$(git config --file "$identity_config" --get user.name 2>/dev/null || true)"
+		identity_email="$(git config --file "$identity_config" --get user.email 2>/dev/null || true)"
+	fi
+	if [ -n "$identity_requested" ] && { [ -z "$identity_name" ] || [ -z "$identity_email" ]; }; then
+		if [ -n "$identity_optional" ]; then
+			skipped+=("$(selection_record git-identity-optional capabilities[0])")
+		elif [ -n "$identity_required" ]; then
+			# Required unavailable refuses create before we retain anything.
+			:
+		fi
+	elif [ -n "$identity_requested" ]; then
+		if [ -n "$identity_required" ]; then
+			selected+=("$(selection_record git-identity)")
+		elif [ -n "$identity_optional" ]; then
+			selected+=("$(selection_record git-identity-optional)")
+		fi
+	fi
+
+	# Host skills off / missing / empty still leave the destination selected:
+	# access is narrowed, the discovery path is not skipped (§2.3).
+	if [ -n "$required_skills" ]; then
+		selected+=("$(selection_record skills)")
+	fi
+	if [ -n "$optional_skills" ]; then
+		selected+=("$(selection_record skills-optional)")
+	fi
+	# A bundled skill with no discovery destination is skipped, not selected.
+	if [ -n "$bundle_optional" ] && [ -z "$bundle_reader" ]; then
+		skipped+=("$(selection_record bundled-optional capabilities[0])")
+	fi
+
+	local selected_json="[]" skipped_json="[]" IFS=,
+	if [ "${#selected[@]}" -gt 0 ]; then selected_json="[${selected[*]}]"; fi
+	if [ "${#skipped[@]}" -gt 0 ]; then skipped_json="[${skipped[*]}]"; fi
+	printf '{"selection":{"selected":%s,"skipped":%s},"surface":{}}\n' \
+		"$selected_json" "$skipped_json" >"$state/$id.selection.json"
+}
+
 # One create, from the argument list a later recreate can replay. The
 # refusal classification lives here because create is where policy
 # decisions happen: an unsatisfiable requirement, a capability the
@@ -514,7 +601,10 @@ create_sandbox() {
 			# §2.4 has the suite address only the ids create returned, so
 			# a create that returned none leaves nothing to recreate or
 			# remove and its bookkeeping goes with it.
-			rm -f "$state/$id.create" "$state/$id.ssh-agent"
+			rm -f "$state/$id.create" "$state/$id.ssh-agent" \
+				"$state/$id.kits" "$state/$id.git-identity-config" \
+				"$state/$id.skills-mode" "$state/$id.skills-store" \
+				"$state/$id.selection.json" "$state/$id.selection-policy"
 			# No id means no cleanup callback, so what this create
 			# arranged on the host has to be taken back here or not at
 			# all.
@@ -641,6 +731,12 @@ create)
 	# newline inside one would come back from a line-delimited file as
 	# two arguments.
 	printf '%s\0' "${argv[@]}" >"$state/$id.create"
+	# Kits and identity binding are remembered so recreate can retain a
+	# fresh selection without re-parsing sbx's create argv.
+	printf '%s\0' "${kits[@]}" >"$state/$id.kits"
+	printf '%s\n' "$git_identity_config" >"$state/$id.git-identity-config"
+	printf '%s\n' "$skills_mode" >"$state/$id.skills-mode"
+	printf '%s\n' "$skills_store_scenario" >"$state/$id.skills-store"
 	# The suite's agent is the only backing agent this create may use.
 	# Without --ssh-agent, clear SSH_AUTH_SOCK so a host agent of the
 	# operator's is not silently substituted (§2.3).
@@ -651,6 +747,9 @@ create)
 		rm -f "$state/$id.ssh-agent"
 		(unset SSH_AUTH_SOCK; create_sandbox "$id" "${argv[@]}")
 	fi
+	# create_sandbox exits on failure; reaching here means the sandbox
+	# exists and the create-time selection can be retained.
+	retain_selection "$id" "$git_identity_config" "$skills_mode" "$skills_store_scenario" "${kits[@]}"
 	;;
 
 exec)
@@ -701,6 +800,43 @@ recreate)
 	else
 		(unset SSH_AUTH_SOCK; create_sandbox "$id" "${argv[@]}" >/dev/null)
 	fi
+	# Recreate selects afresh from the remembered kit set and bindings.
+	if [ -f "$state/$id.kits" ]; then
+		kits=()
+		while IFS= read -r -d '' kit; do kits+=("$kit"); done <"$state/$id.kits"
+		retain_selection "$id" \
+			"$(cat "$state/$id.git-identity-config" 2>/dev/null || true)" \
+			"$(cat "$state/$id.skills-mode" 2>/dev/null || true)" \
+			"$(cat "$state/$id.skills-store" 2>/dev/null || true)" \
+			"${kits[@]}"
+	fi
+	;;
+
+selection)
+	prepare_state
+	[ -f "$state/$1.selection.json" ] ||
+		die "no selection retained for $1; create must succeed before selection is observed"
+	cat "$state/$1.selection.json"
+	;;
+
+selection-policy)
+	# Remembered for the next recreate. Stop/start keep the current
+	# grants; only recreate consults this file. Empty clears rejections.
+	prepare_state
+	id="$1"
+	shift || true
+	: >"$state/$id.selection-policy"
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--reject-capability)
+			printf '%s\n' "$2" >>"$state/$id.selection-policy"
+			shift 2
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
 	;;
 
 rm)
@@ -722,7 +858,10 @@ rm)
 	if [ "$status" -ne 0 ] && ! absent "$id"; then
 		exit "$status"
 	fi
-	rm -f "$state/$id.create" "$state/$id.ssh-agent"
+	rm -f "$state/$id.create" "$state/$id.ssh-agent" \
+		"$state/$id.kits" "$state/$id.git-identity-config" \
+		"$state/$id.skills-mode" "$state/$id.skills-store" \
+		"$state/$id.selection.json" "$state/$id.selection-policy"
 	# What the adapter arranged on the host goes with the last sandbox it
 	# holds: nothing is left to read the store, and leaving it would grow
 	# a user's store by an entry per run.
