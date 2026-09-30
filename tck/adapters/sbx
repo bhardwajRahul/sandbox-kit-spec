@@ -713,15 +713,19 @@ snapshot_git_identity() {
 # effective surface, so the adapter records the decision it arranged for
 # this create (which kits and grants reached sbx, which rejects applied)
 # and `selection` returns that file unchanged — it does not reselect.
+#
+# ssh_agent is the suite-offered socket path (empty when none); rejection
+# and absence both skip an optional ssh-agent entry.
 retain_selection() {
-	local id="$1" identity_config="$2" skills_mode="$3" skills_store="$4"
-	shift 4
+	local id="$1" identity_config="$2" skills_mode="$3" skills_store="$4" ssh_agent="$5"
+	shift 5
 	local kits=("$@")
 	local selected=() skipped=() kit base identity_name="" identity_email=""
 	local identity_required="" identity_optional="" identity_requested=""
 	local required_skills="" optional_skills=""
 	local bundle_optional="" bundle_reader=""
 	local ordinary_optional="" groups_partial=""
+	local ssh_optional="" ssh_required_kit=""
 	local surface='{}'
 	# Host skills mode/store narrow access; they do not skip the destination
 	# record. Accepted so recreate can pass the same create-time inputs.
@@ -738,6 +742,10 @@ retain_selection() {
 		bundled-reader) bundle_reader=1 ;;
 		ordinary-optional) ordinary_optional=1 ;;
 		groups-partial) groups_partial=1 ;;
+		ssh-agent-optional) ssh_optional=1 ;;
+		ssh-agent | ssh-agent-install | ssh-agent-bounded | ssh-agent-dual)
+			[ -n "$ssh_required_kit" ] || ssh_required_kit="$base"
+			;;
 		workload)
 			if claims com.docker.sandbox/agent-context@1; then
 				selected+=("$(selection_record workload)")
@@ -815,6 +823,19 @@ retain_selection() {
 	# A bundled skill with no discovery destination is skipped, not selected.
 	if [ -n "$bundle_optional" ] && [ -z "$bundle_reader" ]; then
 		skipped+=("$(selection_record bundled-optional capabilities[0])")
+	fi
+
+	# Optional ssh-agent@1: no suite socket or a rejected type skips the
+	# entry (SPEC-v3 §7.1.1). Required fixtures that reached retain already
+	# passed refuse_rejected_required / the no-agent create refusal.
+	if [ -n "$ssh_optional" ]; then
+		if rejected_capability com.docker.sandbox/ssh-agent@1 || [ -z "$ssh_agent" ]; then
+			skipped+=("$(selection_record ssh-agent-optional capabilities[0])")
+		else
+			selected+=("$(selection_record ssh-agent-optional)")
+		fi
+	elif [ -n "$ssh_required_kit" ]; then
+		selected+=("$(selection_record "$ssh_required_kit")")
 	fi
 
 	local selected_json="[]" skipped_json="[]" IFS=,
@@ -1015,7 +1036,7 @@ create)
 	fi
 	# create_sandbox exits on failure; reaching here means the sandbox
 	# exists and the create-time selection can be retained.
-	retain_selection "$id" "$git_identity_config" "$skills_mode" "$skills_store_scenario" "${kits[@]}"
+	retain_selection "$id" "$git_identity_config" "$skills_mode" "$skills_store_scenario" "$ssh_agent" "${kits[@]}"
 	;;
 
 exec)
@@ -1090,10 +1111,13 @@ recreate)
 		if ! rejected_capability com.docker.sandbox/git-identity@1; then
 			identity_for_selection="$(cat "$state/$id.git-identity-config" 2>/dev/null || true)"
 		fi
+		# Offered suite socket (may be withheld from sbx when rejected).
+		ssh_for_selection="$(cat "$state/$id.ssh-agent" 2>/dev/null || true)"
 		retain_selection "$id" \
 			"$identity_for_selection" \
 			"$(cat "$state/$id.skills-mode" 2>/dev/null || true)" \
 			"$(cat "$state/$id.skills-store" 2>/dev/null || true)" \
+			"$ssh_for_selection" \
 			"${kits[@]}"
 	fi
 	;;

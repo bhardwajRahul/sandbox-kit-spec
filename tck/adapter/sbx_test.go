@@ -347,6 +347,48 @@ func TestSbxGitIdentitySnapshotReplayedOnRecreate(t *testing.T) {
 	require.NoError(t, a.Remove(t.Context(), id))
 }
 
+func TestSbxSSHAgentOptionalSelectionRecords(t *testing.T) {
+	t.Run("skipped-without-agent", func(t *testing.T) {
+		a, _ := selectionAdapter(t, "com.docker.sandbox/ssh-agent@1")
+		id, err := a.Create(t.Context(), []string{"workload", "ssh-agent-optional"}, CreateOptions{})
+		require.NoError(t, err)
+		state, err := a.Selection(t.Context(), id)
+		require.NoError(t, err)
+		require.Empty(t, state.Selection.Selected)
+		require.Len(t, state.Selection.Skipped, 1)
+		require.Contains(t, state.Selection.Skipped[0].Source.Kit, "ssh-agent-optional")
+		require.Equal(t, []string{"capabilities[0]"}, state.Selection.Skipped[0].Rejected)
+		require.NoError(t, a.Remove(t.Context(), id))
+	})
+	t.Run("selected-with-agent", func(t *testing.T) {
+		a, _ := selectionAdapter(t, "com.docker.sandbox/ssh-agent@1")
+		socket := filepath.Join(t.TempDir(), "suite-agent.sock")
+		id, err := a.Create(t.Context(), []string{"workload", "ssh-agent-optional"}, CreateOptions{SSHAgent: socket})
+		require.NoError(t, err)
+		state, err := a.Selection(t.Context(), id)
+		require.NoError(t, err)
+		require.Empty(t, state.Selection.Skipped)
+		require.Len(t, state.Selection.Selected, 1)
+		require.Contains(t, state.Selection.Selected[0].Source.Kit, "ssh-agent-optional")
+		require.NoError(t, a.Remove(t.Context(), id))
+	})
+	t.Run("skipped-when-rejected", func(t *testing.T) {
+		a, observed := selectionAdapter(t, "com.docker.sandbox/ssh-agent@1")
+		socket := filepath.Join(t.TempDir(), "suite-agent.sock")
+		id, err := a.Create(t.Context(), []string{"workload", "ssh-agent-optional"}, CreateOptions{
+			SSHAgent:           socket,
+			RejectCapabilities: []string{"com.docker.sandbox/ssh-agent@1"},
+		})
+		require.NoError(t, err)
+		require.NotContains(t, string(mustRead(t, observed)), "ssh-agent-optional")
+		state, err := a.Selection(t.Context(), id)
+		require.NoError(t, err)
+		require.Len(t, state.Selection.Skipped, 1)
+		require.Equal(t, []string{"capabilities[0]"}, state.Selection.Skipped[0].Rejected)
+		require.NoError(t, a.Remove(t.Context(), id))
+	})
+}
+
 func TestSbxGitIdentityRestoredAfterClearedSelectionPolicy(t *testing.T) {
 	a, observed := selectionAdapter(t, "com.docker.sandbox/git-identity@1")
 	cfg := filepath.Join(t.TempDir(), "identity.gitconfig")
