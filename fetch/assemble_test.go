@@ -81,10 +81,12 @@ func TestAssembleGroupsEnvironmentAndImage(t *testing.T) {
 	base.Config.Config.Entrypoint = []string{"/bin/agent"}
 	mixin.Config.Config.Env = []string{"TOOL_DIR=/opt/tool"}
 	team := "arg-default"
+	tool := "tool-default"
 	base.Descriptor = kitJSON(t, &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindWorkload,
 		Requires: []string{"tool"}, Args: map[string]spec.Arg{"team": {Default: &team, Env: "TEAM"}},
 	})
 	mixin.Descriptor = kitJSON(t, &spec.Descriptor{SchemaVersion: spec.SchemaVersion, Kind: spec.KindMixin, Provides: []string{"tool@1.0.0"},
+		Args: map[string]spec.Arg{"tool": {Default: &tool, Env: "TOOL"}},
 		Capabilities: []spec.Capability{{Group: &spec.CapabilityGroup{Name: "cache", Optional: true, Capabilities: []spec.Capability{
 			{Type: spec.CapabilityVolume, Config: map[string]any{"path": "/cache"}},
 			{Type: spec.CapabilityLifecycle, Config: map[string]any{"files": []any{map[string]any{"path": "/cache/config", "content": "yes"}}}},
@@ -109,8 +111,10 @@ func TestAssembleGroupsEnvironmentAndImage(t *testing.T) {
 	require.Equal(t, fixtureRequests(2)[1].Reference, result.Resolved.Selections[0].Selection.Skipped[0].MemberSources[0].Kit)
 	require.Len(t, result.Image.Layers, 2, "skipping all capabilities does not remove a Kit's layers")
 	require.Equal(t, base.Manifest.Layers[0], result.Image.Layers[0], "image order starts with the workload")
-	require.Equal(t, map[string]string{"HOME": "/home/agent", "TEAM": "caller", "KEEP": "image", "TOOL_DIR": "/opt/tool", "EMPTY": ""}, result.Environment)
+	require.Equal(t, map[string]string{"HOME": "/home/agent", "TEAM": "caller", "KEEP": "image", "TOOL_DIR": "/opt/tool", "TOOL": "tool-default", "EMPTY": ""}, result.Environment)
 	require.Equal(t, "arg-default", result.Resolved.ContainerEnv["TEAM"])
+	require.Equal(t, map[string]string{"TOOL": "tool-default"}, result.Resolved.Kits[0].Env, "skipped capabilities do not remove a Kit's exports")
+	require.Equal(t, map[string]string{"TEAM": "arg-default"}, result.Resolved.Kits[1].Env, "runtime overrides do not replace a Kit's exports")
 	require.Contains(t, result.Image.Config.Config.Env, "TEAM=image")
 	require.Equal(t, "/image-workspace", result.Image.Config.Config.WorkingDir)
 	require.Equal(t, "/workspace", result.WorkingDir)

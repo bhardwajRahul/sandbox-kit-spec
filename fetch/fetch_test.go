@@ -160,6 +160,13 @@ func TestCreatePhaseEnvExportsAreReturned(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, map[string]string{"KIT_TOKEN": "alpha"}, merged.ContainerEnv)
+	for _, kit := range merged.Kits {
+		require.Equal(t, map[string]string{"KIT_TOKEN": "alpha"}, kit.Env)
+	}
+	merged.Kits[0].Env["KIT_TOKEN"] = "changed"
+	require.Equal(t, "alpha", merged.Kits[1].Env["KIT_TOKEN"], "each Kit retains its own export map")
+	merged.ContainerEnv["KIT_TOKEN"] = "changed union"
+	require.Equal(t, "alpha", merged.Kits[1].Env["KIT_TOKEN"], "the union does not alias per-Kit exports")
 	require.Empty(t, merged.Descriptor.Args)
 }
 

@@ -99,8 +99,9 @@ allowance.
 The program prints the result plus its computed manifest:
 
 - `Resolved`: the selected `Descriptor`, dependency-ordered per-Kit
-  `Kits`, original declarations and decisions in `Selections`, argument
-  `ContainerEnv` exports, and validation `Warnings`.
+  `Kits` with their `Env` exports, published descriptors and decisions
+  in `Selections`, argument `ContainerEnv` exports, and validation
+  `Warnings`.
 - `Image`: typed OCI `Config` and ordered `Layers`. The workload's
   layers come first, followed by mixins in dependency order.
 - `Environment`: the complete container environment, combining image
@@ -191,6 +192,11 @@ assembly. Progress callbacks, when supplied, run synchronously.
 
 ## Migrating existing callers
 
+`KitSelection.Original` is now `PublishedDescriptor` and retains the
+published argument declarations and unexpanded references.
+`KitSelection.Raw` is now `PublishedBytes`. Use `Resolved.Kits` for
+expanded, selected per-Kit declarations.
+
 `LoadedKit.OpenLayer` is now `LoadedKit.LayerLoader`, with the same stream
 contract. Rename the field in custom loaders. Layer validation is now
 opt-in: callers that previously used `Options{}` or supplied only a loader
@@ -218,6 +224,20 @@ exports are available to `${{ kit.env.NAME }}` references; the resolver
 never reads the host environment or image configs. `Resolved.ContainerEnv`
 still reports only argument exports, so apply the same precedence when
 creating the container.
+
+Each `Resolved.Kits` entry's `Env` map retains that Kit's resolved
+create-argument exports, including defaults and explicitly empty values.
+It excludes image defaults and runtime overrides and is nil when no
+arguments export variables. Use it when adding a Kit to an existing
+sandbox so only that Kit's exports are applied. `ContainerEnv` remains
+the conflict-checked union across Kits, including exports shared by
+multiple Kits with the same value.
+
+`KitSelection.PublishedDescriptor` retains the published descriptor,
+including its argument declarations and unexpanded references.
+`KitSelection.PublishedBytes` holds its exact source bytes. Apply the
+expanded, selected declarations from `Resolved.Kits` or
+`Resolved.Descriptor`.
 
 With `LayerValidator: fetch.DefaultLayerValidator`, the one-call API also reads
 and checks layer inventories. With a nil validator it reads metadata only.

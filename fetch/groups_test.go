@@ -48,13 +48,15 @@ func TestResolveGroupsThroughPublicAPIs(t *testing.T) {
 			require.Len(t, result.Kits, 1)
 			require.Len(t, result.Kits[0].Descriptor.Capabilities, 1)
 			require.Len(t, result.Selections[0].Selection.Skipped, 1)
-			require.True(t, spec.HasGroups(result.Selections[0].Original.Capabilities))
+			require.True(t, spec.HasGroups(result.Selections[0].PublishedDescriptor.Capabilities))
+			require.JSONEq(t, string(kitJSON(t, d)), string(kitJSON(t, result.Selections[0].PublishedDescriptor)), "published declarations survive expansion and selection")
 			require.Equal(t, "9000", result.ContainerEnv["PORT"])
+			require.Equal(t, map[string]string{"PORT": "9000"}, result.Kits[0].Env)
 			require.Empty(t, spec.SurfaceOf(result.Descriptor).Services)
 			require.Equal(t, []string{"8080/tcp"}, spec.SurfaceOf(result.Descriptor).Ports)
 			result.Kits[0].Descriptor.Capabilities[0].Config["container"] = 1234
 			var originalPort spec.Port
-			require.NoError(t, spec.DecodeCapabilityConfig(result.Selections[0].Original.Capabilities[0], &originalPort))
+			require.NoError(t, spec.DecodeCapabilityConfig(result.Selections[0].PublishedDescriptor.Capabilities[0], &originalPort))
 			require.Equal(t, 8080, originalPort.Container)
 		})
 	}
@@ -159,7 +161,7 @@ func TestResolveCompletesSelectionSourcesWithoutMutatingDeclarations(t *testing.
 						wantKit = ref
 					}
 					require.Equal(t, &spec.CapabilitySource{Kit: wantKit, Path: "capabilities[7]"}, records[0].Source)
-					original := selection.Original.Capabilities[0].Source
+					original := selection.PublishedDescriptor.Capabilities[0].Source
 					require.Equal(t, entry.Source, original)
 					require.NotSame(t, original, records[0].Source)
 				})

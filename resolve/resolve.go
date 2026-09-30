@@ -34,6 +34,11 @@ type Unit struct {
 	// Args are the create-phase values resolved for this kit, recorded in
 	// the lock so recreate expands the same hooks the same way.
 	Args map[string]string
+
+	// Env holds this kit's resolved create-phase env: argument exports when
+	// supplied by fetch resolution. It excludes image defaults and runtime
+	// overrides and is nil when no arguments export environment variables.
+	Env map[string]string
 }
 
 // Resolution is a validated, ordered set.
