@@ -76,14 +76,24 @@ marker_line="Placed by tck/adapters/sbx"
 #   them; they are skipped either way, and claiming a type nothing can
 #   judge states more than a report can support.
 #
-#   ssh-agent@1 is absent because sbx neither reads the type from a kit
-#   nor filters what its agent relay passes: forwarding is a daemon-wide
-#   setting, and the relay carries every request to the agent. create
-#   refuses --ssh-agent below rather than take it for a kit reference.
+#   ssh-agent@1 is present because a v3 kit set reaches the host agent
+#   only through its grant: the daemon decides the phase grants at
+#   create, filters the relay to listing/signing/session-bind, and
+#   refuses a required grant when no backing agent is available. create
+#   accepts --ssh-agent as the suite's socket (exported as SSH_AUTH_SOCK
+#   for sbx's client-socket path) and --ssh-known-hosts as the host keys
+#   authenticate destinations are matched against.
 #
-#   sbx@1 is present for the opposite reason: it is the platform contract
-#   this runtime is named for, so a duty it does not meet is a finding
-#   worth reading rather than a type to pass over.
+#   git-identity@1 is present because a v3 kit set receives the runtime
+#   author identity only when it asks: pinned at create, kept across
+#   restart/recreate while the set still requests it, and refused when
+#   a required grant has no usable pair. create accepts
+#   --git-identity-config as the suite-owned binding (or off).
+#
+#   sbx@1 is present for the opposite reason of the absences above: it
+#   is the platform contract this runtime is named for, so a duty it
+#   does not meet is a finding worth reading rather than a type to pass
+#   over.
 default_capabilities="\
 com.docker.sandbox/sbx@1
 com.docker.sandbox/lifecycle@1
@@ -92,7 +102,9 @@ com.docker.sandbox/network-policy@2
 com.docker.sandbox/agent-context@1
 com.docker.sandbox/agent-skills@1
 com.docker.sandbox/resources@1
-com.docker.sandbox/privileged@1"
+com.docker.sandbox/privileged@1
+com.docker.sandbox/ssh-agent@1
+com.docker.sandbox/git-identity@1"
 
 # Which failures are refusals. The distinction is load-bearing: several
 # requirements are satisfied only by refusing something, and an adapter
@@ -115,7 +127,11 @@ refusal_pattern="${SBX_TCK_REFUSAL_PATTERN:-\
 request failed: 400|\
 does not support|\
 does not implement|\
-exceeds the number of available CPUs}"
+exceeds the number of available CPUs|\
+requires com\\.docker\\.sandbox/ssh-agent@1|\
+requires com\\.docker\\.sandbox/git-identity@1|\
+no SSH agent is available|\
+no git user\\.name}"
 
 # The suite hands the adapter a HOME that reaches the real one through a
 # sentinel-named symlink (§2.3), so a runtime copying the value into a
@@ -497,7 +513,7 @@ create_sandbox() {
 			# §2.4 has the suite address only the ids create returned, so
 			# a create that returned none leaves nothing to recreate or
 			# remove and its bookkeeping goes with it.
-			rm -f "$state/$id.create"
+			rm -f "$state/$id.create" "$state/$id.ssh-agent"
 			# No id means no cleanup callback, so what this create
 			# arranged on the host has to be taken back here or not at
 			# all.
@@ -541,6 +557,9 @@ create)
 	container_env_args=()
 	skills_mode=""
 	skills_store_scenario=""
+	ssh_agent=""
+	ssh_known_hosts=""
+	git_identity_config=""
 	while [ $# -gt 0 ]; do
 		case "$1" in
 		--arg)
@@ -562,12 +581,20 @@ create)
 			skills_mode="$2"
 			shift 2
 			;;
-		--ssh-agent | --ssh-known-hosts)
-			# Only sent to runtimes claiming ssh-agent@1, which this one
-			# does not; failing plainly beats creating a sandbox that
-			# ignored the agent it was handed.
-			echo "sbx adapter: ssh-agent@1 is not claimed, so $1 cannot be honored" >&2
-			exit 1
+		--ssh-agent)
+			# The suite's agent socket becomes the client socket sbx
+			# forwards into the sandbox. Remembered for recreate: the
+			# contract does not re-pass create options on that verb.
+			ssh_agent="$2"
+			shift 2
+			;;
+		--ssh-known-hosts)
+			ssh_known_hosts="$2"
+			shift 2
+			;;
+		--git-identity-config)
+			git_identity_config="$2"
+			shift 2
 			;;
 		*)
 			kits+=("$1")
@@ -600,6 +627,12 @@ create)
 	done
 	argv+=(${kit_args[@]+"${kit_args[@]}"})
 	argv+=(${container_env_args[@]+"${container_env_args[@]}"})
+	# Contract options sbx accepts under the same names once the runtime
+	# claim is live. Absent options stay absent: an empty --ssh-agent
+	# would invent a socket, and withholding identity is `off`, not an
+	# omitted flag.
+	[ -z "$ssh_known_hosts" ] || argv+=(--ssh-known-hosts "$ssh_known_hosts")
+	[ -z "$git_identity_config" ] || argv+=(--git-identity-config "$git_identity_config")
 
 	# Remembered before the create runs, so a create that half-succeeded
 	# still leaves a recreate and a removal something to address.
@@ -607,7 +640,16 @@ create)
 	# newline inside one would come back from a line-delimited file as
 	# two arguments.
 	printf '%s\0' "${argv[@]}" >"$state/$id.create"
-	create_sandbox "$id" "${argv[@]}"
+	# The suite's agent is the only backing agent this create may use.
+	# Without --ssh-agent, clear SSH_AUTH_SOCK so a host agent of the
+	# operator's is not silently substituted (§2.3).
+	if [ -n "$ssh_agent" ]; then
+		printf '%s\n' "$ssh_agent" >"$state/$id.ssh-agent"
+		SSH_AUTH_SOCK="$ssh_agent" create_sandbox "$id" "${argv[@]}"
+	else
+		rm -f "$state/$id.ssh-agent"
+		(unset SSH_AUTH_SOCK; create_sandbox "$id" "${argv[@]}")
+	fi
 	;;
 
 exec)
@@ -650,7 +692,14 @@ recreate)
 	run_sbx rm --force "$id" >&2
 	argv=()
 	while IFS= read -r -d '' arg; do argv+=("$arg"); done <"$state/$id.create"
-	create_sandbox "$id" "${argv[@]}" >/dev/null
+	# Replay the original create's agent binding: the suite may have
+	# changed the host's SSH_AUTH_SOCK since, and recreate must still
+	# point at the agent the first create was judged against.
+	if [ -f "$state/$id.ssh-agent" ]; then
+		SSH_AUTH_SOCK="$(cat "$state/$id.ssh-agent")" create_sandbox "$id" "${argv[@]}" >/dev/null
+	else
+		(unset SSH_AUTH_SOCK; create_sandbox "$id" "${argv[@]}" >/dev/null)
+	fi
 	;;
 
 rm)
@@ -672,7 +721,7 @@ rm)
 	if [ "$status" -ne 0 ] && ! absent "$id"; then
 		exit "$status"
 	fi
-	rm -f "$state/$id.create"
+	rm -f "$state/$id.create" "$state/$id.ssh-agent"
 	# What the adapter arranged on the host goes with the last sandbox it
 	# holds: nothing is left to read the store, and leaving it would grow
 	# a user's store by an entry per run.
