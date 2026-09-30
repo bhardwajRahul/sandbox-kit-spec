@@ -14,6 +14,9 @@
 #      GitHub API-key credentials matching the bindings below. This file
 #      approves their use; it does not create them. For setup, use
 #      `sbx secret --help`, and keep secret values out of this file.
+#   4. Start an SSH agent and load a key that GitHub accepts
+#      (`ssh-add -l` must list at least one identity). The github-ssh kit
+#      below grants ssh-agent@1 as required, so create fails without one.
 #
 # From the repository root on the host:
 #   sbx env plan   # Preview the setup without changing anything.
@@ -51,14 +54,20 @@ kits:
   # `codex --model … -c model_reasoning_effort=…` would set per launch,
   # and export CODEX_MODEL / CODEX_REASONING_EFFORT into the sandbox.
   # `--kit-arg model=…` overrides per invocation.
-  - source: docker/sbx-kit-codex:0.159.0
+  - source: docker/sbx-kit-codex:0.159.2
     args:
-      model: gpt-6-astra
+      model: gpt-6.1-sol
       reasoningEffort: high
   # This repository's own toolchain — task, golangci-lint, regctl at the
   # versions CI pins, and the egress a `task` run needs. Built from source
   # on every create, so it always matches the checkout.
   - ./examples/dev-tools
+  # GitHub git over SSH and commit signing through the host agent.
+  # Declares ssh-agent@1 as required, so the runtime exposes
+  # SSH_AUTH_SOCK and create fails when no host agent is available
+  # (see prerequisite 4 above). Without the grant the sandbox never
+  # sees the agent even when one is running.
+  - ./examples/github-ssh
 
 # The repository itself, mounted read/write. A relative path resolves
 # against this file's directory, so this mounts the repository wherever

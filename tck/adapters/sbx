@@ -76,14 +76,28 @@ marker_line="Placed by tck/adapters/sbx"
 #   them; they are skipped either way, and claiming a type nothing can
 #   judge states more than a report can support.
 #
-#   ssh-agent@1 is absent because sbx neither reads the type from a kit
-#   nor filters what its agent relay passes: forwarding is a daemon-wide
-#   setting, and the relay carries every request to the agent. create
-#   refuses --ssh-agent below rather than take it for a kit reference.
+#   ssh-agent@1 is present because a v3 kit set reaches the host agent
+#   only through its grant: the daemon decides the phase grants at
+#   create, filters the relay to listing/signing/session-bind, and
+#   refuses a required grant when no backing agent is available. create
+#   accepts --ssh-agent as the suite's socket (exported as SSH_AUTH_SOCK
+#   for sbx's client-socket path) and --ssh-known-hosts as the host keys
+#   authenticate destinations are matched against.
 #
-#   sbx@1 is present for the opposite reason: it is the platform contract
-#   this runtime is named for, so a duty it does not meet is a finding
-#   worth reading rather than a type to pass over.
+#   git-identity@1 is present because a v3 kit set receives the runtime
+#   author identity only when it asks: pinned at create, kept across
+#   restart/recreate while the set still requests it, and refused when
+#   a required grant has no usable pair. create accepts
+#   --git-identity-config as the suite-owned binding (or off). The
+#   adapter retains create-time selected/skipped records (and an empty
+#   surface when a partially supported optional group is skipped): sbx
+#   inspect does not yet expose retained selection, so `selection`
+#   returns that retained decision rather than reselecting.
+#
+#   sbx@1 is present for the opposite reason of the absences above: it
+#   is the platform contract this runtime is named for, so a duty it
+#   does not meet is a finding worth reading rather than a type to pass
+#   over.
 default_capabilities="\
 com.docker.sandbox/sbx@1
 com.docker.sandbox/lifecycle@1
@@ -92,7 +106,9 @@ com.docker.sandbox/network-policy@2
 com.docker.sandbox/agent-context@1
 com.docker.sandbox/agent-skills@1
 com.docker.sandbox/resources@1
-com.docker.sandbox/privileged@1"
+com.docker.sandbox/privileged@1
+com.docker.sandbox/ssh-agent@1
+com.docker.sandbox/git-identity@1"
 
 # Which failures are refusals. The distinction is load-bearing: several
 # requirements are satisfied only by refusing something, and an adapter
@@ -115,7 +131,11 @@ refusal_pattern="${SBX_TCK_REFUSAL_PATTERN:-\
 request failed: 400|\
 does not support|\
 does not implement|\
-exceeds the number of available CPUs}"
+exceeds the number of available CPUs|\
+requires com\\.docker\\.sandbox/ssh-agent@1|\
+requires com\\.docker\\.sandbox/git-identity@1|\
+no SSH agent is available|\
+no git user\\.name}"
 
 # The suite hands the adapter a HOME that reaches the real one through a
 # sentinel-named symlink (§2.3), so a runtime copying the value into a
@@ -473,6 +493,358 @@ new_id() {
 	printf 'kit-tck-%s\n' "$(od -An -tx1 -N5 /dev/urandom | tr -d ' \n')"
 }
 
+# One selection record for an ordinary (non-group) capability entry at
+# capabilities[0], optionally with a rejected member path when skipped.
+selection_record() {
+	local kit="$1" rejected="${2:-}"
+	if [ -n "$rejected" ]; then
+		printf '{"path":"capabilities[0]","source":{"kit":"%s","path":"capabilities[0]"},"members":["capabilities[0]"],"memberSources":[{"kit":"%s","path":"capabilities[0]"}],"rejected":["%s"]}' \
+			"$kit" "$kit" "$rejected"
+	else
+		printf '{"path":"capabilities[0]","source":{"kit":"%s","path":"capabilities[0]"},"members":["capabilities[0]"],"memberSources":[{"kit":"%s","path":"capabilities[0]"}]}' \
+			"$kit" "$kit"
+	fi
+}
+
+# Skipped optional group whose members could not all be granted. Surface
+# stays empty: no member grant may leak when the group is skipped.
+group_skip_record() {
+	local kit="$1" rejected="$2"
+	printf '{"path":"capabilities[0]","source":{"kit":"%s","path":"capabilities[0]"},"members":["capabilities[0].group.capabilities[0]","capabilities[0].group.capabilities[1]"],"rejected":["%s"]}' \
+		"$kit" "$rejected"
+}
+
+# Whether this runtime can grant volume@1 / lifecycle@1. volume@1 is
+# absent from the default claim list (sbx mounts nothing at a declared
+# volume path); lifecycle@1 is present, but an override may drop it.
+claims_volume() {
+	claims com.docker.sandbox/volume@1
+}
+claims_lifecycle() {
+	claims com.docker.sandbox/lifecycle@1
+}
+
+# An optional volume+lifecycle group is withheld from sbx when any member
+# is unavailable (unclaimed or rejected), so a partially supported group
+# cannot apply its lifecycle file. The kit still appears in
+# retain_selection as skipped.
+omit_unsatisfiable_group_kit() {
+	local base
+	base="$(basename "$1")"
+	case "$base" in
+	groups-partial)
+		if ! claims_volume || ! claims_lifecycle ||
+			rejected_capability com.docker.sandbox/volume@1 ||
+			rejected_capability com.docker.sandbox/lifecycle@1; then
+			return 0
+		fi
+		return 1
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
+# Whether the suite arranged a false selection answer for this type.
+rejected_capability() {
+	local typ="$1" entry
+	for entry in "${rejects[@]+"${rejects[@]}"}"; do
+		[ "$entry" = "$typ" ] && return 0
+	done
+	return 1
+}
+
+# Omit an optional fixture kit from the sbx create when the suite rejected
+# its type. The kit still participates in retain_selection as skipped.
+omit_rejected_optional_kit() {
+	local base
+	base="$(basename "$1")"
+	case "$base" in
+	ordinary-optional)
+		rejected_capability com.docker.sandbox/lifecycle@1
+		;;
+	git-identity-optional)
+		rejected_capability com.docker.sandbox/git-identity@1
+		;;
+	skills-optional)
+		rejected_capability com.docker.sandbox/agent-skills@1
+		;;
+	ssh-agent-optional)
+		rejected_capability com.docker.sandbox/ssh-agent@1
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
+# Refuse a required fixture entry the suite arranged as unavailable, or a
+# required group whose members this claim list cannot all grant.
+# Fixture basenames match the suite's kit directories; the messages name
+# the capability so refusal classification can spot them.
+refuse_rejected_required() {
+	local kit base
+	for kit in "$@"; do
+		base="$(basename "$kit")"
+		case "$base" in
+		ordinary-required | git-identity | skills | ssh-agent | ssh-agent-install | ssh-agent-bounded | ssh-agent-dual)
+			if rejected_capability com.docker.sandbox/lifecycle@1 && [ "$base" = ordinary-required ]; then
+				echo "refusing: $base capabilities[0]: rejected com.docker.sandbox/lifecycle@1" >&2
+				exit 2
+			fi
+			if rejected_capability com.docker.sandbox/git-identity@1 && [ "$base" = git-identity ]; then
+				echo "refusing: $base capabilities[0]: rejected com.docker.sandbox/git-identity@1" >&2
+				exit 2
+			fi
+			if rejected_capability com.docker.sandbox/agent-skills@1 && [ "$base" = skills ]; then
+				echo "refusing: $base capabilities[0]: rejected com.docker.sandbox/agent-skills@1" >&2
+				exit 2
+			fi
+			if rejected_capability com.docker.sandbox/ssh-agent@1 && [[ "$base" == ssh-agent* ]]; then
+				echo "refusing: $base capabilities[0]: rejected com.docker.sandbox/ssh-agent@1" >&2
+				exit 2
+			fi
+			;;
+		groups-required)
+			# Partial support: identify the member this runtime cannot grant.
+			if ! claims_volume; then
+				echo "refusing: groups-required capabilities[0].group.capabilities[0]: unclaimed com.docker.sandbox/volume@1" >&2
+				exit 2
+			fi
+			if rejected_capability com.docker.sandbox/volume@1; then
+				echo "refusing: groups-required capabilities[0].group.capabilities[0]: rejected com.docker.sandbox/volume@1" >&2
+				exit 2
+			fi
+			if ! claims_lifecycle; then
+				echo "refusing: groups-required capabilities[0].group.capabilities[1]: unclaimed com.docker.sandbox/lifecycle@1" >&2
+				exit 2
+			fi
+			if rejected_capability com.docker.sandbox/lifecycle@1; then
+				echo "refusing: groups-required capabilities[0].group.capabilities[1]: rejected com.docker.sandbox/lifecycle@1" >&2
+				exit 2
+			fi
+			;;
+		esac
+	done
+}
+
+# Drop create argv pairs the current rejects omit: identity/known-hosts
+# when those types are rejected, and --kit mixins for optional fixtures.
+# Remembered argv always places mixins under --kit; the sandbox kit stays.
+filter_argv_for_rejects() {
+	local -a out=()
+	local arg next
+	while [ $# -gt 0 ]; do
+		arg="$1"
+		next="${2:-}"
+		case "$arg" in
+		--git-identity-config)
+			if rejected_capability com.docker.sandbox/git-identity@1; then
+				shift 2
+				continue
+			fi
+			out+=("$arg" "$next")
+			shift 2
+			;;
+		--ssh-known-hosts)
+			if rejected_capability com.docker.sandbox/ssh-agent@1; then
+				shift 2
+				continue
+			fi
+			out+=("$arg" "$next")
+			shift 2
+			;;
+		--kit)
+			if omit_rejected_optional_kit "$next" || omit_unsatisfiable_group_kit "$next"; then
+				shift 2
+				continue
+			fi
+			out+=("$arg" "$next")
+			shift 2
+			;;
+		--name | --skills | --pull | --kit-arg | --env)
+			out+=("$arg" "$next")
+			shift 2
+			;;
+		*)
+			out+=("$arg")
+			shift
+			;;
+		esac
+	done
+	printf '%s\0' ${out[@]+"${out[@]}"}
+}
+
+# Snapshot a usable identity binding into adapter-owned state so recreate
+# cannot pick up suite edits to the original --git-identity-config file.
+# Prints the path (or off) to pass to sbx create / retain_selection.
+snapshot_git_identity() {
+	local id="$1" config="$2" name="" email="" snap
+	if [ -z "$config" ]; then
+		return 0
+	fi
+	if [ "$config" = off ]; then
+		printf 'off\n' >"$state/$id.git-identity-config"
+		printf 'off\n'
+		return 0
+	fi
+	# NUL-delimited reads preserve newlines in the values; command
+	# substitution would strip trailing newlines from the selected pair.
+	IFS= read -r -d '' name < <(git config --file "$config" --null --get user.name 2>/dev/null) || true
+	IFS= read -r -d '' email < <(git config --file "$config" --null --get user.email 2>/dev/null) || true
+	if [ -n "$name" ] && [ -n "$email" ]; then
+		snap="$state/$id.git-identity-snapshot"
+		# Git's writer escapes quotes, backslashes, tabs and newlines as
+		# config data without importing unrelated source settings.
+		git config --file "$snap" user.name "$name" || return
+		git config --file "$snap" user.email "$email" || return
+		printf '%s\n' "$snap" >"$state/$id.git-identity-config"
+		printf '%s\n' "$snap"
+		return 0
+	fi
+	# Incomplete: keep the suite path so create can refuse or skip.
+	printf '%s\n' "$config" >"$state/$id.git-identity-config"
+	printf '%s\n' "$config"
+}
+
+# Retain the create-time selection the suite's `selection` verb reads.
+# sbx inspect does not yet expose retained selected/skipped records or an
+# effective surface, so the adapter records the decision it arranged for
+# this create (which kits and grants reached sbx, which rejects applied)
+# and `selection` returns that file unchanged — it does not reselect.
+#
+# ssh_agent is the suite-offered socket path (empty when none); rejection
+# and absence both skip an optional ssh-agent entry.
+retain_selection() {
+	local id="$1" identity_config="$2" skills_mode="$3" skills_store="$4" ssh_agent="$5"
+	shift 5
+	local kits=("$@")
+	local selected=() skipped=() kit base identity_name="" identity_email=""
+	local identity_required="" identity_optional="" identity_requested=""
+	local required_skills="" optional_skills=""
+	local bundle_optional="" bundle_reader=""
+	local ordinary_optional="" groups_partial=""
+	local ssh_optional="" ssh_required_kit=""
+	local surface='{}'
+	# Host skills mode/store narrow access; they do not skip the destination
+	# record. Accepted so recreate can pass the same create-time inputs.
+	: "$skills_mode" "$skills_store"
+
+	for kit in "${kits[@]}"; do
+		base="$(basename "$kit")"
+		case "$base" in
+		git-identity) identity_required=1; identity_requested=1 ;;
+		git-identity-optional) identity_optional=1; identity_requested=1 ;;
+		skills) required_skills=1 ;;
+		skills-optional) optional_skills=1 ;;
+		bundled-optional) bundle_optional=1 ;;
+		bundled-reader) bundle_reader=1 ;;
+		ordinary-optional) ordinary_optional=1 ;;
+		groups-partial) groups_partial=1 ;;
+		ssh-agent-optional) ssh_optional=1 ;;
+		ssh-agent | ssh-agent-install | ssh-agent-bounded | ssh-agent-dual)
+			[ -n "$ssh_required_kit" ] || ssh_required_kit="$base"
+			;;
+		workload)
+			if claims com.docker.sandbox/agent-context@1; then
+				selected+=("$(selection_record workload)")
+			fi
+			;;
+		esac
+	done
+
+	if [ -n "$ordinary_optional" ]; then
+		if rejected_capability com.docker.sandbox/lifecycle@1; then
+			skipped+=("$(selection_record ordinary-optional capabilities[0])")
+		else
+			selected+=("$(selection_record ordinary-optional)")
+		fi
+	fi
+
+	# Optional volume+lifecycle group: any unavailable member skips the
+	# whole group with no surface leak (atomicSelection / groups-partial).
+	# Prefer the unclaimed/rejected member the suite's claim matrix names.
+	if [ -n "$groups_partial" ]; then
+		local rejected_member=""
+		if ! claims_volume || rejected_capability com.docker.sandbox/volume@1; then
+			rejected_member='capabilities[0].group.capabilities[0]'
+		elif ! claims_lifecycle || rejected_capability com.docker.sandbox/lifecycle@1; then
+			rejected_member='capabilities[0].group.capabilities[1]'
+		fi
+		if [ -n "$rejected_member" ]; then
+			skipped+=("$(group_skip_record groups-partial "$rejected_member")")
+			surface='{}'
+		fi
+	fi
+
+	if rejected_capability com.docker.sandbox/git-identity@1; then
+		if [ -n "$identity_optional" ]; then
+			skipped+=("$(selection_record git-identity-optional capabilities[0])")
+			identity_requested=""
+		fi
+	fi
+	if [ -n "$identity_config" ] && [ "$identity_config" != off ]; then
+		identity_name="$(git config --file "$identity_config" --get user.name 2>/dev/null || true)"
+		identity_email="$(git config --file "$identity_config" --get user.email 2>/dev/null || true)"
+	fi
+	if [ -n "$identity_requested" ] && { [ -z "$identity_name" ] || [ -z "$identity_email" ]; }; then
+		if [ -n "$identity_optional" ]; then
+			skipped+=("$(selection_record git-identity-optional capabilities[0])")
+		elif [ -n "$identity_required" ]; then
+			# Required unavailable refuses create before we retain anything.
+			:
+		fi
+	elif [ -n "$identity_requested" ]; then
+		if [ -n "$identity_required" ]; then
+			selected+=("$(selection_record git-identity)")
+		elif [ -n "$identity_optional" ]; then
+			selected+=("$(selection_record git-identity-optional)")
+		fi
+	fi
+
+	# Host skills off / missing / empty still leave the destination selected:
+	# access is narrowed, the discovery path is not skipped (§2.3). A
+	# rejected optional skills entry is skipped instead.
+	if [ -n "$required_skills" ]; then
+		if rejected_capability com.docker.sandbox/agent-skills@1; then
+			:
+		else
+			selected+=("$(selection_record skills)")
+		fi
+	fi
+	if [ -n "$optional_skills" ]; then
+		if rejected_capability com.docker.sandbox/agent-skills@1; then
+			skipped+=("$(selection_record skills-optional capabilities[0])")
+		else
+			selected+=("$(selection_record skills-optional)")
+		fi
+	fi
+	# A bundled skill with no discovery destination is skipped, not selected.
+	if [ -n "$bundle_optional" ] && [ -z "$bundle_reader" ]; then
+		skipped+=("$(selection_record bundled-optional capabilities[0])")
+	fi
+
+	# Optional ssh-agent@1: no suite socket or a rejected type skips the
+	# entry (SPEC-v3 §7.1.1). Required fixtures that reached retain already
+	# passed refuse_rejected_required / the no-agent create refusal.
+	if [ -n "$ssh_optional" ]; then
+		if rejected_capability com.docker.sandbox/ssh-agent@1 || [ -z "$ssh_agent" ]; then
+			skipped+=("$(selection_record ssh-agent-optional capabilities[0])")
+		else
+			selected+=("$(selection_record ssh-agent-optional)")
+		fi
+	elif [ -n "$ssh_required_kit" ]; then
+		selected+=("$(selection_record "$ssh_required_kit")")
+	fi
+
+	local selected_json="[]" skipped_json="[]" IFS=,
+	if [ "${#selected[@]}" -gt 0 ]; then selected_json="[${selected[*]}]"; fi
+	if [ "${#skipped[@]}" -gt 0 ]; then skipped_json="[${skipped[*]}]"; fi
+	printf '{"selection":{"selected":%s,"skipped":%s},"surface":%s}\n' \
+		"$selected_json" "$skipped_json" "$surface" >"$state/$id.selection.json"
+}
+
 # One create, from the argument list a later recreate can replay. The
 # refusal classification lives here because create is where policy
 # decisions happen: an unsatisfiable requirement, a capability the
@@ -497,7 +869,11 @@ create_sandbox() {
 			# §2.4 has the suite address only the ids create returned, so
 			# a create that returned none leaves nothing to recreate or
 			# remove and its bookkeeping goes with it.
-			rm -f "$state/$id.create"
+			rm -f "$state/$id.create" "$state/$id.ssh-agent" \
+				"$state/$id.kits" "$state/$id.git-identity-config" \
+				"$state/$id.git-identity-snapshot" \
+				"$state/$id.skills-mode" "$state/$id.skills-store" \
+				"$state/$id.selection.json" "$state/$id.selection-policy"
 			# No id means no cleanup callback, so what this create
 			# arranged on the host has to be taken back here or not at
 			# all.
@@ -541,6 +917,10 @@ create)
 	container_env_args=()
 	skills_mode=""
 	skills_store_scenario=""
+	ssh_agent=""
+	ssh_known_hosts=""
+	git_identity_config=""
+	rejects=()
 	while [ $# -gt 0 ]; do
 		case "$1" in
 		--arg)
@@ -562,12 +942,27 @@ create)
 			skills_mode="$2"
 			shift 2
 			;;
-		--ssh-agent | --ssh-known-hosts)
-			# Only sent to runtimes claiming ssh-agent@1, which this one
-			# does not; failing plainly beats creating a sandbox that
-			# ignored the agent it was handed.
-			echo "sbx adapter: ssh-agent@1 is not claimed, so $1 cannot be honored" >&2
-			exit 1
+		--ssh-agent)
+			# The suite's agent socket becomes the client socket sbx
+			# forwards into the sandbox. Remembered for recreate: the
+			# contract does not re-pass create options on that verb.
+			ssh_agent="$2"
+			shift 2
+			;;
+		--ssh-known-hosts)
+			ssh_known_hosts="$2"
+			shift 2
+			;;
+		--git-identity-config)
+			git_identity_config="$2"
+			shift 2
+			;;
+		--reject-capability)
+			# False selection answer for this create. Must not fall
+			# through as a kit reference: Adapter.Create appends these
+			# after the kit list.
+			rejects+=("$2")
+			shift 2
 			;;
 		*)
 			kits+=("$1")
@@ -585,29 +980,63 @@ create)
 	# rather than inherited.
 	[ -n "$skills_mode" ] || skills_mode="readwrite"
 
+	refuse_rejected_required "${kits[@]}"
 	check_prerequisites
 	prepare_skill_store "$skills_store_scenario"
 	bind_credential
 
 	id="$(new_id)"
-	# The first reference is the sandbox kit and the rest are mixins,
-	# which is both what the suite passes and the only shape sbx's CLI
-	# takes. A set that named them in another order would fail with sbx
-	# saying so, rather than being silently rearranged here.
-	argv=(create --name "$id" --quiet --skills "$skills_mode" --pull missing "$(kit_reference "${kits[0]}")")
+	# Snapshot identity before argv is remembered so recreate replays the
+	# pinned pair, not later suite edits to the mutable config path.
+	# Keep the snapshot even when create rejects the grant: a later
+	# selection-policy that clears rejections must be able to restore it
+	# via filter_argv_for_rejects, which withholds --git-identity-config
+	# only while the rejection is active.
+	git_identity_config="$(snapshot_git_identity "$id" "$git_identity_config")"
+	# Remember the full create shape (every mixin, identity snapshot, known
+	# hosts) so a later selection-policy that clears rejections can restore
+	# grants. filter_argv_for_rejects applies the active policy at create
+	# and again at recreate.
+	remembered_argv=(create --name "$id" --quiet --skills "$skills_mode" --pull missing "$(kit_reference "${kits[0]}")")
 	for kit in "${kits[@]:1}"; do
-		argv+=(--kit "$(kit_reference "$kit")")
+		remembered_argv+=(--kit "$(kit_reference "$kit")")
 	done
-	argv+=(${kit_args[@]+"${kit_args[@]}"})
-	argv+=(${container_env_args[@]+"${container_env_args[@]}"})
-
-	# Remembered before the create runs, so a create that half-succeeded
-	# still leaves a recreate and a removal something to address.
-	# NUL-delimited: an argument value is an arbitrary string, and a
-	# newline inside one would come back from a line-delimited file as
-	# two arguments.
-	printf '%s\0' "${argv[@]}" >"$state/$id.create"
-	create_sandbox "$id" "${argv[@]}"
+	remembered_argv+=(${kit_args[@]+"${kit_args[@]}"})
+	remembered_argv+=(${container_env_args[@]+"${container_env_args[@]}"})
+	# Contract options sbx accepts under the same names once the runtime
+	# claim is live. Absent options stay absent: an empty --ssh-agent
+	# would invent a socket, and withholding identity is `off`, not an
+	# omitted flag.
+	[ -z "$ssh_known_hosts" ] || remembered_argv+=(--ssh-known-hosts "$ssh_known_hosts")
+	[ -z "$git_identity_config" ] || remembered_argv+=(--git-identity-config "$git_identity_config")
+	printf '%s\0' "${remembered_argv[@]}" >"$state/$id.create"
+	# Kits and host skills inputs are remembered so recreate can select
+	# afresh under selection-policy without re-parsing sbx's argv.
+	printf '%s\0' "${kits[@]}" >"$state/$id.kits"
+	printf '%s\n' "$skills_mode" >"$state/$id.skills-mode"
+	printf '%s\n' "$skills_store_scenario" >"$state/$id.skills-store"
+	# Initial rejects are create-time only; selection-policy replaces them
+	# for the next recreate (empty clears).
+	: >"$state/$id.selection-policy"
+	argv=()
+	while IFS= read -r -d '' arg; do argv+=("$arg"); done < <(filter_argv_for_rejects "${remembered_argv[@]}")
+	# The suite's agent is the only backing agent this create may use.
+	# Without --ssh-agent, clear SSH_AUTH_SOCK so a host agent of the
+	# operator's is not silently substituted (§2.3). A rejected grant
+	# likewise clears the socket even when the suite offered one.
+	if [ -n "$ssh_agent" ]; then
+		printf '%s\n' "$ssh_agent" >"$state/$id.ssh-agent"
+	else
+		rm -f "$state/$id.ssh-agent"
+	fi
+	if [ -n "$ssh_agent" ] && ! rejected_capability com.docker.sandbox/ssh-agent@1; then
+		SSH_AUTH_SOCK="$ssh_agent" create_sandbox "$id" "${argv[@]}"
+	else
+		(unset SSH_AUTH_SOCK; create_sandbox "$id" "${argv[@]}")
+	fi
+	# create_sandbox exits on failure; reaching here means the sandbox
+	# exists and the create-time selection can be retained.
+	retain_selection "$id" "$git_identity_config" "$skills_mode" "$skills_store_scenario" "$ssh_agent" "${kits[@]}"
 	;;
 
 exec)
@@ -647,10 +1076,77 @@ recreate)
 	# goes with the old sandbox, and the new one is built from the
 	# arguments that built the first. Anything the runtime keeps across
 	# it, it keeps deliberately.
+	#
+	# The remembered argv already carries the identity snapshot and the
+	# suite agent socket is re-exported below: recreate must not reread
+	# the mutable --git-identity-config path the suite may have edited.
+	kits=()
+	if [ -f "$state/$id.kits" ]; then
+		while IFS= read -r -d '' kit; do kits+=("$kit"); done <"$state/$id.kits"
+	fi
+	rejects=()
+	if [ -f "$state/$id.selection-policy" ]; then
+		while IFS= read -r typ; do
+			[ -n "$typ" ] && rejects+=("$typ")
+		done <"$state/$id.selection-policy"
+	fi
+	refuse_rejected_required "${kits[@]+"${kits[@]}"}"
 	run_sbx rm --force "$id" >&2
+	remembered_argv=()
+	while IFS= read -r -d '' arg; do remembered_argv+=("$arg"); done <"$state/$id.create"
 	argv=()
-	while IFS= read -r -d '' arg; do argv+=("$arg"); done <"$state/$id.create"
-	create_sandbox "$id" "${argv[@]}" >/dev/null
+	while IFS= read -r -d '' arg; do argv+=("$arg"); done < <(filter_argv_for_rejects "${remembered_argv[@]+"${remembered_argv[@]}"}")
+	# Replay the original create's agent binding: the suite may have
+	# changed the host's SSH_AUTH_SOCK since, and recreate must still
+	# point at the agent the first create was judged against — unless the
+	# current selection-policy rejects ssh-agent@1.
+	if [ -f "$state/$id.ssh-agent" ] && ! rejected_capability com.docker.sandbox/ssh-agent@1; then
+		SSH_AUTH_SOCK="$(cat "$state/$id.ssh-agent")" create_sandbox "$id" "${argv[@]}" >/dev/null
+	else
+		(unset SSH_AUTH_SOCK; create_sandbox "$id" "${argv[@]}" >/dev/null)
+	fi
+	# Recreate selects afresh under the current selection-policy.
+	if [ "${#kits[@]}" -gt 0 ]; then
+		identity_for_selection=""
+		if ! rejected_capability com.docker.sandbox/git-identity@1; then
+			identity_for_selection="$(cat "$state/$id.git-identity-config" 2>/dev/null || true)"
+		fi
+		# Offered suite socket (may be withheld from sbx when rejected).
+		ssh_for_selection="$(cat "$state/$id.ssh-agent" 2>/dev/null || true)"
+		retain_selection "$id" \
+			"$identity_for_selection" \
+			"$(cat "$state/$id.skills-mode" 2>/dev/null || true)" \
+			"$(cat "$state/$id.skills-store" 2>/dev/null || true)" \
+			"$ssh_for_selection" \
+			"${kits[@]}"
+	fi
+	;;
+
+selection)
+	prepare_state
+	[ -f "$state/$1.selection.json" ] ||
+		die "no selection retained for $1; create must succeed before selection is observed"
+	cat "$state/$1.selection.json"
+	;;
+
+selection-policy)
+	# Remembered for the next recreate. Stop/start keep the current
+	# grants; only recreate consults this file. Empty clears rejections.
+	prepare_state
+	id="$1"
+	shift || true
+	: >"$state/$id.selection-policy"
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--reject-capability)
+			printf '%s\n' "$2" >>"$state/$id.selection-policy"
+			shift 2
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
 	;;
 
 rm)
@@ -672,7 +1168,11 @@ rm)
 	if [ "$status" -ne 0 ] && ! absent "$id"; then
 		exit "$status"
 	fi
-	rm -f "$state/$id.create"
+	rm -f "$state/$id.create" "$state/$id.ssh-agent" \
+		"$state/$id.kits" "$state/$id.git-identity-config" \
+		"$state/$id.git-identity-snapshot" \
+		"$state/$id.skills-mode" "$state/$id.skills-store" \
+		"$state/$id.selection.json" "$state/$id.selection-policy"
 	# What the adapter arranged on the host goes with the last sandbox it
 	# holds: nothing is left to read the store, and leaving it would grow
 	# a user's store by an entry per run.
