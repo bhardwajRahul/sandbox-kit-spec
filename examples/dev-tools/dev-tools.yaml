@@ -11,7 +11,8 @@ description: >-
   Task, golangci-lint and regctl at the versions this repository's CI
   pins, plus the egress a `task` run needs: the Go module proxy, Docker
   Hub and dhi.io for the build frontend and the lint image, and the
-  release endpoints the version checks read.
+  release endpoints the version checks read and vulnerability databases
+  for dependency scans.
 sourceUrl: https://github.com/docker/sandbox-kit-spec
 # Union of the shipped tools: Task (MIT), golangci-lint (GPL-3.0),
 # regclient (Apache-2.0).
@@ -66,6 +67,9 @@ capabilities:
           - sum.golang.org:443
           # The module proxy redirects archive downloads to this host.
           - storage.googleapis.com:443
+          # govulncheck and OSV Scanner: dependency vulnerability data.
+          - vuln.go.dev:443
+          - api.osv.dev:443
           # docker buildx: the frontend the `# syntax=` line names, the
           # digest-pinned markdownlint image, the base images kits FROM.
           - registry-1.docker.io:443

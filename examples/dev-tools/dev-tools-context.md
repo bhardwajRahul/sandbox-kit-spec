@@ -15,8 +15,9 @@ anything under `tck/` or `docs/spec/`, and `task kit:dev KIT=<name>` for a
 frontend change.
 
 Egress is granted for what those runs reach — the Go module proxy, Docker Hub
-and dhi.io, and the release endpoints `task versions:check` reads. A kit
-build (`task kit:dev`, `task kit:build`) downloads whatever that kit's recipe
+and dhi.io, the release endpoints `task versions:check` reads, and the
+vulnerability databases `govulncheck` and OSV Scanner query. A kit build
+(`task kit:dev`, `task kit:build`) downloads whatever that kit's recipe
 names, which this policy does not cover; if one fails on a network refusal,
 that is the boundary doing its job, and the fix is to declare the host in
 the composition rather than to work around it.
